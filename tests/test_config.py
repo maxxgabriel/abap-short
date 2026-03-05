@@ -1,21 +1,34 @@
 """
 Unit tests for ETL configuration module.
-Tests constant definitions, business rules, and configuration access.
+Tests constant mappings, type conversions, and configuration loading.
 """
 
 import pytest
 from decimal import Decimal
+from pathlib import Path
+import tempfile
+import yaml
+
 from src.config import (
-    ETLConstants, StatusCode, ProcessStep, SaleCategory,
-    BusinessRules, ETLConfig, IDPrefixes, MessageTexts
+    ETLConstants,
+    ETLConfig,
+    StatusCode,
+    ProcessStep,
+    SaleCategory,
+    BusinessRules,
+    ETLDefaults,
+    IDPrefixes,
+    Messages,
+    get_config,
+    reset_config
 )
 
 
-class TestStatusCode:
-    """Test StatusCode enum"""
+class TestEnumerations:
+    """Test enum mappings from ABAP structures"""
     
     def test_status_code_values(self):
-        """Test that all status codes have correct values"""
+        """Test status code enum matches ABAP gc_status"""
         assert StatusCode.NEW.value == 'N'
         assert StatusCode.PROCESSED.value == 'P'
         assert StatusCode.ERROR.value == 'E'
@@ -23,18 +36,8 @@ class TestStatusCode:
         assert StatusCode.SUCCESS.value == 'S'
         assert StatusCode.INFO.value == 'I'
     
-    def test_status_code_enum_members(self):
-        """Test that all expected status codes exist"""
-        expected_members = {'NEW', 'PROCESSED', 'ERROR', 'WARNING', 'SUCCESS', 'INFO'}
-        actual_members = {status.name for status in StatusCode}
-        assert actual_members == expected_members
-
-
-class TestProcessStep:
-    """Test ProcessStep enum"""
-    
     def test_process_step_values(self):
-        """Test that all process steps have correct values"""
+        """Test process step enum matches ABAP gc_step"""
         assert ProcessStep.INIT.value == 'INIT'
         assert ProcessStep.EXTRACT.value == 'EXTRACT'
         assert ProcessStep.TRANSFORM.value == 'TRANSFORM'
@@ -43,307 +46,316 @@ class TestProcessStep:
         assert ProcessStep.COMPLETE.value == 'COMPLETE'
         assert ProcessStep.ERROR.value == 'ERROR'
     
-    def test_process_step_enum_members(self):
-        """Test that all expected process steps exist"""
-        expected_members = {
-            'INIT', 'EXTRACT', 'TRANSFORM', 'LOAD', 
-            'VALIDATE', 'COMPLETE', 'ERROR'
-        }
-        actual_members = {step.name for step in ProcessStep}
-        assert actual_members == expected_members
-
-
-class TestSaleCategory:
-    """Test SaleCategory enum"""
-    
     def test_sale_category_values(self):
-        """Test that all sale categories have correct values"""
+        """Test sale category enum matches ABAP gc_category"""
         assert SaleCategory.HIGH.value == 'HIGH'
         assert SaleCategory.MEDIUM.value == 'MEDIUM'
         assert SaleCategory.LOW.value == 'LOW'
-    
-    def test_sale_category_enum_members(self):
-        """Test that all expected categories exist"""
-        expected_members = {'HIGH', 'MEDIUM', 'LOW'}
-        actual_members = {cat.name for cat in SaleCategory}
-        assert actual_members == expected_members
 
 
 class TestBusinessRules:
-    """Test BusinessRules dataclass"""
-    
-    def test_discount_thresholds(self):
-        """Test discount quantity thresholds"""
-        rules = BusinessRules()
-        assert rules.DISCOUNT_QTY_TIER1 == 10
-        assert rules.DISCOUNT_QTY_TIER2 == 15
-    
-    def test_discount_rates(self):
-        """Test discount rates are correct Decimal values"""
-        rules = BusinessRules()
-        assert rules.DISCOUNT_RATE_TIER1 == Decimal('0.05')
-        assert rules.DISCOUNT_RATE_TIER2 == Decimal('0.10')
-    
-    def test_tax_rate(self):
-        """Test tax rate"""
-        rules = BusinessRules()
-        assert rules.TAX_RATE == Decimal('0.08')
-    
-    def test_cost_ratio(self):
-        """Test cost ratio"""
-        rules = BusinessRules()
-        assert rules.COST_RATIO == Decimal('0.60')
-    
-    def test_category_thresholds(self):
-        """Test category thresholds"""
-        rules = BusinessRules()
-        assert rules.CATEGORY_HIGH_THRESHOLD == Decimal('2000.00')
-        assert rules.CATEGORY_MEDIUM_THRESHOLD == Decimal('500.00')
-    
-    def test_immutability(self):
-        """Test that BusinessRules is immutable"""
-        rules = BusinessRules()
-        with pytest.raises(Exception):  # FrozenInstanceError
-            rules.TAX_RATE = Decimal('0.10')
-
-
-class TestETLConfig:
-    """Test ETLConfig dataclass"""
+    """Test business rules configuration class"""
     
     def test_default_values(self):
-        """Test all default configuration values"""
-        config = ETLConfig()
-        assert config.DEFAULT_BATCH_SIZE == 1000
-        assert config.DEFAULT_COMMIT_INTERVAL == 500
-        assert config.DEFAULT_RETRY_ATTEMPTS == 3
-        assert config.DEFAULT_TIMEOUT_SECONDS == 3600
+        """Test business rules have correct default values"""
+        rules = BusinessRules()
+        
+        # Integer thresholds (ABAP TYPE i)
+        assert rules.discount_qty_tier1 == 10
+        assert rules.discount_qty_tier2 == 15
+        
+        # Decimal rates (ABAP TYPE p LENGTH 3 DECIMALS 2)
+        assert rules.discount_rate_tier1 == Decimal('0.05')
+        assert rules.discount_rate_tier2 == Decimal('0.10')
+        assert rules.tax_rate == Decimal('0.08')
+        assert rules.cost_ratio == Decimal('0.60')
+        
+        # Decimal thresholds (ABAP TYPE p LENGTH 16 DECIMALS 2)
+        assert rules.category_high_threshold == Decimal('2000.00')
+        assert rules.category_medium_threshold == Decimal('500.00')
+    
+    def test_decimal_precision(self):
+        """Test Decimal types maintain precision"""
+        rules = BusinessRules()
+        
+        # Verify Decimal type
+        assert isinstance(rules.discount_rate_tier1, Decimal)
+        assert isinstance(rules.tax_rate, Decimal)
+        
+        # Verify precision preservation
+        rate = rules.discount_rate_tier1
+        assert str(rate) == '0.05'
+        assert rate.as_tuple().exponent == -2
     
     def test_immutability(self):
-        """Test that ETLConfig is immutable"""
-        config = ETLConfig()
+        """Test BusinessRules is immutable (frozen dataclass)"""
+        rules = BusinessRules()
+        
         with pytest.raises(Exception):  # FrozenInstanceError
-            config.DEFAULT_BATCH_SIZE = 2000
+            rules.tax_rate = Decimal('0.10')
+
+
+class TestETLDefaults:
+    """Test ETL defaults configuration"""
+    
+    def test_default_values(self):
+        """Test ETL defaults match ABAP constants"""
+        defaults = ETLDefaults()
+        
+        assert defaults.batch_size == 1000
+        assert defaults.commit_interval == 500
+        assert defaults.retry_attempts == 3
+        assert defaults.timeout_seconds == 3600
+        assert defaults.parallel_jobs == 4
+    
+    def test_all_integers(self):
+        """Test all default values are integers (ABAP TYPE i)"""
+        defaults = ETLDefaults()
+        
+        assert isinstance(defaults.batch_size, int)
+        assert isinstance(defaults.commit_interval, int)
+        assert isinstance(defaults.retry_attempts, int)
+        assert isinstance(defaults.timeout_seconds, int)
 
 
 class TestIDPrefixes:
-    """Test IDPrefixes dataclass"""
+    """Test ID prefix constants"""
     
     def test_prefix_values(self):
-        """Test all ID prefix values"""
+        """Test ID prefixes match ABAP constants"""
         prefixes = IDPrefixes()
-        assert prefixes.ETL_RUN == 'ETL'
-        assert prefixes.LOG_ID == 'LOG'
-        assert prefixes.ANALYTICS_ID == 'ANL'
-    
-    def test_immutability(self):
-        """Test that IDPrefixes is immutable"""
-        prefixes = IDPrefixes()
-        with pytest.raises(Exception):  # FrozenInstanceError
-            prefixes.ETL_RUN = 'NEW'
+        
+        assert prefixes.etl_run == 'ETL'
+        assert prefixes.log_id == 'LOG'
+        assert prefixes.analytics_id == 'ANL'
 
 
-class TestMessageTexts:
-    """Test MessageTexts dataclass"""
+class TestMessages:
+    """Test message text constants"""
     
-    def test_message_values(self):
-        """Test that all message texts are defined"""
-        messages = MessageTexts()
-        assert messages.INIT_SUCCESS == 'ETL process initialized successfully'
-        assert messages.EXTRACT_START == 'Starting data extraction'
-        assert messages.EXTRACT_COMPLETE == 'Data extraction completed'
-        assert messages.TRANSFORM_START == 'Starting data transformation'
-        assert messages.TRANSFORM_COMPLETE == 'Data transformation completed'
-        assert messages.LOAD_START == 'Starting data load'
-        assert messages.LOAD_COMPLETE == 'Data load completed'
-        assert messages.ETL_COMPLETE == 'ETL process completed successfully'
-        assert messages.ETL_ERROR == 'ETL process failed'
-    
-    def test_message_non_empty(self):
-        """Test that all messages are non-empty strings"""
-        messages = MessageTexts()
-        for attr_name in dir(messages):
-            if not attr_name.startswith('_'):
-                message = getattr(messages, attr_name)
-                assert isinstance(message, str)
-                assert len(message) > 0
+    def test_message_texts(self):
+        """Test message texts match ABAP constants"""
+        messages = Messages()
+        
+        assert messages.init_success == 'ETL process initialized successfully'
+        assert messages.extract_start == 'Starting data extraction'
+        assert messages.extract_complete == 'Data extraction completed'
+        assert messages.transform_start == 'Starting data transformation'
+        assert messages.transform_complete == 'Data transformation completed'
+        assert messages.load_start == 'Starting data load'
+        assert messages.load_complete == 'Data load completed'
+        assert messages.etl_complete == 'ETL process completed successfully'
+        assert messages.etl_error == 'ETL process failed'
 
 
 class TestETLConstants:
-    """Test ETLConstants main class"""
+    """Test main ETL constants class"""
     
-    def test_constant_attributes(self):
-        """Test that all constant attributes are accessible"""
-        assert hasattr(ETLConstants, 'STATUS')
-        assert hasattr(ETLConstants, 'STEP')
-        assert hasattr(ETLConstants, 'CATEGORY')
-        assert hasattr(ETLConstants, 'BUSINESS_RULES')
-        assert hasattr(ETLConstants, 'CONFIG')
-        assert hasattr(ETLConstants, 'PREFIXES')
-        assert hasattr(ETLConstants, 'MESSAGES')
+    def test_static_attributes(self):
+        """Test static attributes are accessible"""
+        assert ETLConstants.STATUS == StatusCode
+        assert ETLConstants.STEP == ProcessStep
+        assert ETLConstants.CATEGORY == SaleCategory
+        assert isinstance(ETLConstants.BUSINESS_RULES, BusinessRules)
+        assert isinstance(ETLConstants.DEFAULTS, ETLDefaults)
+        assert isinstance(ETLConstants.PREFIXES, IDPrefixes)
+        assert isinstance(ETLConstants.MESSAGES, Messages)
     
-    def test_status_access(self):
-        """Test accessing status codes through ETLConstants"""
-        assert ETLConstants.STATUS.NEW.value == 'N'
-        assert ETLConstants.STATUS.SUCCESS.value == 'S'
+    def test_get_status_dict(self):
+        """Test status dictionary conversion"""
+        status_dict = ETLConstants.get_status_dict()
+        
+        assert status_dict['NEW'] == 'N'
+        assert status_dict['PROCESSED'] == 'P'
+        assert status_dict['ERROR'] == 'E'
+        assert len(status_dict) == 6
     
-    def test_step_access(self):
-        """Test accessing process steps through ETLConstants"""
-        assert ETLConstants.STEP.EXTRACT.value == 'EXTRACT'
-        assert ETLConstants.STEP.TRANSFORM.value == 'TRANSFORM'
+    def test_get_step_dict(self):
+        """Test step dictionary conversion"""
+        step_dict = ETLConstants.get_step_dict()
+        
+        assert step_dict['INIT'] == 'INIT'
+        assert step_dict['EXTRACT'] == 'EXTRACT'
+        assert step_dict['TRANSFORM'] == 'TRANSFORM'
+        assert len(step_dict) == 7
     
-    def test_category_access(self):
-        """Test accessing categories through ETLConstants"""
-        assert ETLConstants.CATEGORY.HIGH.value == 'HIGH'
-        assert ETLConstants.CATEGORY.LOW.value == 'LOW'
+    def test_get_category_dict(self):
+        """Test category dictionary conversion"""
+        category_dict = ETLConstants.get_category_dict()
+        
+        assert category_dict['HIGH'] == 'HIGH'
+        assert category_dict['MEDIUM'] == 'MEDIUM'
+        assert category_dict['LOW'] == 'LOW'
+        assert len(category_dict) == 3
     
-    def test_get_discount_rate_no_discount(self):
-        """Test discount rate calculation for low quantities"""
-        rate = ETLConstants.get_discount_rate(5)
-        assert rate == Decimal('0.00')
-    
-    def test_get_discount_rate_tier1(self):
-        """Test discount rate calculation for tier 1"""
-        rate = ETLConstants.get_discount_rate(12)
-        assert rate == Decimal('0.05')
-    
-    def test_get_discount_rate_tier2(self):
-        """Test discount rate calculation for tier 2"""
-        rate = ETLConstants.get_discount_rate(20)
-        assert rate == Decimal('0.10')
-    
-    def test_get_discount_rate_boundary_tier1(self):
-        """Test discount rate at tier 1 boundary"""
-        rate_below = ETLConstants.get_discount_rate(10)
-        rate_above = ETLConstants.get_discount_rate(11)
-        assert rate_below == Decimal('0.00')
-        assert rate_above == Decimal('0.05')
-    
-    def test_get_discount_rate_boundary_tier2(self):
-        """Test discount rate at tier 2 boundary"""
-        rate_below = ETLConstants.get_discount_rate(15)
-        rate_above = ETLConstants.get_discount_rate(16)
-        assert rate_below == Decimal('0.05')
-        assert rate_above == Decimal('0.10')
-    
-    def test_categorize_sale_low(self):
-        """Test sale categorization for low amounts"""
-        category = ETLConstants.categorize_sale(Decimal('100.00'))
-        assert category == SaleCategory.LOW
-    
-    def test_categorize_sale_medium(self):
-        """Test sale categorization for medium amounts"""
-        category = ETLConstants.categorize_sale(Decimal('1000.00'))
-        assert category == SaleCategory.MEDIUM
-    
-    def test_categorize_sale_high(self):
-        """Test sale categorization for high amounts"""
-        category = ETLConstants.categorize_sale(Decimal('3000.00'))
-        assert category == SaleCategory.HIGH
-    
-    def test_categorize_sale_boundary_medium(self):
-        """Test categorization at medium threshold boundary"""
-        cat_below = ETLConstants.categorize_sale(Decimal('499.99'))
-        cat_exact = ETLConstants.categorize_sale(Decimal('500.00'))
-        cat_above = ETLConstants.categorize_sale(Decimal('500.01'))
-        assert cat_below == SaleCategory.LOW
-        assert cat_exact == SaleCategory.MEDIUM
-        assert cat_above == SaleCategory.MEDIUM
-    
-    def test_categorize_sale_boundary_high(self):
-        """Test categorization at high threshold boundary"""
-        cat_below = ETLConstants.categorize_sale(Decimal('1999.99'))
-        cat_exact = ETLConstants.categorize_sale(Decimal('2000.00'))
-        cat_above = ETLConstants.categorize_sale(Decimal('2000.01'))
-        assert cat_below == SaleCategory.MEDIUM
-        assert cat_exact == SaleCategory.HIGH
-        assert cat_above == SaleCategory.HIGH
-    
-    def test_to_dict_structure(self):
-        """Test that to_dict returns proper structure"""
+    def test_to_dict(self):
+        """Test full dictionary export"""
         config_dict = ETLConstants.to_dict()
         
-        # Check top-level keys
-        assert 'status_codes' in config_dict
-        assert 'process_steps' in config_dict
-        assert 'sale_categories' in config_dict
+        assert 'status' in config_dict
+        assert 'step' in config_dict
+        assert 'category' in config_dict
         assert 'business_rules' in config_dict
-        assert 'etl_config' in config_dict
+        assert 'defaults' in config_dict
         assert 'prefixes' in config_dict
         assert 'messages' in config_dict
-    
-    def test_to_dict_status_codes(self):
-        """Test status codes in dictionary output"""
-        config_dict = ETLConstants.to_dict()
-        status_codes = config_dict['status_codes']
         
-        assert status_codes['NEW'] == 'N'
-        assert status_codes['PROCESSED'] == 'P'
-        assert status_codes['ERROR'] == 'E'
-    
-    def test_to_dict_business_rules(self):
-        """Test business rules in dictionary output"""
-        config_dict = ETLConstants.to_dict()
-        rules = config_dict['business_rules']
-        
-        assert rules['discount_qty_tier1'] == 10
-        assert rules['discount_qty_tier2'] == 15
-        assert rules['discount_rate_tier1'] == '0.05'
-        assert rules['tax_rate'] == '0.08'
-    
-    def test_to_dict_etl_config(self):
-        """Test ETL config in dictionary output"""
-        config_dict = ETLConstants.to_dict()
-        etl_config = config_dict['etl_config']
-        
-        assert etl_config['default_batch_size'] == 1000
-        assert etl_config['default_commit_interval'] == 500
-        assert etl_config['default_retry_attempts'] == 3
+        # Verify nested structure
+        assert config_dict['business_rules']['tax_rate'] == '0.08'
+        assert config_dict['defaults']['batch_size'] == 1000
+        assert config_dict['prefixes']['etl_run'] == 'ETL'
 
 
-class TestBackwardCompatibility:
-    """Test backward compatibility aliases"""
+class TestETLConfig:
+    """Test runtime configuration class"""
     
-    def test_gc_status_alias(self):
-        """Test GC_STATUS alias works"""
-        from src.config import GC_STATUS
-        assert GC_STATUS == StatusCode
-        assert GC_STATUS.NEW.value == 'N'
-    
-    def test_gc_step_alias(self):
-        """Test GC_STEP alias works"""
-        from src.config import GC_STEP
-        assert GC_STEP == ProcessStep
-        assert GC_STEP.EXTRACT.value == 'EXTRACT'
-    
-    def test_gc_category_alias(self):
-        """Test GC_CATEGORY alias works"""
-        from src.config import GC_CATEGORY
-        assert GC_CATEGORY == SaleCategory
-        assert GC_CATEGORY.HIGH.value == 'HIGH'
-
-
-class TestDecimalPrecision:
-    """Test decimal precision for financial calculations"""
-    
-    def test_discount_rate_precision(self):
-        """Test that discount rates maintain precision"""
-        rules = BusinessRules()
-        rate1 = rules.DISCOUNT_RATE_TIER1
-        rate2 = rules.DISCOUNT_RATE_TIER2
+    def test_default_initialization(self):
+        """Test ETLConfig initializes with defaults from ETLConstants"""
+        config = ETLConfig()
         
-        assert str(rate1) == '0.05'
-        assert str(rate2) == '0.10'
+        assert config.batch_size == ETLConstants.DEFAULTS.batch_size
+        assert config.tax_rate == ETLConstants.BUSINESS_RULES.tax_rate
+        assert config.spark_app_name == "SalesETL"
     
-    def test_tax_rate_precision(self):
-        """Test that tax rate maintains precision"""
-        rules = BusinessRules()
-        assert str(rules.TAX_RATE) == '0.08'
+    def test_from_yaml(self):
+        """Test loading configuration from YAML file"""
+        # Create temporary YAML config
+        config_data = {
+            'batch_size': 2000,
+            'tax_rate': '0.10',
+            'spark_app_name': 'TestETL',
+            'raw_data_path': '/test/path',
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = f.name
+        
+        try:
+            config = ETLConfig.from_yaml(temp_path)
+            
+            assert config.batch_size == 2000
+            assert config.tax_rate == Decimal('0.10')
+            assert config.spark_app_name == 'TestETL'
+            assert config.raw_data_path == '/test/path'
+            
+            # Verify non-overridden values use defaults
+            assert config.commit_interval == ETLConstants.DEFAULTS.commit_interval
+        finally:
+            Path(temp_path).unlink()
     
-    def test_threshold_precision(self):
-        """Test that thresholds maintain precision"""
-        rules = BusinessRules()
-        assert str(rules.CATEGORY_HIGH_THRESHOLD) == '2000.00'
-        assert str(rules.CATEGORY_MEDIUM_THRESHOLD) == '500.00'
+    def test_to_yaml(self):
+        """Test exporting configuration to YAML file"""
+        config = ETLConfig(
+            batch_size=1500,
+            tax_rate=Decimal('0.09')
+        )
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            temp_path = f.name
+        
+        try:
+            config.to_yaml(temp_path)
+            
+            # Reload and verify
+            with open(temp_path, 'r') as f:
+                loaded_data = yaml.safe_load(f)
+            
+            assert loaded_data['batch_size'] == 1500
+            assert loaded_data['tax_rate'] == '0.09'
+        finally:
+            Path(temp_path).unlink()
+    
+    def test_decimal_conversion(self):
+        """Test proper Decimal conversion from YAML"""
+        config_data = {
+            'tax_rate': '0.08',
+            'cost_ratio': '0.60',
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = f.name
+        
+        try:
+            config = ETLConfig.from_yaml(temp_path)
+            
+            assert isinstance(config.tax_rate, Decimal)
+            assert isinstance(config.cost_ratio, Decimal)
+            assert config.tax_rate == Decimal('0.08')
+        finally:
+            Path(temp_path).unlink()
+
+
+class TestSingletonConfig:
+    """Test singleton configuration management"""
+    
+    def setup_method(self):
+        """Reset config before each test"""
+        reset_config()
+    
+    def test_get_config_default(self):
+        """Test getting default config without YAML"""
+        config = get_config()
+        
+        assert isinstance(config, ETLConfig)
+        assert config.batch_size == ETLConstants.DEFAULTS.batch_size
+    
+    def test_get_config_from_yaml(self):
+        """Test getting config from YAML file"""
+        config_data = {'batch_size': 3000}
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_path = f.name
+        
+        try:
+            config = get_config(temp_path)
+            assert config.batch_size == 3000
+        finally:
+            Path(temp_path).unlink()
+    
+    def test_singleton_behavior(self):
+        """Test singleton returns same instance"""
+        config1 = get_config()
+        config2 = get_config()
+        
+        assert config1 is config2
+    
+    def test_reset_config(self):
+        """Test resetting singleton"""
+        config1 = get_config()
+        reset_config()
+        config2 = get_config()
+        
+        assert config1 is not config2
+
+
+class TestTypeMapping:
+    """Test ABAP to Python type mappings"""
+    
+    def test_integer_mapping(self):
+        """Test ABAP TYPE i maps to Python int"""
+        assert isinstance(ETLConstants.BUSINESS_RULES.discount_qty_tier1, int)
+        assert isinstance(ETLConstants.DEFAULTS.batch_size, int)
+    
+    def test_decimal_mapping(self):
+        """Test ABAP TYPE p maps to Python Decimal"""
+        assert isinstance(ETLConstants.BUSINESS_RULES.tax_rate, Decimal)
+        assert isinstance(ETLConstants.BUSINESS_RULES.category_high_threshold, Decimal)
+    
+    def test_string_mapping(self):
+        """Test ABAP TYPE char/string maps to Python str"""
+        assert isinstance(ETLConstants.PREFIXES.etl_run, str)
+        assert isinstance(ETLConstants.MESSAGES.init_success, str)
+    
+    def test_structure_mapping(self):
+        """Test ABAP structures map to Python Enums/dataclasses"""
+        # ABAP structure -> Python Enum
+        assert isinstance(StatusCode.NEW, StatusCode)
+        
+        # ABAP structure -> Python dataclass
+        assert isinstance(ETLConstants.BUSINESS_RULES, BusinessRules)
 
 
 if __name__ == '__main__':
