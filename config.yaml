@@ -1,44 +1,74 @@
-# ETL Configuration File
-# Override default constants with environment-specific values
+# ETL Logger Configuration
+# Delta Lake Audit Trail Settings
 
-# ETL Processing Configuration
-batch_size: 1000
-commit_interval: 500
-retry_attempts: 3
-timeout_seconds: 3600
-parallel_jobs: 4
+# Delta Lake paths
+delta:
+  audit_log_path: "/mnt/delta/etl_audit_log"
+  checkpoint_path: "/mnt/delta/checkpoints/etl_logger"
 
-# Business Rules Configuration
-# Discount thresholds
-discount_qty_tier1: 10
-discount_qty_tier2: 15
+# Spark configuration
+spark:
+  app_name: "ETL_Logger_AuditTrail"
+  master: "local[*]"
+  configs:
+    spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
+    spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+    spark.databricks.delta.retentionDurationCheck.enabled: "false"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
 
-# Discount rates (as decimal strings for precision)
-discount_rate_tier1: "0.05"
-discount_rate_tier2: "0.10"
+# Logger settings
+logger:
+  default_username: "system"
+  console_output: true
+  buffer_size: 100
+  flush_interval_seconds: 30
 
-# Tax rate
-tax_rate: "0.08"
+# Audit log retention
+retention:
+  days: 90
+  vacuum_enabled: true
+  vacuum_interval_hours: 24
 
-# Cost ratio for profit calculation
-cost_ratio: "0.60"
+# Business rules (from ZCL_ETL_CONSTANTS)
+business_rules:
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
-# Category thresholds
-category_high_threshold: "2000.00"
-category_medium_threshold: "500.00"
+# ETL configuration
+etl:
+  default_batch_size: 1000
+  default_commit_interval: 500
+  default_retry_attempts: 3
+  default_timeout_seconds: 3600
 
-# Spark Configuration
-spark_app_name: "SalesETL"
-spark_master: "local[*]"
-spark_shuffle_partitions: 200
+# Status codes
+status:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
 
-# Data Paths
-raw_data_path: "data/raw/sales"
-analytics_data_path: "data/analytics/sales"
-log_path: "data/logs"
-checkpoint_path: "data/checkpoints"
+# Process steps
+steps:
+  - "INIT"
+  - "EXTRACT"
+  - "TRANSFORM"
+  - "LOAD"
+  - "VALIDATE"
+  - "COMPLETE"
+  - "ERROR"
 
-# Logging Configuration
-log_level: "INFO"
-enable_console_logging: true
-enable_file_logging: true
+# Categories
+categories:
+  - "HIGH"
+  - "MEDIUM"
+  - "LOW"
