@@ -1,26 +1,52 @@
-# ETL System Configuration
-# Parameterized values for Sales ETL System
-
-# Database Configuration
-database:
-  source_table: "zsales_raw"
-  target_table: "zsales_analytics"
-  log_table: "zetl_log"
-  
-# Spark Configuration
+# PySpark ETL Configuration
 spark:
-  app_name: "Sales_ETL_System"
+  app_name: "Sales ETL Process"
   master: "local[*]"
   log_level: "WARN"
-  shuffle_partitions: 200
+  configs:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+
+# Data source configuration
+source:
+  format: "jdbc"
+  url: "jdbc:sap://hostname:port"
+  driver: "com.sap.db.jdbc.Driver"
+  table: "ZSALES_RAW"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
   
-# Business Rules
+  # Query options
+  partition_column: "TRANS_DATE"
+  num_partitions: 10
+  fetch_size: 1000
+
+# Target configuration
+target:
+  format: "jdbc"
+  url: "jdbc:sap://hostname:port"
+  driver: "com.sap.db.jdbc.Driver"
+  table: "ZSALES_ANALYTICS"
+  mode: "append"
+  batch_size: 500
+  
+# Logging configuration
+logging:
+  log_table: "ZETL_LOG"
+  console_output: true
+  file_output: true
+  log_level: "INFO"
+
+# Business rules
 business_rules:
   discount:
-    tier1_quantity: 10
-    tier2_quantity: 15
-    tier1_rate: 0.05
-    tier2_rate: 0.10
+    tier1:
+      quantity_threshold: 10
+      rate: 0.05
+    tier2:
+      quantity_threshold: 15
+      rate: 0.10
   
   tax:
     rate: 0.08
@@ -32,79 +58,14 @@ business_rules:
     high_threshold: 2000.00
     medium_threshold: 500.00
 
-# ETL Processing Configuration
-etl:
+# Processing configuration
+processing:
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
-  parallel_jobs: 4
-  
-# Data Quality Rules
-data_quality:
-  required_fields:
-    - trans_id
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-  
-  validation_rules:
-    quantity_min: 1
-    unit_price_min: 0.01
-    max_discount_rate: 0.50
+  test_mode: false
 
-# Logging Configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file_path: "logs/etl_process.log"
-  max_bytes: 10485760  # 10MB
-  backup_count: 5
-  
-# ID Generation
-id_prefixes:
-  etl_run: "ETL"
-  log_id: "LOG"
-  analytics_id: "ANL"
-
-# Message Templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Date Format
-date_format: "%Y-%m-%d"
-timestamp_format: "%Y-%m-%d %H:%M:%S"
-
-# Status Codes
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
-
-# Process Steps
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# Sale Categories
-sale_categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
+# Date range (defaults)
+date_range:
+  default_days_back: 7
