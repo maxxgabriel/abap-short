@@ -1,87 +1,71 @@
-# ETL System Configuration
+# ETL Configuration File
+# This file contains all configurable parameters for the Sales ETL System
 
-# Database Configuration
-database:
-  host: localhost
-  port: 5432
-  database: sales_etl
-  username: etl_user
-  password: ${DB_PASSWORD}  # Use environment variable
-  driver: postgresql
-  pool_size: 10
-  max_overflow: 20
-  pool_timeout: 30
-  pool_recycle: 3600
+# Processing Configuration
+batch_size: 1000
+commit_interval: 500
+retry_attempts: 3
+timeout_seconds: 3600
 
 # Spark Configuration
-spark:
-  app_name: "Sales ETL System"
-  master: "local[*]"  # Use local[*] for local mode, yarn for cluster
-  executor_memory: "4g"
-  driver_memory: "2g"
-  executor_cores: 2
-  shuffle_partitions: 200
-  dynamic_allocation: true
-  additional_conf:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.sources.partitionOverwriteMode: "dynamic"
-    spark.sql.session.timeZone: "UTC"
+spark_app_name: "SalesETL"
+spark_master: "local[*]"
 
-# ETL Process Configuration
-etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
-  checkpoint_enabled: true
-  checkpoint_location: "/tmp/etl_checkpoint"
+spark_config:
+  spark.sql.shuffle.partitions: "200"
+  spark.sql.adaptive.enabled: "true"
+  spark.sql.adaptive.coalescePartitions.enabled: "true"
+  spark.sql.adaptive.advisoryPartitionSizeInBytes: "64MB"
+  spark.sql.files.maxPartitionBytes: "128MB"
+  spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+  spark.sql.execution.arrow.pyspark.enabled: "true"
 
-# Business Rules Configuration
-business_rules:
-  # Discount thresholds
-  discount_qty_tier1: 10
-  discount_qty_tier2: 15
-  discount_rate_tier1: 0.05
-  discount_rate_tier2: 0.10
-  
-  # Tax rate
-  tax_rate: 0.08
-  
-  # Cost calculation
-  cost_ratio: 0.60
-  
-  # Category thresholds
-  category_high_threshold: 2000.00
-  category_medium_threshold: 500.00
+# Data Paths
+input_path: "/data/input/sales_raw"
+output_path: "/data/output/sales_analytics"
+log_path: "/data/logs/etl"
+
+# Database Configuration (optional - for JDBC connections)
+# db_url: "jdbc:postgresql://localhost:5432/etldb"
+# db_user: "etl_user"
+# db_password: "etl_password"
+db_table_raw: "zsales_raw"
+db_table_analytics: "zsales_analytics"
+db_table_log: "zetl_log"
+
+# Business Rules Override (optional)
+rules_override:
+  # discount_qty_tier1: 10
+  # discount_qty_tier2: 15
+  # discount_rate_tier1: 0.05
+  # discount_rate_tier2: 0.10
+  # tax_rate: 0.08
+  # cost_ratio: 0.60
+  # category_high_threshold: 2000.00
+  # category_medium_threshold: 500.00
 
 # Logging Configuration
-logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  log_dir: "logs"
-  log_file: "etl_process.log"
-  max_bytes: 10485760  # 10MB
-  backup_count: 5
-  console_output: true
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-# Source and Target Table Names
-tables:
-  source_raw: "zsales_raw"
-  target_analytics: "zsales_analytics"
-  etl_log: "zetl_log"
+# File Format Configuration
+input_format: "parquet"  # parquet, csv, json
+output_format: "parquet"
 
-# Data Quality Rules
-data_quality:
-  null_threshold: 0.05  # 5% null values allowed
-  duplicate_check: true
-  date_range_check: true
-  amount_validation: true
-  
+# CSV specific options (if using CSV format)
+csv_options:
+  header: true
+  delimiter: ","
+  quote: "\""
+  escape: "\\"
+  inferSchema: true
+
 # Performance Tuning
-performance:
-  cache_intermediate_results: true
-  broadcast_join_threshold: 10485760  # 10MB
-  partition_size_mb: 128
-  compression_codec: "snappy"
+enable_cache: true
+enable_checkpoint: false
+checkpoint_dir: "/data/checkpoint"
+
+# Data Quality
+enable_validation: true
+validation_threshold: 0.95  # Minimum success rate
+fail_on_validation_error: false
