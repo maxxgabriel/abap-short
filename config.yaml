@@ -1,106 +1,47 @@
-# Sales ETL System Configuration
+# ETL System Configuration
+# Converted from ABAP ZCL_ETL_CONSTANTS class
 
-etl:
-  app_name: "SalesETLSystem"
-  run_id_prefix: "ETL"
-  
-  # Processing parameters
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  
-  # Date range (can be overridden by command line)
-  default_lookback_days: 7
-
-# Spark Configuration
-spark:
-  master: "local[*]"  # Override in production
-  app_name: "Sales ETL Pipeline"
-  
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.default.parallelism: "200"
-    spark.driver.memory: "4g"
-    spark.executor.memory: "4g"
-    spark.executor.cores: "2"
-    
-# Business Rules
+# Business Rules Configuration
 business_rules:
-  # Discount thresholds
+  # Discount Configuration
   discount:
     tier1_quantity: 10
-    tier1_rate: 0.05
     tier2_quantity: 15
-    tier2_rate: 0.10
+    tier1_rate: "0.05"  # 5% discount
+    tier2_rate: "0.10"  # 10% discount
   
-  # Tax configuration
+  # Tax Configuration
   tax:
-    rate: 0.08
+    rate: "0.08"  # 8% tax rate
   
-  # Cost calculation
+  # Cost and Profit Configuration
   cost:
-    ratio: 0.60  # Cost is 60% of unit price
+    ratio: "0.60"  # Cost is 60% of unit price
   
-  # Category thresholds
+  # Category Thresholds
   category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+    high_threshold: "2000.00"
+    medium_threshold: "500.00"
 
-# Data sources
-data_sources:
-  raw_sales:
-    format: "parquet"  # parquet, csv, jdbc, delta
-    path: "data/raw/sales"
-    options:
-      header: "true"
-      inferSchema: "false"
+# ETL Runtime Configuration
+etl_config:
+  # Batch Processing
+  batch:
+    default_size: 1000
+    commit_interval: 500
   
-  # For JDBC sources (commented out - configure as needed)
-  # raw_sales_jdbc:
-  #   format: "jdbc"
-  #   url: "jdbc:postgresql://localhost:5432/sales_db"
-  #   table: "zsales_raw"
-  #   properties:
-  #     user: "etl_user"
-  #     password: "${DB_PASSWORD}"
-  #     driver: "org.postgresql.Driver"
-
-# Data targets
-data_targets:
-  analytics:
-    format: "parquet"
-    path: "data/analytics/sales"
-    mode: "append"  # overwrite, append, ignore, error
-    partition_by:
-      - "trans_date"
-      - "region"
+  # Retry and Timeout Settings
+  retry:
+    max_attempts: 3
+    timeout_seconds: 3600
   
-  etl_log:
-    format: "parquet"
-    path: "data/logs/etl"
-    mode: "append"
+  # ID Generation Prefixes
+  prefixes:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
 
-# Logging
-logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  handlers:
-    console:
-      enabled: true
-      level: "INFO"
-    
-    file:
-      enabled: true
-      level: "DEBUG"
-      path: "logs/etl.log"
-      max_bytes: 10485760  # 10MB
-      backup_count: 5
-
-# Status codes
+# Status Codes
 status_codes:
   new: "N"
   processed: "P"
@@ -109,18 +50,125 @@ status_codes:
   success: "S"
   info: "I"
 
-# Process steps
+# Process Steps
 process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+  - INIT
+  - EXTRACT
+  - TRANSFORM
+  - LOAD
+  - VALIDATE
+  - COMPLETE
+  - ERROR
 
-# Categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
+# Sale Categories
+sale_categories:
+  - HIGH
+  - MEDIUM
+  - LOW
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  
+  # Log Destinations
+  destinations:
+    console: true
+    file: true
+    database: true
+  
+  # Log File Configuration
+  file:
+    path: "logs/etl_{run_id}.log"
+    max_size_mb: 100
+    backup_count: 5
+
+# Spark Configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"
+  
+  # Spark Settings
+  config:
+    spark.sql.shuffle.partitions: 200
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.executor.memory: "4g"
+    spark.driver.memory: "2g"
+  
+  # Checkpoint Configuration
+  checkpoint:
+    enabled: true
+    location: "/tmp/spark_checkpoints"
+
+# Database Configuration (example values)
+database:
+  # Source Database
+  source:
+    type: "hana"  # or "postgresql", "oracle", etc.
+    host: "localhost"
+    port: 30015
+    database: "SAPABAP"
+    schema: "SAPABAP1"
+    table_raw: "ZSALES_RAW"
+  
+  # Target Database
+  target:
+    type: "hana"
+    host: "localhost"
+    port: 30015
+    database: "SAPABAP"
+    schema: "SAPABAP1"
+    table_analytics: "ZSALES_ANALYTICS"
+    table_log: "ZETL_LOG"
+  
+  # Connection Pool Settings
+  connection_pool:
+    max_connections: 10
+    min_connections: 2
+    connection_timeout: 30
+
+# Data Quality Rules
+data_quality:
+  # Validation Rules
+  validation:
+    required_fields:
+      - trans_id
+      - trans_date
+      - customer_id
+      - product_id
+      - quantity
+      - unit_price
+    
+    numeric_ranges:
+      quantity:
+        min: 0
+        max: 10000
+      unit_price:
+        min: 0.01
+        max: 1000000.00
+    
+    date_ranges:
+      trans_date:
+        min_days_past: 3650  # 10 years
+        max_days_future: 0
+  
+  # Error Handling
+  error_handling:
+    continue_on_error: true
+    max_error_percentage: 5.0
+    quarantine_bad_records: true
+    quarantine_path: "/tmp/etl_quarantine"
+
+# Messages Configuration
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
