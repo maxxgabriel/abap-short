@@ -1,102 +1,67 @@
 # ETL Logger Configuration
+# Migrated from ABAP ZCL_ETL_CONSTANTS
+
+# Logging Configuration
 logging:
-  version: 1
-  disable_existing_loggers: false
-  
-  formatters:
-    standard:
-      format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-      datefmt: '%Y-%m-%d %H:%M:%S'
-    
-    detailed:
-      format: '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-      datefmt: '%Y-%m-%d %H:%M:%S'
-    
-    json:
-      class: pythonjsonlogger.jsonlogger.JsonFormatter
-      format: '%(asctime)s %(name)s %(levelname)s %(message)s'
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  console_output: true
+  persist_logs: true
+  log_format: "%(asctime)s - %(name)s - [%(levelname)s] - %(message)s"
 
-  handlers:
-    console:
-      class: logging.StreamHandler
-      level: INFO
-      formatter: standard
-      stream: ext://sys.stdout
-    
-    file:
-      class: logging.handlers.RotatingFileHandler
-      level: DEBUG
-      formatter: detailed
-      filename: logs/etl_process.log
-      maxBytes: 10485760  # 10MB
-      backupCount: 5
-      encoding: utf8
-    
-    error_file:
-      class: logging.handlers.RotatingFileHandler
-      level: ERROR
-      formatter: detailed
-      filename: logs/etl_errors.log
-      maxBytes: 10485760  # 10MB
-      backupCount: 5
-      encoding: utf8
+# Status Codes (from ABAP gc_status)
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
 
-  loggers:
-    etl_logger:
-      level: DEBUG
-      handlers: [console, file, error_file]
-      propagate: false
+# Process Steps (from ABAP gc_step)
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
 
-  root:
-    level: INFO
-    handlers: [console, file]
-
-# ETL Process Configuration
+# ETL Configuration
 etl:
-  # Run ID generation
-  run_id:
-    prefix: 'ETL'
-    timestamp_format: '%Y%m%d%H%M%S'
-  
-  # Log ID generation
-  log_id:
-    prefix: 'LOG'
-    timestamp_format: '%Y%m%d%H%M%S'
-  
-  # Status codes
-  status_codes:
-    success: 'S'
-    error: 'E'
-    warning: 'W'
-    info: 'I'
-  
-  # Process steps
-  steps:
-    - INIT
-    - EXTRACT
-    - TRANSFORM
-    - LOAD
-    - VALIDATE
-    - COMPLETE
-    - ERROR
-  
-  # Logging options
-  logging_options:
-    log_to_console: true
-    log_to_file: true
-    log_to_database: false
-    console_log_level: INFO
-    file_log_level: DEBUG
-    max_log_entries_memory: 10000
-  
-  # Retention policy
-  retention:
-    log_files_days: 30
-    database_logs_days: 90
-    archive_old_logs: true
+  default_batch_size: 1000
+  default_commit_interval: 500
+  default_retry_attempts: 3
+  default_timeout_seconds: 3600
+  run_id_prefix: "ETL"
+  log_id_prefix: "LOG"
 
-# Application Settings
-app:
-  name: 'Sales ETL Logger'
-  version: '1.0.0'
-  environment: 'production'
+# Storage Configuration
+storage:
+  log_path: "s3://etl-bucket/logs"  # Change to your storage path
+  log_format: "parquet"  # parquet, delta, csv
+  log_write_mode: "append"  # append, overwrite
+  partition_by:
+    - "execution_date"
+
+# Message Templates (from ABAP gc_msg_*)
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
+
+# Spark Configuration
+spark:
+  app_name: "ETL_Logger"
+  master: "local[*]"  # Change for cluster deployment
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.executor.memory: "4g"
+    spark.driver.memory: "2g"
