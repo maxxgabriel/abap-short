@@ -1,119 +1,136 @@
 """
-ETL Constants and Configuration Values
+ETL Constants and Configuration
 Migrated from ZCL_ETL_CONSTANTS
 """
 
 from typing import Dict, Any
-from decimal import Decimal
+from dataclasses import dataclass
+import yaml
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class StatusCodes:
+    """Status code constants"""
+    NEW = "N"
+    PROCESSED = "P"
+    ERROR = "E"
+    WARNING = "W"
+    SUCCESS = "S"
+    INFO = "I"
+
+
+@dataclass(frozen=True)
+class ProcessSteps:
+    """ETL process step constants"""
+    INIT = "INIT"
+    EXTRACT = "EXTRACT"
+    TRANSFORM = "TRANSFORM"
+    LOAD = "LOAD"
+    VALIDATE = "VALIDATE"
+    COMPLETE = "COMPLETE"
+    ERROR = "ERROR"
+
+
+@dataclass(frozen=True)
+class SaleCategories:
+    """Sale category constants"""
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+@dataclass(frozen=True)
+class IDPrefixes:
+    """ID prefix constants"""
+    ETL_RUN = "ETL"
+    LOG_ID = "LOG"
+    ANALYTICS_ID = "ANL"
 
 
 class ETLConstants:
-    """Central constants and configuration for ETL system"""
+    """Main constants class for ETL system"""
     
-    # Status codes
-    class Status:
-        NEW = "N"
-        PROCESSED = "P"
-        ERROR = "E"
-        WARNING = "W"
-        SUCCESS = "S"
-        INFO = "I"
+    STATUS = StatusCodes()
+    STEP = ProcessSteps()
+    CATEGORY = SaleCategories()
+    PREFIX = IDPrefixes()
     
-    # Process steps
-    class Step:
-        INIT = "INIT"
-        EXTRACT = "EXTRACT"
-        TRANSFORM = "TRANSFORM"
-        LOAD = "LOAD"
-        VALIDATE = "VALIDATE"
-        COMPLETE = "COMPLETE"
-        ERROR = "ERROR"
-    
-    # Sale categories
-    class Category:
-        HIGH = "HIGH"
-        MEDIUM = "MEDIUM"
-        LOW = "LOW"
-    
-    # Business rules - Discount thresholds
-    DISCOUNT_QTY_TIER1 = 10
-    DISCOUNT_QTY_TIER2 = 15
-    DISCOUNT_RATE_TIER1 = Decimal("0.05")
-    DISCOUNT_RATE_TIER2 = Decimal("0.10")
-    
-    # Business rules - Tax rate
-    TAX_RATE = Decimal("0.08")
-    
-    # Business rules - Cost ratio
-    COST_RATIO = Decimal("0.60")
-    
-    # Business rules - Category thresholds
-    CATEGORY_HIGH_THRESHOLD = Decimal("2000.00")
-    CATEGORY_MEDIUM_THRESHOLD = Decimal("500.00")
-    
-    # ETL configuration defaults
+    # Default Configuration Values
     DEFAULT_BATCH_SIZE = 1000
     DEFAULT_COMMIT_INTERVAL = 500
     DEFAULT_RETRY_ATTEMPTS = 3
     DEFAULT_TIMEOUT_SECONDS = 3600
     
-    # ID prefixes
-    PREFIX_ETL_RUN = "ETL"
-    PREFIX_LOG_ID = "LOG"
-    PREFIX_ANALYTICS_ID = "ANL"
+    def __init__(self, config_path: str = "config.yaml"):
+        """
+        Initialize constants from configuration file
+        
+        Args:
+            config_path: Path to YAML configuration file
+        """
+        self.config = self._load_config(config_path)
+        
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """Load configuration from YAML file"""
+        try:
+            config_file = Path(config_path)
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    return yaml.safe_load(f)
+            else:
+                return self._get_default_config()
+        except Exception as e:
+            print(f"Warning: Could not load config from {config_path}: {e}")
+            return self._get_default_config()
     
-    # Message texts
-    class Messages:
-        INIT_SUCCESS = "ETL process initialized successfully"
-        EXTRACT_START = "Starting data extraction"
-        EXTRACT_COMPLETE = "Data extraction completed"
-        TRANSFORM_START = "Starting data transformation"
-        TRANSFORM_COMPLETE = "Data transformation completed"
-        LOAD_START = "Starting data load"
-        LOAD_COMPLETE = "Data load completed"
-        ETL_COMPLETE = "ETL process completed successfully"
-        ETL_ERROR = "ETL process failed"
-    
-    @classmethod
-    def get_all_constants(cls) -> Dict[str, Any]:
-        """Get all constants as a dictionary"""
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Return default configuration"""
         return {
-            "status": {
-                "new": cls.Status.NEW,
-                "processed": cls.Status.PROCESSED,
-                "error": cls.Status.ERROR,
-                "warning": cls.Status.WARNING,
-                "success": cls.Status.SUCCESS,
-                "info": cls.Status.INFO,
+            'etl': {
+                'batch_size': self.DEFAULT_BATCH_SIZE,
+                'commit_interval': self.DEFAULT_COMMIT_INTERVAL,
+                'retry_attempts': self.DEFAULT_RETRY_ATTEMPTS,
+                'timeout_seconds': self.DEFAULT_TIMEOUT_SECONDS,
             },
-            "steps": {
-                "init": cls.Step.INIT,
-                "extract": cls.Step.EXTRACT,
-                "transform": cls.Step.TRANSFORM,
-                "load": cls.Step.LOAD,
-                "validate": cls.Step.VALIDATE,
-                "complete": cls.Step.COMPLETE,
-                "error": cls.Step.ERROR,
-            },
-            "categories": {
-                "high": cls.Category.HIGH,
-                "medium": cls.Category.MEDIUM,
-                "low": cls.Category.LOW,
-            },
-            "business_rules": {
-                "discount_qty_tier1": cls.DISCOUNT_QTY_TIER1,
-                "discount_qty_tier2": cls.DISCOUNT_QTY_TIER2,
-                "discount_rate_tier1": float(cls.DISCOUNT_RATE_TIER1),
-                "discount_rate_tier2": float(cls.DISCOUNT_RATE_TIER2),
-                "tax_rate": float(cls.TAX_RATE),
-                "cost_ratio": float(cls.COST_RATIO),
-                "category_high_threshold": float(cls.CATEGORY_HIGH_THRESHOLD),
-                "category_medium_threshold": float(cls.CATEGORY_MEDIUM_THRESHOLD),
-            },
-            "defaults": {
-                "batch_size": cls.DEFAULT_BATCH_SIZE,
-                "commit_interval": cls.DEFAULT_COMMIT_INTERVAL,
-                "retry_attempts": cls.DEFAULT_RETRY_ATTEMPTS,
-                "timeout_seconds": cls.DEFAULT_TIMEOUT_SECONDS,
+            'business_rules': {
+                'discount': {
+                    'tier1_quantity': 10,
+                    'tier2_quantity': 15,
+                    'tier1_rate': 0.05,
+                    'tier2_rate': 0.10,
+                },
+                'tax_rate': 0.08,
+                'cost_ratio': 0.60,
+                'category': {
+                    'high_threshold': 2000.00,
+                    'medium_threshold': 500.00,
+                }
             }
         }
+    
+    def get(self, key_path: str, default: Any = None) -> Any:
+        """
+        Get configuration value by dot-notation path
+        
+        Args:
+            key_path: Dot-separated path to config value (e.g., 'etl.batch_size')
+            default: Default value if key not found
+            
+        Returns:
+            Configuration value or default
+        """
+        keys = key_path.split('.')
+        value = self.config
+        
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+                
+        return value
+
+
+# Module-level constants instance
+constants = ETLConstants()
