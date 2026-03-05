@@ -1,87 +1,95 @@
 """
-Utility functions for ETL Logger module.
+Utility functions for ETL logging framework
 """
+
 from datetime import datetime
-from typing import Optional
+import uuid
+from typing import Dict, Any
 
 
 def generate_etl_run_id(prefix: str = "ETL") -> str:
     """
-    Generate a unique ETL run ID.
-
+    Generate unique ETL run ID.
+    Migrated from ABAP generate_etl_run_id method.
+    
     Args:
-        prefix: Prefix for the run ID
-
+        prefix: Prefix for the ID
+        
     Returns:
-        Unique ETL run ID string
+        Unique ETL run identifier
     """
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    return f"{prefix}{timestamp}"
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    unique_suffix = str(uuid.uuid4())[:8].upper()
+    return f"{prefix}{timestamp}{unique_suffix}"
 
 
-def format_execution_date(date_str: Optional[str] = None) -> str:
+def format_log_message(
+    step: str,
+    status: str,
+    message: str,
+    records_processed: int = 0,
+    records_success: int = 0,
+    records_error: int = 0
+) -> str:
     """
-    Format date string for execution date field.
-
+    Format log message for consistent output.
+    
     Args:
-        date_str: Optional date string in ISO format
-
+        step: Process step
+        status: Status code
+        message: Log message
+        records_processed: Total records processed
+        records_success: Successfully processed records
+        records_error: Records with errors
+        
     Returns:
-        Formatted date string (YYYY-MM-DD)
+        Formatted log message string
     """
-    if date_str:
-        try:
-            dt = datetime.fromisoformat(date_str)
-            return dt.strftime("%Y-%m-%d")
-        except ValueError:
-            pass
+    stats = ""
+    if records_processed > 0:
+        stats = (
+            f" | Processed: {records_processed}, "
+            f"Success: {records_success}, "
+            f"Error: {records_error}"
+        )
+    
+    return f"[{step}][{status}] {message}{stats}"
 
-    return datetime.now().strftime("%Y-%m-%d")
 
-
-def format_execution_time(time_str: Optional[str] = None) -> str:
+def calculate_duration(start_time: datetime, end_time: datetime) -> Dict[str, Any]:
     """
-    Format time string for execution time field.
-
+    Calculate duration between two timestamps.
+    
     Args:
-        time_str: Optional time string in ISO format
-
+        start_time: Start timestamp
+        end_time: End timestamp
+        
     Returns:
-        Formatted time string (HH:MM:SS)
+        Dictionary with duration metrics
     """
-    if time_str:
-        try:
-            dt = datetime.fromisoformat(time_str)
-            return dt.strftime("%H:%M:%S")
-        except ValueError:
-            pass
+    duration = end_time - start_time
+    
+    return {
+        "total_seconds": duration.total_seconds(),
+        "minutes": duration.total_seconds() / 60,
+        "hours": duration.total_seconds() / 3600,
+        "formatted": str(duration)
+    }
 
-    return datetime.now().strftime("%H:%M:%S")
 
-
-def validate_status_code(status: str, valid_codes: list) -> bool:
+def validate_log_entry(log_entry: Dict[str, Any]) -> bool:
     """
-    Validate status code against allowed values.
-
+    Validate log entry structure.
+    
     Args:
-        status: Status code to validate
-        valid_codes: List of valid status codes
-
+        log_entry: Log entry dictionary
+        
     Returns:
         True if valid, False otherwise
     """
-    return status in valid_codes
-
-
-def validate_process_step(step: str, valid_steps: list) -> bool:
-    """
-    Validate process step against allowed values.
-
-    Args:
-        step: Process step to validate
-        valid_steps: List of valid process steps
-
-    Returns:
-        True if valid, False otherwise
-    """
-    return step in valid_steps
+    required_fields = [
+        "log_id", "etl_run_id", "execution_timestamp",
+        "process_step", "status"
+    ]
+    
+    return all(field in log_entry for field in required_fields)
