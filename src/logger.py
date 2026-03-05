@@ -1,25 +1,21 @@
 """
-Logging module for ETL system.
-Provides structured logging for ETL operations.
+ETL logging utility.
 """
-from typing import Optional
+import logging
 from datetime import datetime
-from pyspark.sql import SparkSession
+from typing import Optional
+from pyspark.sql import SparkSession, DataFrame
+from src.schemas import ETLSchemas
+from src.constants import ETLConstants
 
 
 class ETLLogger:
-    """Logger for ETL operations."""
+    """Logger for ETL processes with DataFrame-based log storage."""
     
-    def __init__(self, spark: SparkSession, etl_run_id: str):
-        """
-        Initialize the ETL logger.
-        
-        Args:
-            spark: SparkSession instance
-            etl_run_id: Unique ETL run identifier
-        """
-        self.spark = spark
+    def __init__(self, etl_run_id: str, spark: SparkSession):
         self.etl_run_id = etl_run_id
+        self.spark = spark
+        self.logger = logging.getLogger(f"ETL.{etl_run_id}")
         self._log_entries = []
     
     def log_message(
@@ -30,77 +26,57 @@ class ETLLogger:
         records_processed: int = 0,
         records_success: int = 0,
         records_error: int = 0
-    ) -> None:
-        """
-        Log a message with ETL context.
+    ):
+        """Log a message with context."""
+        now = datetime.now()
         
-        Args:
-            step: ETL process step (EXTRACT, TRANSFORM, LOAD, etc.)
-            status: Status code (S=Success, E=Error, W=Warning, I=Info)
-            message: Log message
-            records_processed: Number of records processed
-            records_success: Number of successful records
-            records_error: Number of error records
-        """
         log_entry = {
             "log_id": self._generate_log_id(),
             "etl_run_id": self.etl_run_id,
-            "execution_date": datetime.now().date().isoformat(),
-            "execution_time": datetime.now().time().strftime("%H:%M:%S"),
+            "execution_date": now.date(),
+            "execution_time": now.strftime("%H:%M:%S"),
             "process_step": step,
             "status": status,
             "records_processed": records_processed,
             "records_success": records_success,
             "records_error": records_error,
             "message": message,
-            "timestamp": datetime.now().isoformat()
+            "created_at": now,
+            "created_by": "ETL_SYSTEM"
         }
         
         self._log_entries.append(log_entry)
         
-        # Print to console
-        status_symbol = {
-            "S": "✓",
-            "E": "✗",
-            "W": "⚠",
-            "I": "ℹ"
-        }.get(status, "•")
-        
-        print(f"[{log_entry['execution_time']}] {status_symbol} {step}: {message}")
-        
-        if records_processed > 0:
-            print(f"  └─ Processed: {records_processed}, Success: {records_success}, Error: {records_error}")
+        # Console logging
+        log_level = self._get_log_level(status)
+        self.logger.log(
+            log_level,
+            f"[{step}] {message} (Processed: {records_processed}, "
+            f"Success: {records_success}, Error: {records_error})"
+        )
     
-    def get_etl_run_id(self) -> str:
-        """Get the current ETL run ID."""
-        return self.etl_run_id
+    def get_logs_dataframe(self) -> Optional[DataFrame]:
+        """Get all logs as a DataFrame."""
+        if not self._log_entries:
+            return None
+        
+        return self.spark.createDataFrame(
+            self._log_entries,
+            schema=ETLSchemas.etl_log_schema()
+        )
     
     def _generate_log_id(self) -> str:
-        """Generate a unique log ID."""
+        """Generate unique log ID."""
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        return f"LOG{timestamp}"
+        return f"{ETLConstants.PREFIX_LOG_ID}{timestamp}"
     
-    def get_log_entries(self) -> list:
-        """Get all log entries for this ETL run."""
-        return self._log_entries
-    
-    def persist_logs(self, target_table: str = "zetl_log") -> None:
-        """
-        Persist log entries to database table.
-        
-        Args:
-            target_table: Target log table name
-        """
-        if not self._log_entries:
-            return
-        
-        try:
-            df = self.spark.createDataFrame(self._log_entries)
-            df.write \
-                .format("delta") \
-                .mode("append") \
-                .saveAsTable(target_table)
-            
-            print(f"Persisted {len(self._log_entries)} log entries to {target_table}")
-        except Exception as e:
-            print(f"Failed to persist logs: {str(e)}")
+    @staticmethod
+    def _get_log_level(status: str) -> int:
+        """Map ETL status to logging level."""
+        mapping = {
+            ETLConstants.STATUS.SUCCESS: logging.INFO,
+            ETLConstants.STATUS.INFO: logging.INFO,
+            ETLConstants.STATUS.WARNING: logging.WARNING,
+            ETLConstants.STATUS.ERROR: logging.ERROR
+        }
+        return mapping.get(status, logging.INFO)
