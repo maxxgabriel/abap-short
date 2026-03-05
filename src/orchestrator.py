@@ -1,372 +1,205 @@
 """
-ETL Orchestration Pipeline
-Coordinates chained transformations with retry logic and comprehensive error handling
+ETL orchestration module.
+Coordinates extract, transform, and load operations.
 """
-from pyspark.sql import SparkSession, DataFrame
-from typing import Dict, Any, Optional, Tuple, List, Callable
-from datetime import datetime, timedelta
+from pyspark.sql import SparkSession
 import logging
-import time
-from enum import Enum
-import traceback
+from datetime import datetime
+import uuid
+from typing import Optional
 
-from src.extract import SalesDataExtractor
-from src.transform import SalesDataTransformer
-from src.load import SalesDataLoader
-from src.logger import ETLLogger
-from src.config import ETLConfig
-from src.exceptions import ETLError, ExtractError, TransformError, LoadError
+from src.extract import SalesExtractor
+from src.transform import SalesTransformer
+from src.load import SalesLoader
 
-
-class ETLStatus(Enum):
-    """ETL execution status"""
-    NEW = 'N'
-    PROCESSING = 'P'
-    SUCCESS = 'S'
-    ERROR = 'E'
-    WARNING = 'W'
-
-
-class ETLStep(Enum):
-    """ETL process steps"""
-    INIT = 'INIT'
-    EXTRACT = 'EXTRACT'
-    TRANSFORM = 'TRANSFORM'
-    LOAD = 'LOAD'
-    VALIDATE = 'VALIDATE'
-    COMPLETE = 'COMPLETE'
-    ERROR = 'ERROR'
+logger = logging.getLogger(__name__)
 
 
 class ETLOrchestrator:
-    """
-    Main ETL orchestrator coordinating extraction, transformation, and loading
-    with retry logic and comprehensive error handling
-    """
+    """Main ETL orchestrator that coordinates the complete pipeline."""
     
-    def __init__(self, spark: SparkSession, config: ETLConfig):
+    def __init__(self, spark: SparkSession, config: dict):
         """
-        Initialize orchestrator
+        Initialize orchestrator with Spark session and configuration.
         
         Args:
-            spark: SparkSession instance
-            config: ETL configuration
+            spark: Active SparkSession
+            config: Configuration dictionary
         """
         self.spark = spark
         self.config = config
+        self.logger = logger
+        
+        # Generate unique ETL run ID
         self.etl_run_id = self._generate_etl_run_id()
-        self.logger = ETLLogger(self.etl_run_id, config)
         
         # Initialize components
-        self.extractor = SalesDataExtractor(spark, self.logger, config)
-        self.transformer = SalesDataTransformer(spark, self.logger, config)
-        self.loader = SalesDataLoader(spark, self.logger, config)
+        self.extractor = SalesExtractor(spark, config)
+        self.transformer = SalesTransformer(config)
+        self.loader = SalesLoader(spark, config)
         
-        # Execution metrics
-        self.start_time: Optional[datetime] = None
-        self.end_time: Optional[datetime] = None
-        self.statistics: Dict[str, Any] = {}
-        
-        self.logger.log_message(
-            step=ETLStep.INIT.value,
-            status=ETLStatus.SUCCESS.value,
-            message=f"ETL process initialized with run ID: {self.etl_run_id}"
-        )
+        # Track execution metrics
+        self.metrics = {
+            "etl_run_id": self.etl_run_id,
+            "start_time": None,
+            "end_time": None,
+            "duration_seconds": None,
+            "records_extracted": 0,
+            "records_transformed": 0,
+            "records_loaded": 0,
+            "status": "INITIALIZED"
+        }
     
     def _generate_etl_run_id(self) -> str:
-        """Generate unique ETL run ID"""
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        return f"ETL{timestamp[:14]}"
+        """
+        Generate unique ETL run identifier.
+        
+        Returns:
+            Unique ETL run ID string
+        """
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        return f"ETL{timestamp}{unique_id}"
     
     def run_etl(
         self,
         from_date: str,
         to_date: str,
-        test_mode: bool = False
-    ) -> Tuple[bool, Dict[str, Any]]:
+        use_sample_data: bool = False
+    ) -> dict:
         """
-        Execute complete ETL pipeline with retry logic
+        Execute complete ETL pipeline.
         
         Args:
-            from_date: Start date (YYYY-MM-DD)
-            to_date: End date (YYYY-MM-DD)
-            test_mode: If True, run without committing data
-        
+            from_date: Start date for extraction (YYYY-MM-DD)
+            to_date: End date for extraction (YYYY-MM-DD)
+            use_sample_data: If True, use sample data instead of actual extraction
+            
         Returns:
-            Tuple of (success flag, statistics dictionary)
+            Dictionary containing execution metrics and status
         """
-        self.start_time = datetime.now()
-        success = False
+        self.metrics["start_time"] = datetime.now()
+        
+        self.logger.info("=" * 70)
+        self.logger.info(f"ETL Process Started - Run ID: {self.etl_run_id}")
+        self.logger.info(f"Date Range: {from_date} to {to_date}")
+        self.logger.info("=" * 70)
         
         try:
-            self.logger.log_message(
-                step=ETLStep.INIT.value,
-                status=ETLStatus.PROCESSING.value,
-                message=f"ETL process started at {self.start_time}. Date range: {from_date} to {to_date}"
-            )
+            # Phase 1: EXTRACT
+            self.logger.info("\n=== EXTRACT Phase ===")
+            self.metrics["status"] = "EXTRACTING"
             
-            # Execute ETL chain
-            raw_data = self._execute_with_retry(
-                step=ETLStep.EXTRACT,
-                func=self.extractor.extract_data,
-                from_date=from_date,
-                to_date=to_date
-            )
+            if use_sample_data:
+                raw_df = self.extractor.extract_sample_data()
+            else:
+                raw_df = self.extractor.extract_data(from_date, to_date)
             
-            if raw_data is None or raw_data.rdd.isEmpty():
-                raise ETLError("No data extracted from source")
+            self.metrics["records_extracted"] = raw_df.count()
+            self.logger.info(f"Extraction completed: {self.metrics['records_extracted']} records")
             
-            transformed_data = self._execute_with_retry(
-                step=ETLStep.TRANSFORM,
-                func=self.transformer.transform_data,
-                raw_data=raw_data
-            )
+            if self.metrics["records_extracted"] == 0:
+                self.logger.warning("No records to process")
+                self.metrics["status"] = "NO_DATA"
+                return self._finalize_metrics()
             
-            if transformed_data is None or transformed_data.rdd.isEmpty():
-                raise ETLError("Transformation produced no data")
+            # Phase 2: TRANSFORM
+            self.logger.info("\n=== TRANSFORM Phase ===")
+            self.metrics["status"] = "TRANSFORMING"
             
-            load_success = self._execute_with_retry(
-                step=ETLStep.LOAD,
-                func=self.loader.load_data,
-                analytics_data=transformed_data,
-                test_mode=test_mode
-            )
+            analytics_df = self.transformer.transform_data(raw_df, self.etl_run_id)
+            self.metrics["records_transformed"] = analytics_df.count()
+            self.logger.info(f"Transformation completed: {self.metrics['records_transformed']} records")
             
-            if not load_success:
-                raise ETLError("Data load failed")
+            # Validate transformed data
+            if not self.transformer.validate_transformed_data(analytics_df):
+                raise ValueError("Transformed data validation failed")
             
-            # Mark as successful
-            self.end_time = datetime.now()
-            success = True
+            # Phase 3: LOAD
+            self.logger.info("\n=== LOAD Phase ===")
+            self.metrics["status"] = "LOADING"
             
-            # Collect statistics
-            self._collect_statistics()
+            load_result = self.loader.load_data(analytics_df)
             
-            self.logger.log_message(
-                step=ETLStep.COMPLETE.value,
-                status=ETLStatus.SUCCESS.value,
-                message=f"ETL process completed successfully at {self.end_time}",
-                records_processed=self.statistics.get('total_records', 0),
-                records_success=self.statistics.get('success_records', 0)
-            )
+            if not load_result["success"]:
+                raise ValueError(f"Load failed: {load_result.get('error', 'Unknown error')}")
+            
+            self.metrics["records_loaded"] = load_result["records_loaded"]
+            self.logger.info(f"Load completed: {self.metrics['records_loaded']} records")
+            
+            # Validate load
+            if not self.loader.validate_load(
+                self.config['target']['table_name'],
+                self.etl_run_id
+            ):
+                raise ValueError("Load validation failed")
+            
+            # Update source table status (optional)
+            if self.config.get('update_source_status', True):
+                processed_ids = [row.trans_id for row in raw_df.select("trans_id").collect()]
+                self.loader.update_source_status(processed_ids)
+            
+            self.metrics["status"] = "SUCCESS"
+            self.logger.info("\n*** ETL Process Completed Successfully ***")
             
         except Exception as e:
-            self.end_time = datetime.now()
-            self._handle_pipeline_failure(e)
-            success = False
+            self.metrics["status"] = "FAILED"
+            self.logger.error(f"\n*** ETL Process Failed ***")
+            self.logger.error(f"Error: {str(e)}", exc_info=True)
+            self.metrics["error"] = str(e)
         
         finally:
-            # Always collect final statistics
-            if not self.statistics:
-                self._collect_statistics()
-        
-        return success, self.statistics
+            return self._finalize_metrics()
     
-    def _execute_with_retry(
-        self,
-        step: ETLStep,
-        func: Callable,
-        **kwargs
-    ) -> Any:
+    def _finalize_metrics(self) -> dict:
         """
-        Execute a function with retry logic
-        
-        Args:
-            step: ETL step being executed
-            func: Function to execute
-            **kwargs: Arguments to pass to function
+        Finalize execution metrics.
         
         Returns:
-            Function result
-        
-        Raises:
-            ETLError: If all retry attempts fail
+            Complete metrics dictionary
         """
-        max_retries = self.config.retry_config.max_attempts
-        retry_delay = self.config.retry_config.initial_delay
+        self.metrics["end_time"] = datetime.now()
         
-        for attempt in range(1, max_retries + 1):
-            try:
-                self.logger.log_message(
-                    step=step.value,
-                    status=ETLStatus.PROCESSING.value,
-                    message=f"Executing {step.value} (Attempt {attempt}/{max_retries})"
-                )
-                
-                result = func(**kwargs)
-                
-                self.logger.log_message(
-                    step=step.value,
-                    status=ETLStatus.SUCCESS.value,
-                    message=f"{step.value} completed successfully"
-                )
-                
-                return result
-                
-            except Exception as e:
-                error_msg = f"{step.value} attempt {attempt} failed: {str(e)}"
-                
-                if attempt < max_retries:
-                    self.logger.log_message(
-                        step=step.value,
-                        status=ETLStatus.WARNING.value,
-                        message=f"{error_msg}. Retrying in {retry_delay}s..."
-                    )
-                    time.sleep(retry_delay)
-                    retry_delay *= self.config.retry_config.backoff_multiplier
-                else:
-                    self.logger.log_message(
-                        step=step.value,
-                        status=ETLStatus.ERROR.value,
-                        message=f"{error_msg}. Max retries exceeded."
-                    )
-                    raise self._map_exception_to_etl_error(step, e)
+        if self.metrics["start_time"] and self.metrics["end_time"]:
+            duration = self.metrics["end_time"] - self.metrics["start_time"]
+            self.metrics["duration_seconds"] = duration.total_seconds()
+        
+        self._display_summary()
+        return self.metrics
     
-    def _map_exception_to_etl_error(self, step: ETLStep, error: Exception) -> ETLError:
-        """Map generic exceptions to specific ETL errors"""
-        error_mapping = {
-            ETLStep.EXTRACT: ExtractError,
-            ETLStep.TRANSFORM: TransformError,
-            ETLStep.LOAD: LoadError
-        }
+    def _display_summary(self) -> None:
+        """Display execution summary."""
+        self.logger.info("\n" + "=" * 70)
+        self.logger.info("ETL Process Summary")
+        self.logger.info("=" * 70)
+        self.logger.info(f"ETL Run ID:       {self.metrics['etl_run_id']}")
+        self.logger.info(f"Status:           {self.metrics['status']}")
+        self.logger.info(f"Start Time:       {self.metrics['start_time']}")
+        self.logger.info(f"End Time:         {self.metrics['end_time']}")
+        self.logger.info(f"Duration:         {self.metrics.get('duration_seconds', 0):.2f} seconds")
+        self.logger.info(f"Records Extracted: {self.metrics['records_extracted']}")
+        self.logger.info(f"Records Transformed: {self.metrics['records_transformed']}")
+        self.logger.info(f"Records Loaded:    {self.metrics['records_loaded']}")
         
-        exception_class = error_mapping.get(step, ETLError)
-        return exception_class(
-            f"{step.value} failed: {str(error)}",
-            step=step.value,
-            original_error=error
-        )
-    
-    def _handle_pipeline_failure(self, error: Exception):
-        """
-        Handle pipeline-level failures
+        if "error" in self.metrics:
+            self.logger.info(f"Error:            {self.metrics['error']}")
         
-        Args:
-            error: Exception that caused failure
-        """
-        error_details = {
-            'error_type': type(error).__name__,
-            'error_message': str(error),
-            'traceback': traceback.format_exc()
-        }
-        
-        self.logger.log_message(
-            step=ETLStep.ERROR.value,
-            status=ETLStatus.ERROR.value,
-            message=f"ETL pipeline failed: {error_details['error_message']}"
-        )
-        
-        # Log detailed error if in debug mode
-        if self.config.etl_config.get('debug_mode', False):
-            self.logger.logger.error(f"Full traceback: {error_details['traceback']}")
-        
-        # Update statistics with error
-        self.statistics['error'] = error_details
-    
-    def _collect_statistics(self):
-        """Collect execution statistics"""
-        duration = (self.end_time - self.start_time).total_seconds() if self.start_time and self.end_time else 0
-        
-        self.statistics = {
-            'etl_run_id': self.etl_run_id,
-            'start_time': self.start_time.isoformat() if self.start_time else None,
-            'end_time': self.end_time.isoformat() if self.end_time else None,
-            'duration_seconds': duration,
-            'total_records': self.extractor.statistics.get('records_extracted', 0),
-            'success_records': self.loader.statistics.get('records_loaded', 0),
-            'error_records': self.loader.statistics.get('records_failed', 0),
-            'transform_errors': self.transformer.statistics.get('records_failed', 0)
-        }
+        self.logger.info("=" * 70)
     
     def get_etl_run_id(self) -> str:
-        """Get current ETL run ID"""
+        """
+        Get the current ETL run ID.
+        
+        Returns:
+            ETL run ID string
+        """
         return self.etl_run_id
     
-    def display_summary(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict:
         """
-        Display execution summary
+        Get execution metrics.
         
         Returns:
-            Summary dictionary
+            Dictionary containing all execution metrics
         """
-        summary = {
-            'ETL Run ID': self.etl_run_id,
-            'Start Time': self.start_time.isoformat() if self.start_time else 'N/A',
-            'End Time': self.end_time.isoformat() if self.end_time else 'N/A',
-            'Duration (seconds)': self.statistics.get('duration_seconds', 0),
-            'Total Records': self.statistics.get('total_records', 0),
-            'Successfully Loaded': self.statistics.get('success_records', 0),
-            'Failed Records': self.statistics.get('error_records', 0),
-            'Transform Errors': self.statistics.get('transform_errors', 0)
-        }
-        
-        # Log summary
-        self.logger.logger.info("=" * 60)
-        self.logger.logger.info("ETL Process Summary")
-        self.logger.logger.info("=" * 60)
-        for key, value in summary.items():
-            self.logger.logger.info(f"{key}: {value}")
-        self.logger.logger.info("=" * 60)
-        
-        return summary
-    
-    def validate_pipeline(self) -> Tuple[bool, List[str]]:
-        """
-        Validate pipeline prerequisites
-        
-        Returns:
-            Tuple of (validation success, list of issues)
-        """
-        issues = []
-        
-        # Validate components
-        if not self.extractor.validate_prerequisites():
-            issues.append("Extractor prerequisites not met")
-        
-        if not self.transformer.validate_prerequisites():
-            issues.append("Transformer prerequisites not met")
-        
-        if not self.loader.validate_prerequisites():
-            issues.append("Loader prerequisites not met")
-        
-        # Validate configuration
-        if not self.config.validate():
-            issues.append("Invalid configuration")
-        
-        is_valid = len(issues) == 0
-        
-        if is_valid:
-            self.logger.log_message(
-                step=ETLStep.VALIDATE.value,
-                status=ETLStatus.SUCCESS.value,
-                message="Pipeline validation successful"
-            )
-        else:
-            self.logger.log_message(
-                step=ETLStep.VALIDATE.value,
-                status=ETLStatus.ERROR.value,
-                message=f"Pipeline validation failed: {', '.join(issues)}"
-            )
-        
-        return is_valid, issues
-
-
-def create_orchestrator(config_path: str = "config.yaml") -> ETLOrchestrator:
-    """
-    Factory function to create orchestrator instance
-    
-    Args:
-        config_path: Path to configuration file
-    
-    Returns:
-        Configured ETLOrchestrator instance
-    """
-    spark = SparkSession.builder \
-        .appName("SalesETLOrchestrator") \
-        .config("spark.sql.adaptive.enabled", "true") \
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
-        .getOrCreate()
-    
-    config = ETLConfig.from_yaml(config_path)
-    
-    return ETLOrchestrator(spark, config)
+        return self.metrics.copy()
