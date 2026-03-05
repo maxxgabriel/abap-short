@@ -1,282 +1,433 @@
-# Sales ETL System - ABAP Project
+# Sales ETL System - PySpark Implementation
 
-## 📋 Overview
+## Overview
 
-A professionally structured ABAP ETL (Extract, Transform, Load) system for processing sales transaction data. This project demonstrates modern ABAP development practices with proper separation of concerns, interface-driven design, and comprehensive error handling.
+This project is a production-grade PySpark implementation of a Sales ETL (Extract, Transform, Load) system migrated from ABAP. The system extracts raw sales data, applies business transformations including discount calculations, tax computations, and profit margin analysis, and loads the processed data into an analytics table.
 
-## 🏗️ Project Structure
+## Package Structure
 
 ```
-abap-short/
-│
-├── src/                          # Source code
-│   ├── classes/                  # ABAP Classes
-│   │   ├── ZCL_ETL_CONSTANTS.abap      # Constants and configuration
-│   │   ├── ZCL_ETL_LOGGER.abap         # Logging utility
-│   │   ├── ZCL_ETL_EXTRACTOR.abap      # Data extraction
-│   │   ├── ZCL_ETL_TRANSFORMER.abap    # Data transformation
-│   │   ├── ZCL_ETL_LOADER.abap         # Data loading
-│   │   └── ZCL_ETL_ORCHESTRATOR.abap   # ETL orchestration
-│   │
-│   ├── interfaces/               # Interface definitions
-│   │   ├── ZIF_ETL_COMPONENT.abap      # Component interface
-│   │   └── ZIF_ETL_LOGGER.abap         # Logger interface
-│   │
-│   ├── exceptions/               # Exception classes
-│   │   └── ZCX_ETL_ERROR.abap          # ETL exception class
-│   │
-│   ├── types/                    # Type definitions
-│   │   └── ZETL_TYPES.abap             # Common type pool
-│   │
-│   ├── includes/                 # Include programs
-│   │   ├── ZETL_TOP.abap               # Common declarations
-│   │   └── ZETL_MACROS.abap            # Utility macros
-│   │
-│   ├── tables/                   # Database table definitions
-│   │   ├── ZSALES_RAW.txt              # Source table
-│   │   ├── ZSALES_ANALYTICS.txt        # Target table
-│   │   └── ZETL_LOG.txt                # Log table
-│   │
-│   └── programs/                 # Executable programs
-│       └── Z_SALES_ETL_MAIN.abap       # Main ETL program
-│
-├── config/                       # Configuration files
-│   └── etl_config.json                 # ETL configuration
-│
-├── docs/                         # Documentation
-│   ├── PROJECT_STRUCTURE.md            # Detailed architecture
-│   ├── QUICKSTART.md                   # Quick start guide
-│   └── ARCHITECTURE.txt                # Visual diagrams
-│
-├── tests/                        # Test classes (future)
-│
-├── PACKAGE.abap                  # Package definition
-└── README.md                     # This file
+sales-etl-pyspark/
+├── README.md
+├── setup.py
+├── requirements.txt
+├── config.yaml
+├── src/
+│   ├── __init__.py
+│   ├── extract.py          # Data extraction component
+│   ├── transform.py        # Data transformation component
+│   ├── load.py             # Data loading component
+│   ├── orchestrator.py     # ETL orchestration
+│   ├── logger.py           # Logging utility
+│   ├── constants.py        # Constants and configuration
+│   ├── exceptions.py       # Custom exceptions
+│   └── schemas.py          # PySpark schema definitions
+├── tests/
+│   ├── __init__.py
+│   ├── test_extract.py
+│   ├── test_transform.py
+│   ├── test_load.py
+│   └── test_orchestrator.py
+└── scripts/
+    └── run_etl.py          # Main executable script
 ```
 
-## 🚀 Quick Start
+## Features
+
+### Core Components
+
+1. **Extractor** - Reads raw sales data from source tables
+2. **Transformer** - Applies business rules and calculations:
+   - Discount calculation (5% for qty > 10, 10% for qty > 15)
+   - Tax calculation (8% on net amount)
+   - Profit margin computation (60% cost ratio)
+   - Sale categorization (HIGH/MEDIUM/LOW)
+3. **Loader** - Validates and writes analytics data to target
+4. **Logger** - Comprehensive logging with execution tracking
+5. **Orchestrator** - Coordinates the complete ETL pipeline
+
+### Business Rules
+
+- **Discount Tiers**:
+  - Tier 1: 5% discount for quantities > 10
+  - Tier 2: 10% discount for quantities > 15
+- **Tax Rate**: 8% on gross amount after discount
+- **Cost Ratio**: 60% of unit price
+- **Categories**:
+  - HIGH: Gross amount >= $2,000
+  - MEDIUM: Gross amount >= $500
+  - LOW: Gross amount < $500
+
+## Installation
 
 ### Prerequisites
-- SAP NetWeaver ABAP 7.40 or higher
-- Access to SE11, SE24, SE38, SE80
-- Development key for your system
 
-### Installation Steps
+- Python 3.8 or higher
+- Java 8 or higher (for PySpark)
+- Apache Spark 3.x
 
-1. **Create Package** (SE80)
-   ```
-   Package: $ZETL
-   Description: Sales ETL System
-   ```
+### Installation Order
 
-2. **Create Database Tables** (SE11)
-   - ZSALES_RAW
-   - ZSALES_ANALYTICS
-   - ZETL_LOG
-
-3. **Create Development Objects in Order:**
-   ```
-   a. Types:        ZETL_TYPES
-   b. Interfaces:   ZIF_ETL_LOGGER, ZIF_ETL_COMPONENT
-   c. Exceptions:   ZCX_ETL_ERROR
-   d. Constants:    ZCL_ETL_CONSTANTS
-   e. Includes:     ZETL_TOP, ZETL_MACROS
-   f. Classes:      ZCL_ETL_LOGGER
-                    ZCL_ETL_EXTRACTOR
-                    ZCL_ETL_TRANSFORMER
-                    ZCL_ETL_LOADER
-                    ZCL_ETL_ORCHESTRATOR
-   g. Program:      Z_SALES_ETL_MAIN
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd sales-etl-pyspark
    ```
 
-4. **Run the ETL**
+2. **Create virtual environment**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
-   SE38 → Z_SALES_ETL_MAIN → Execute (F8)
+
+3. **Install dependencies**
+   ```bash
+   pip install --upgrade pip
+   pip install -e .
    ```
 
-## 💡 Key Features
+4. **Verify installation**
+   ```bash
+   python -c "from pyspark.sql import SparkSession; print('PySpark installed successfully')"
+   ```
 
-### Architecture Highlights
-- ✅ **Interface-Driven Design**: All components implement standard interfaces
-- ✅ **Exception Handling**: Custom exception class for ETL errors
-- ✅ **Constants Management**: Centralized configuration
-- ✅ **Type Safety**: Comprehensive type definitions
-- ✅ **Macro Support**: Reusable utility macros
-- ✅ **Separation of Concerns**: Each class has single responsibility
-- ✅ **Configuration**: JSON-based configuration file
-- ✅ **Logging**: Comprehensive execution logging
+### Dependency Installation Order
 
-### Business Logic
-- **Discount Rules**: Volume-based tiered discounts
-- **Tax Calculation**: 8% sales tax
-- **Profit Margins**: Automatic calculation
-- **Categorization**: HIGH/MEDIUM/LOW classification
-- **Data Validation**: Multi-level validation
+The `setup.py` installs dependencies in this order:
 
-### ETL Process Flow
-```
-INIT → EXTRACT → TRANSFORM → LOAD → COMPLETE
-  ↓       ↓          ↓         ↓        ↓
- Log    Filter    Calculate  Validate  Report
-```
+1. **Core Dependencies** (required):
+   - pyspark >= 3.3.0
+   - pyyaml >= 6.0
+   - python-dateutil >= 2.8.2
 
-## 📊 Configuration
+2. **Development Dependencies** (optional):
+   - pytest >= 7.0.0
+   - pytest-cov >= 4.0.0
+   - black >= 23.0.0
+   - flake8 >= 6.0.0
+   - mypy >= 1.0.0
 
-Edit `config/etl_config.json` to customize:
-- Batch processing settings
-- Error handling behavior
-- Business rules (discounts, tax rates)
-- Performance parameters
-- Data quality rules
+## Configuration
 
-## 🧪 Testing
+Edit `config.yaml` to customize ETL behavior:
 
-Execute in test mode (default):
-- Checkbox "Test Mode" = checked
-- No database commits
-- Safe for testing
+```yaml
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
 
-Production mode:
-- Checkbox "Test Mode" = unchecked
-- Database commits enabled
-- Use after testing
+business_rules:
+  discount:
+    tier1_quantity: 10
+    tier2_quantity: 15
+    tier1_rate: 0.05
+    tier2_rate: 0.10
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  
+categories:
+  high_threshold: 2000.00
+  medium_threshold: 500.00
 
-## 📖 Documentation
-
-- **[QUICKSTART.md](docs/QUICKSTART.md)**: Step-by-step setup guide
-- **[PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)**: Detailed architecture
-- **[ARCHITECTURE.txt](docs/ARCHITECTURE.txt)**: Visual diagrams
-
-## 🔧 Development Guidelines
-
-### Adding New Features
-1. Update interfaces if needed
-2. Modify constants in ZCL_ETL_CONSTANTS
-3. Update configuration in etl_config.json
-4. Implement in appropriate class
-5. Update tests
-6. Document changes
-
-### Code Standards
-- Use interfaces for all public contracts
-- Handle exceptions properly
-- Log all significant operations
-- Validate inputs
-- Use constants instead of magic numbers
-- Follow ABAP naming conventions
-
-### Best Practices Implemented
-- Single Responsibility Principle
-- Dependency Injection
-- Interface Segregation
-- Open/Closed Principle
-- DRY (Don't Repeat Yourself)
-
-## 📦 Package Dependencies
-
-```
-$ZETL (Main Package)
-  └── No external dependencies
-      (Self-contained system)
+paths:
+  source_table: "sales_raw"
+  target_table: "sales_analytics"
+  log_table: "etl_log"
 ```
 
-## 🔄 ETL Workflow
+## Usage
+
+### Basic ETL Execution
+
+```python
+from src.orchestrator import ETLOrchestrator
+from datetime import datetime, timedelta
+
+# Initialize orchestrator
+orchestrator = ETLOrchestrator()
+
+# Run ETL for date range
+from_date = datetime.now() - timedelta(days=7)
+to_date = datetime.now()
+
+success = orchestrator.run_etl(
+    from_date=from_date,
+    to_date=to_date
+)
+
+if success:
+    orchestrator.display_summary()
+```
+
+### Command-Line Execution
+
+```bash
+python scripts/run_etl.py --from-date 2024-01-01 --to-date 2024-01-31 --test-mode
+```
+
+### Spark-Submit Execution
+
+```bash
+spark-submit \
+  --master local[*] \
+  --driver-memory 4g \
+  --executor-memory 4g \
+  scripts/run_etl.py \
+  --from-date 2024-01-01 \
+  --to-date 2024-01-31
+```
+
+## Testing
+
+### Run All Tests
+
+```bash
+pytest tests/ -v
+```
+
+### Run with Coverage
+
+```bash
+pytest tests/ --cov=src --cov-report=html
+```
+
+### Run Specific Test Module
+
+```bash
+pytest tests/test_transform.py -v
+```
+
+## Component Relationships
+
+```
+┌─────────────────┐
+│  run_etl.py     │
+│  (Entry Point)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Orchestrator   │◄──────── Logger
+└────────┬────────┘
+         │
+    ┌────┴────┬────────┬─────────┐
+    │         │        │         │
+    ▼         ▼        ▼         ▼
+┌────────┐ ┌──────┐ ┌──────┐ ┌────────┐
+│Extract │ │Trans │ │ Load │ │Constants│
+└────────┘ └──────┘ └──────┘ └────────┘
+    │         │        │
+    ▼         ▼        ▼
+┌─────────────────────────────┐
+│      Schemas & Types         │
+└─────────────────────────────┘
+```
+
+### Execution Flow
 
 1. **Initialization**
-   - Generate unique ETL run ID
-   - Load configuration
-   - Initialize components
+   - Orchestrator creates Spark session
+   - Logger initialized with unique ETL run ID
+   - Configuration loaded from config.yaml
 
-2. **Extract**
-   - Read from ZSALES_RAW
-   - Apply date filters
-   - Status = 'N' (New records)
-
-3. **Transform**
-   - Calculate gross amount
-   - Apply discounts
-   - Calculate tax
-   - Calculate profit margin
-   - Categorize sale
-   - Add ETL metadata
-
-4. **Load**
+2. **Extract Phase**
+   - Read raw sales data from source
+   - Filter by date range and status
    - Validate data quality
-   - Insert into ZSALES_ANALYTICS
-   - Update source status to 'P'
-   - Log results
 
-5. **Complete**
-   - Generate summary
-   - Commit (if not test mode)
-   - Display statistics
+3. **Transform Phase**
+   - Calculate gross amounts
+   - Apply discount rules
+   - Calculate tax and net amounts
+   - Compute profit margins
+   - Categorize sales
 
-## 🛠️ Troubleshooting
+4. **Load Phase**
+   - Validate transformed records
+   - Write to analytics table
+   - Update source record status
+   - Log statistics
+
+5. **Completion**
+   - Display summary statistics
+   - Write execution logs
+   - Clean up resources
+
+## Error Handling
+
+The system implements comprehensive error handling:
+
+- **ETLError**: Base exception for all ETL errors
+- **ExtractionError**: Raised during data extraction
+- **TransformationError**: Raised during data transformation
+- **LoadError**: Raised during data loading
+- **ValidationError**: Raised for data quality issues
+
+All errors are logged with:
+- Timestamp
+- Process step
+- Error details
+- Record identifiers (when applicable)
+
+## Logging
+
+### Log Levels
+
+- **INFO**: Process milestones and statistics
+- **WARNING**: Non-critical issues (skipped records)
+- **ERROR**: Critical failures requiring attention
+- **SUCCESS**: Successful completion of phases
+
+### Log Output
+
+Logs are written to:
+1. Console (stdout)
+2. ETL log table (database)
+3. Log file (optional, configured in config.yaml)
+
+### Log Format
+
+```
+2024-01-15 10:30:45 | ETL20240115103045 | EXTRACT | SUCCESS | Extracted 1000 records
+2024-01-15 10:31:12 | ETL20240115103045 | TRANSFORM | SUCCESS | Transformed 1000 records
+2024-01-15 10:31:45 | ETL20240115103045 | LOAD | SUCCESS | Loaded 998 records (2 errors)
+```
+
+## Performance Optimization
+
+### Spark Configuration
+
+```python
+spark = SparkSession.builder \
+    .appName("SalesETL") \
+    .config("spark.sql.shuffle.partitions", "200") \
+    .config("spark.sql.adaptive.enabled", "true") \
+    .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+    .getOrCreate()
+```
+
+### Best Practices
+
+1. **Partitioning**: Data partitioned by transaction date
+2. **Caching**: Frequently accessed DataFrames cached
+3. **Broadcasting**: Small lookup tables broadcast
+4. **Batch Processing**: Configurable batch sizes
+5. **Parallel Execution**: Multi-threaded processing where applicable
+
+## Monitoring
+
+### Key Metrics
+
+- Total records processed
+- Success/error counts
+- Processing duration
+- Records per second throughput
+- Memory usage
+- Partition distribution
+
+### Health Checks
+
+```python
+orchestrator.get_health_status()
+# Returns: {
+#   "status": "healthy",
+#   "last_run": "2024-01-15T10:30:45",
+#   "success_rate": 99.8,
+#   "avg_duration": 180
+# }
+```
+
+## Migration Notes from ABAP
+
+### Key Differences
+
+1. **Type System**: 
+   - ABAP: Strongly typed with data dictionaries
+   - PySpark: Schema-based with StructType definitions
+
+2. **Data Processing**:
+   - ABAP: Row-by-row processing in loops
+   - PySpark: Columnar operations on DataFrames
+
+3. **Error Handling**:
+   - ABAP: Exception classes with message handling
+   - PySpark: Python exceptions with try-catch blocks
+
+4. **Configuration**:
+   - ABAP: Includes and constants classes
+   - PySpark: YAML configuration files
+
+5. **Logging**:
+   - ABAP: Database table logging
+   - PySpark: Structured logging framework
+
+### Equivalent Components
+
+| ABAP Component | PySpark Equivalent |
+|----------------|-------------------|
+| ZCL_ETL_EXTRACTOR | src/extract.py |
+| ZCL_ETL_TRANSFORMER | src/transform.py |
+| ZCL_ETL_LOADER | src/load.py |
+| ZCL_ETL_ORCHESTRATOR | src/orchestrator.py |
+| ZCL_ETL_LOGGER | src/logger.py |
+| ZCL_ETL_CONSTANTS | src/constants.py |
+| ZCX_ETL_ERROR | src/exceptions.py |
+| ZETL_TYPES | src/schemas.py |
+
+## Troubleshooting
 
 ### Common Issues
 
-**Issue**: No records extracted
-- **Solution**: Check ZSALES_RAW has STATUS = 'N' records
+1. **Out of Memory**
+   - Increase driver/executor memory
+   - Reduce batch size in config.yaml
+   - Enable adaptive query execution
 
-**Issue**: Transformation errors
-- **Solution**: Verify unit_price > 0 and currency is populated
+2. **Slow Performance**
+   - Check partition distribution
+   - Review shuffle operations
+   - Consider caching intermediate results
 
-**Issue**: Load validation fails
-- **Solution**: Check required fields in etl_config.json
+3. **Data Quality Issues**
+   - Review validation rules
+   - Check source data quality
+   - Examine error logs for patterns
 
-## 📈 Performance Considerations
+### Debug Mode
 
-- Batch processing: 1000 records per batch (configurable)
-- Commit interval: 500 records (configurable)
-- Memory management: Clears internal tables periodically
-- Indexed reads: Uses key fields
+```bash
+python scripts/run_etl.py --debug --test-mode
+```
 
-## 🔐 Security
+## Contributing
 
-- No hardcoded credentials
-- Authorization checks (can be added)
-- Audit trail in ZETL_LOG
-- Test mode prevents accidental data changes
+1. Follow PEP 8 style guidelines
+2. Add unit tests for new features
+3. Update documentation
+4. Run linting before commits:
+   ```bash
+   black src/ tests/
+   flake8 src/ tests/
+   mypy src/
+   ```
 
-## 🎯 Future Enhancements
+## License
 
-- [ ] Unit test classes
-- [ ] Parallel processing
-- [ ] Delta load capability
-- [ ] Data quality dashboard
-- [ ] Email notifications
-- [ ] Background job scheduling
-- [ ] Performance monitoring
-- [ ] Data archiving
+Proprietary - Internal Use Only
 
-## 📝 Version History
-
-- **v1.0.0** (2026-03-05)
-  - Initial release
-  - Basic ETL functionality
-  - Structured architecture
-  - Configuration support
-  - Comprehensive logging
-
-## 👥 Contributing
-
-To contribute:
-1. Follow the development guidelines
-2. Update relevant documentation
-3. Add tests for new features
-4. Ensure backward compatibility
-
-## 📄 License
-
-Internal project - proprietary
-
-## 📧 Support
+## Support
 
 For issues or questions:
-1. Check documentation in `/docs`
-2. Review ZETL_LOG table for errors
-3. Enable debugger (F5) in SE38
+- Email: etl-support@company.com
+- Slack: #sales-etl-support
+- Documentation: https://wiki.company.com/sales-etl
 
----
+## Version History
 
-**Built with modern ABAP development practices**
+- **1.0.0** (2024-01-15): Initial PySpark migration from ABAP
+  - Core ETL pipeline
+  - Business rule implementation
+  - Comprehensive logging
+  - Unit test coverage
