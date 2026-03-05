@@ -1,112 +1,117 @@
 """
-ETL logging utility.
-Converted from ABAP ZCL_ETL_LOGGER.
+ETL Logger Abstract Base Class Module
+
+Provides abstract base class for ETL logging with integration to Python logging framework
+and Enum-based constants for status and process steps.
 """
 
+from abc import ABC, abstractmethod
+from enum import Enum
 from datetime import datetime
 from typing import Optional
-
-from pyspark.sql import SparkSession
-
-from src.schemas import ETLSchemas, ProcessSteps, StatusCodes
+from dataclasses import dataclass
 
 
-class ETLLogger:
-    """Utility class for ETL logging."""
+class LogStatus(Enum):
+    """Enumeration for log status codes"""
+    SUCCESS = 'S'
+    ERROR = 'E'
+    WARNING = 'W'
+    INFO = 'I'
 
-    def __init__(self, spark: SparkSession, etl_run_id: str):
+
+class ProcessStep(Enum):
+    """Enumeration for ETL process steps"""
+    INIT = 'INIT'
+    EXTRACT = 'EXTRACT'
+    TRANSFORM = 'TRANSFORM'
+    LOAD = 'LOAD'
+    VALIDATE = 'VALIDATE'
+    COMPLETE = 'COMPLETE'
+    ERROR = 'ERROR'
+
+
+@dataclass
+class LogEntry:
+    """Data class representing a log entry"""
+    log_id: str
+    etl_run_id: str
+    execution_date: datetime
+    process_step: ProcessStep
+    status: LogStatus
+    records_processed: int = 0
+    records_success: int = 0
+    records_error: int = 0
+    message: str = ""
+
+
+class ETLLoggerInterface(ABC):
+    """
+    Abstract Base Class for ETL Logger
+    
+    Defines the contract for ETL logging implementations with integration
+    to Python's standard logging framework and Enum-based constants.
+    """
+    
+    @abstractmethod
+    def __init__(self, etl_run_id: str):
         """
-        Initialize logger.
+        Initialize the logger with ETL run ID
         
         Args:
-            spark: SparkSession instance
-            etl_run_id: Unique ETL run identifier
+            etl_run_id: Unique identifier for the ETL run
         """
-        self.spark = spark
-        self.etl_run_id = etl_run_id
-        self.log_entries = []
-
+        pass
+    
+    @abstractmethod
     def log_message(
         self,
-        step: str,
-        status: str,
+        step: ProcessStep,
+        status: LogStatus,
         message: str,
         records_processed: int = 0,
         records_success: int = 0,
-        records_error: int = 0,
+        records_error: int = 0
     ) -> None:
         """
-        Log ETL message.
+        Log a message with ETL context
         
         Args:
-            step: Process step
-            status: Status code
+            step: ETL process step
+            status: Log status
             message: Log message
-            records_processed: Total records processed
-            records_success: Successful records
-            records_error: Error records
+            records_processed: Number of records processed
+            records_success: Number of successfully processed records
+            records_error: Number of records with errors
         """
-        now = datetime.now()
-        
-        log_entry = {
-            "log_id": self._generate_log_id(),
-            "etl_run_id": self.etl_run_id,
-            "execution_date": now.date(),
-            "execution_time": now.strftime("%H:%M:%S"),
-            "process_step": step,
-            "status": status,
-            "records_processed": records_processed,
-            "records_success": records_success,
-            "records_error": records_error,
-            "message": message,
-            "created_at": now,
-            "created_by": "SYSTEM",
-        }
-        
-        self.log_entries.append(log_entry)
-        
-        # Console output
-        print(
-            f"[{log_entry['execution_time']}] "
-            f"{log_entry['process_step']} - "
-            f"{log_entry['status']} - "
-            f"{log_entry['message']}"
-        )
-
-    def save_logs(self, target_path: Optional[str] = None) -> None:
-        """
-        Persist logs to storage.
-        
-        Args:
-            target_path: Optional path for log storage
-        """
-        if not self.log_entries:
-            return
-        
-        schema = ETLSchemas.etl_log_schema()
-        df_logs = self.spark.createDataFrame(self.log_entries, schema)
-        
-        if target_path:
-            df_logs.write.mode("append").parquet(target_path)
-        else:
-            # Write to default log table
-            df_logs.write.mode("append").saveAsTable("zetl_log")
-
+        pass
+    
+    @abstractmethod
     def get_etl_run_id(self) -> str:
         """
-        Get current ETL run ID.
+        Get the current ETL run ID
         
         Returns:
-            ETL run identifier
+            ETL run ID
         """
-        return self.etl_run_id
-
-    def _generate_log_id(self) -> str:
+        pass
+    
+    @abstractmethod
+    def get_log_entries(self) -> list[LogEntry]:
         """
-        Generate unique log ID.
+        Get all log entries for this ETL run
         
         Returns:
-            Unique log identifier
+            List of log entries
         """
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        return f"LOG{timestamp}"
+        pass
+    
+    @abstractmethod
+    def generate_log_id(self) -> str:
+        """
+        Generate a unique log entry ID
+        
+        Returns:
+            Unique log ID
+        """
+        pass
