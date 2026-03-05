@@ -1,209 +1,190 @@
 """
-Data transformation module for ETL pipeline.
+Transform module for Sales ETL System.
 Transforms raw sales data into analytics format with business logic.
 """
-
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import (
-    col, lit, when, round as spark_round, 
-    concat, current_timestamp, expr, monotonically_increasing_id
-)
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType, TimestampType
-from typing import Optional
+from pyspark.sql.functions import col, when, lit, round as spark_round, concat
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from typing import Dict
 import logging
 
 
-class DataTransformer:
-    """Handles transformation of raw sales data into analytics format."""
+class SalesTransformer:
+    """Transforms raw sales data into analytics format."""
     
-    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger, etl_run_id: str):
+    def __init__(self, spark: SparkSession, logger: logging.Logger, config: Dict):
         """
-        Initialize the data transformer.
+        Initialize the transformer.
         
         Args:
             spark: SparkSession instance
-            config: Configuration dictionary
             logger: Logger instance
-            etl_run_id: Unique ETL run identifier
+            config: Configuration dictionary with business rules
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
-        self.etl_run_id = etl_run_id
-        self.schema = self._get_analytics_schema()
+        self.config = config
+        self._schema = self._get_analytics_schema()
     
     def _get_analytics_schema(self) -> StructType:
-        """Define schema for analytics data."""
+        """Define the schema for analytics data."""
         return StructType([
-            StructField("analytics_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("total_quantity", IntegerType(), False),
-            StructField("gross_amount", DecimalType(16, 2), False),
-            StructField("net_amount", DecimalType(16, 2), False),
-            StructField("discount_amount", DecimalType(16, 2), False),
-            StructField("tax_amount", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("profit_margin", DecimalType(5, 2), True),
-            StructField("category", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("loaded_at", TimestampType(), False)
+            StructField("analytics_id", StringType(), nullable=False),
+            StructField("trans_date", DateType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("product_id", StringType(), nullable=False),
+            StructField("total_quantity", IntegerType(), nullable=False),
+            StructField("gross_amount", DecimalType(16, 2), nullable=False),
+            StructField("net_amount", DecimalType(16, 2), nullable=False),
+            StructField("discount_amount", DecimalType(16, 2), nullable=False),
+            StructField("tax_amount", DecimalType(16, 2), nullable=False),
+            StructField("currency", StringType(), nullable=False),
+            StructField("sales_rep", StringType(), nullable=True),
+            StructField("region", StringType(), nullable=True),
+            StructField("profit_margin", DecimalType(5, 2), nullable=True),
+            StructField("category", StringType(), nullable=False),
+            StructField("etl_run_id", StringType(), nullable=False)
         ])
     
-    def transform_data(self, raw_df: DataFrame) -> Optional[DataFrame]:
+    def transform_data(self, df_raw: DataFrame, etl_run_id: str) -> DataFrame:
         """
         Transform raw sales data into analytics format.
         
         Args:
-            raw_df: DataFrame containing raw sales data
-            
+            df_raw: Raw sales DataFrame
+            etl_run_id: ETL run identifier
+        
         Returns:
-            DataFrame containing transformed analytics data
+            Transformed analytics DataFrame
+        
+        Raises:
+            Exception: If transformation fails
         """
         try:
             self.logger.info("Starting data transformation")
             
             # Get business rules from config
-            discount_qty_tier1 = self.config.get('discount_qty_tier1', 10)
-            discount_qty_tier2 = self.config.get('discount_qty_tier2', 15)
-            discount_rate_tier1 = self.config.get('discount_rate_tier1', 0.05)
-            discount_rate_tier2 = self.config.get('discount_rate_tier2', 0.10)
-            tax_rate = self.config.get('tax_rate', 0.08)
-            cost_ratio = self.config.get('cost_ratio', 0.60)
-            category_high_threshold = self.config.get('category_high_threshold', 2000.00)
-            category_medium_threshold = self.config.get('category_medium_threshold', 500.00)
+            discount_qty_tier1 = self.config['business_rules']['discount_qty_tier1']
+            discount_qty_tier2 = self.config['business_rules']['discount_qty_tier2']
+            discount_rate_tier1 = self.config['business_rules']['discount_rate_tier1']
+            discount_rate_tier2 = self.config['business_rules']['discount_rate_tier2']
+            tax_rate = self.config['business_rules']['tax_rate']
+            cost_ratio = self.config['business_rules']['cost_ratio']
+            category_high = self.config['business_rules']['category_high_threshold']
+            category_medium = self.config['business_rules']['category_medium_threshold']
             
-            # Calculate gross amount
-            df_with_gross = raw_df.withColumn(
-                "gross_amount",
-                spark_round(col("quantity") * col("unit_price"), 2)
+            # Calculate derived fields
+            df_transformed = df_raw.select(
+                # Generate analytics ID
+                concat(lit("ANL"), col("trans_id")).alias("analytics_id"),
+                col("trans_date"),
+                col("customer_id"),
+                col("product_id"),
+                col("quantity").alias("total_quantity"),
+                
+                # Calculate gross amount
+                (col("quantity") * col("unit_price")).alias("gross_amount"),
+                
+                col("currency"),
+                col("sales_rep"),
+                col("region")
             )
             
-            # Calculate discount based on quantity tiers
-            df_with_discount = df_with_gross.withColumn(
+            # Calculate discount amount based on quantity tiers
+            df_transformed = df_transformed.withColumn(
                 "discount_amount",
-                when(col("quantity") > discount_qty_tier2, 
-                     spark_round(col("gross_amount") * discount_rate_tier2, 2))
-                .when(col("quantity") > discount_qty_tier1,
-                      spark_round(col("gross_amount") * discount_rate_tier1, 2))
+                when(col("total_quantity") > discount_qty_tier2, 
+                     col("gross_amount") * discount_rate_tier2)
+                .when(col("total_quantity") > discount_qty_tier1, 
+                      col("gross_amount") * discount_rate_tier1)
                 .otherwise(lit(0.0))
             )
             
-            # Calculate tax amount
-            df_with_tax = df_with_discount.withColumn(
+            # Calculate tax amount (on gross - discount)
+            df_transformed = df_transformed.withColumn(
                 "tax_amount",
-                spark_round((col("gross_amount") - col("discount_amount")) * tax_rate, 2)
+                (col("gross_amount") - col("discount_amount")) * tax_rate
             )
             
             # Calculate net amount
-            df_with_net = df_with_tax.withColumn(
+            df_transformed = df_transformed.withColumn(
                 "net_amount",
-                spark_round(
-                    col("gross_amount") - col("discount_amount") + col("tax_amount"),
-                    2
-                )
+                col("gross_amount") - col("discount_amount") + col("tax_amount")
             )
             
             # Calculate profit margin
-            df_with_profit = df_with_net.withColumn(
-                "cost_amount",
-                spark_round(col("quantity") * col("unit_price") * cost_ratio, 2)
-            ).withColumn(
-                "profit_margin",
-                spark_round(
-                    when(col("net_amount") > 0,
-                         ((col("net_amount") - col("cost_amount")) / col("net_amount")) * 100)
-                    .otherwise(lit(0.0)),
-                    2
-                )
+            # Simplified: assume cost is cost_ratio% of gross amount
+            df_transformed = df_transformed.withColumn(
+                "cost_estimate",
+                col("gross_amount") * cost_ratio
             )
             
+            df_transformed = df_transformed.withColumn(
+                "profit_margin",
+                when(col("net_amount") > 0,
+                     spark_round(((col("net_amount") - col("cost_estimate")) / col("net_amount")) * 100, 2))
+                .otherwise(lit(0.0))
+            ).drop("cost_estimate")
+            
             # Categorize sales
-            df_with_category = df_with_profit.withColumn(
+            df_transformed = df_transformed.withColumn(
                 "category",
-                when(col("gross_amount") >= category_high_threshold, lit("HIGH"))
-                .when(col("gross_amount") >= category_medium_threshold, lit("MEDIUM"))
+                when(col("gross_amount") >= category_high, lit("HIGH"))
+                .when(col("gross_amount") >= category_medium, lit("MEDIUM"))
                 .otherwise(lit("LOW"))
             )
             
-            # Generate analytics ID and add metadata
-            df_analytics = df_with_category.withColumn(
-                "analytics_id",
-                concat(lit("ANL"), col("trans_id"), 
-                       expr("date_format(current_timestamp(), 'HHmmss')"))
-            ).withColumn(
-                "total_quantity", col("quantity")
-            ).withColumn(
-                "etl_run_id", lit(self.etl_run_id)
-            ).withColumn(
-                "loaded_at", current_timestamp()
-            )
+            # Add ETL run ID
+            df_transformed = df_transformed.withColumn("etl_run_id", lit(etl_run_id))
             
-            # Select final columns
-            result_df = df_analytics.select(
-                "analytics_id",
-                "trans_date",
-                "customer_id",
-                "product_id",
-                "total_quantity",
-                "gross_amount",
-                "net_amount",
-                "discount_amount",
-                "tax_amount",
-                "currency",
-                "sales_rep",
-                "region",
-                "profit_margin",
-                "category",
-                "etl_run_id",
-                "loaded_at"
-            )
+            # Round decimal fields
+            for field_name in ["gross_amount", "net_amount", "discount_amount", "tax_amount"]:
+                df_transformed = df_transformed.withColumn(
+                    field_name,
+                    spark_round(col(field_name), 2)
+                )
             
-            record_count = result_df.count()
+            record_count = df_transformed.count()
             self.logger.info(f"Transformed {record_count} records successfully")
             
-            return result_df
+            return df_transformed
             
         except Exception as e:
             self.logger.error(f"Transformation failed: {str(e)}")
             raise
     
-    def validate_transformed_data(self, analytics_df: DataFrame) -> bool:
+    def categorize_sale(self, gross_amount: float) -> str:
         """
-        Validate transformed data for completeness and correctness.
+        Categorize sale based on gross amount.
         
         Args:
-            analytics_df: DataFrame containing analytics data
-            
+            gross_amount: Gross sale amount
+        
         Returns:
-            True if validation passes, False otherwise
+            Category string (HIGH, MEDIUM, LOW)
         """
-        try:
-            # Check for null values in required fields
-            null_counts = analytics_df.select([
-                col(c).isNull().cast("int").alias(c) 
-                for c in ["analytics_id", "customer_id", "product_id", "gross_amount"]
-            ]).agg(*[expr(f"sum({c}) as {c}") for c in ["analytics_id", "customer_id", "product_id", "gross_amount"]])
-            
-            null_row = null_counts.collect()[0]
-            has_nulls = any(null_row[c] > 0 for c in null_row.asDict().keys())
-            
-            if has_nulls:
-                self.logger.warning("Validation found null values in required fields")
-                return False
-            
-            # Check for invalid amounts
-            invalid_amounts = analytics_df.filter(col("gross_amount") <= 0).count()
-            if invalid_amounts > 0:
-                self.logger.warning(f"Found {invalid_amounts} records with invalid gross amount")
-                return False
-            
-            self.logger.info("Data validation passed")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Validation failed: {str(e)}")
-            return False
+        category_high = self.config['business_rules']['category_high_threshold']
+        category_medium = self.config['business_rules']['category_medium_threshold']
+        
+        if gross_amount >= category_high:
+            return "HIGH"
+        elif gross_amount >= category_medium:
+            return "MEDIUM"
+        else:
+            return "LOW"
+
+
+class TransformerInterface:
+    """Interface contract for all transformer components."""
+    
+    def transform_data(self, df: DataFrame, **kwargs) -> DataFrame:
+        """Transform input DataFrame."""
+        raise NotImplementedError("Subclasses must implement transform_data()")
+    
+    def get_component_name(self) -> str:
+        """Return component name."""
+        raise NotImplementedError("Subclasses must implement get_component_name()")
+    
+    def validate_schema(self, df: DataFrame) -> bool:
+        """Validate input DataFrame schema."""
+        raise NotImplementedError("Subclasses must implement validate_schema()")
