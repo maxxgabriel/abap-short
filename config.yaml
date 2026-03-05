@@ -1,50 +1,110 @@
-# ETL Logger Configuration
-# Maps to ABAP $ZETL package configuration
+# ETL System Configuration
+# Parameterized values for Sales ETL System
 
+# Database Configuration
+database:
+  source_table: "zsales_raw"
+  target_table: "zsales_analytics"
+  log_table: "zetl_log"
+  
+# Spark Configuration
 spark:
-  app_name: "sales_etl_logger"
+  app_name: "Sales_ETL_System"
   master: "local[*]"
-  config:
-    spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
-    spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
-    spark.databricks.delta.retentionDurationCheck.enabled: "false"
+  log_level: "WARN"
+  shuffle_partitions: 200
+  
+# Business Rules
+business_rules:
+  discount:
+    tier1_quantity: 10
+    tier2_quantity: 15
+    tier1_rate: 0.05
+    tier2_rate: 0.10
+  
+  tax:
+    rate: 0.08
+  
+  cost:
+    ratio: 0.60
+  
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# Delta Lake paths
-delta:
-  log_table_path: "/tmp/delta/zetl_log"
-  raw_sales_path: "/tmp/delta/zsales_raw"
-  analytics_path: "/tmp/delta/zsales_analytics"
-
-# ETL Configuration (maps to ABAP gc_default_* constants)
+# ETL Processing Configuration
 etl:
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
+  parallel_jobs: 4
   
-# Business Rules (maps to ABAP ZCL_ETL_CONSTANTS)
-business_rules:
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
+# Data Quality Rules
+data_quality:
+  required_fields:
+    - trans_id
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
   
-  tax_rate: 0.08
-  cost_ratio: 0.60
-  
-  category_thresholds:
-    high: 2000.00
-    medium: 500.00
+  validation_rules:
+    quantity_min: 1
+    unit_price_min: 0.01
+    max_discount_rate: 0.50
 
 # Logging Configuration
 logging:
-  console_output: true
-  buffer_size: 100
-  auto_flush: true
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_path: "logs/etl_process.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
   
-# ID Prefixes (maps to ABAP gc_prefix_* constants)
-prefixes:
+# ID Generation
+id_prefixes:
   etl_run: "ETL"
   log_id: "LOG"
   analytics_id: "ANL"
+
+# Message Templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
+
+# Date Format
+date_format: "%Y-%m-%d"
+timestamp_format: "%Y-%m-%d %H:%M:%S"
+
+# Status Codes
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
+
+# Process Steps
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
+
+# Sale Categories
+sale_categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
