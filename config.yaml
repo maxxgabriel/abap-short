@@ -1,126 +1,88 @@
-# ETL Configuration
-# Converted from ABAP constants and configuration
+# ETL Configuration - Loader Module
 
-etl:
-  # Run configuration
-  default_batch_size: 1000
-  default_commit_interval: 500
-  default_retry_attempts: 3
-  default_timeout_seconds: 3600
-  parallel_jobs: 4
-  
-  # ID prefixes
-  prefix_etl_run: "ETL"
-  prefix_log_id: "LOG"
-  prefix_analytics_id: "ANL"
+# Source configuration
+source:
+  raw_table: "sales_raw"
+  format: "parquet"  # parquet, delta, jdbc
+  path: "/data/raw/sales"
+  jdbc:
+    url: "jdbc:postgresql://localhost:5432/sales_db"
+    properties:
+      user: "${DB_USER}"
+      password: "${DB_PASSWORD}"
+      driver: "org.postgresql.Driver"
 
-# Business Rules Configuration
-business_rules:
-  # Discount thresholds
-  discount_qty_tier1: 10
-  discount_qty_tier2: 15
-  discount_rate_tier1: 0.05
-  discount_rate_tier2: 0.10
-  
-  # Tax configuration
-  tax_rate: 0.08
-  
-  # Cost calculation
-  cost_ratio: 0.60
-  
-  # Category thresholds
-  category_high_threshold: 2000.00
-  category_medium_threshold: 500.00
+# Target configuration
+target:
+  analytics_table: "sales_analytics"
+  format: "parquet"  # parquet, delta, jdbc
+  path: "/data/analytics/sales"
+  jdbc:
+    url: "jdbc:postgresql://localhost:5432/sales_db"
+    properties:
+      user: "${DB_USER}"
+      password: "${DB_PASSWORD}"
+      driver: "org.postgresql.Driver"
 
-# Status codes
-status:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
+# Load configuration
+load:
+  write_mode: "append"  # append, overwrite, error, ignore
+  batch_size: 1000
+  partition_by:
+    - "trans_date"
+    - "region"
+  write_options:
+    compression: "snappy"
+    maxRecordsPerFile: 50000
 
-# Process steps
-steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# Sale categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
+# Validation rules
+validation:
+  valid_currencies:
+    - "USD"
+    - "EUR"
+    - "GBP"
+    - "JPY"
+  valid_categories:
+    - "HIGH"
+    - "MEDIUM"
+    - "LOW"
+  min_gross_amount: 0.01
+  max_profit_margin: 100
+  min_profit_margin: -100
 
 # Logging configuration
 logging:
+  log_table: "etl_log"
+  format: "parquet"
+  path: "/data/logs/etl"
   level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
+
+# Runtime configuration
+runtime:
+  user: "etl_system"
+  max_retries: 3
+  timeout_seconds: 3600
+
+# Business rules
+business_rules:
+  discount:
+    tier1_quantity: 10
+    tier1_rate: 0.05
+    tier2_quantity: 15
+    tier2_rate: 0.10
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  category_thresholds:
+    high: 2000.00
+    medium: 500.00
 
 # Spark configuration
 spark:
-  app_name: "SalesETL"
+  app_name: "ETL_Loader"
   master: "local[*]"
   config:
     spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"
     spark.sql.shuffle.partitions: "200"
-    spark.sql.files.maxPartitionBytes: "134217728"  # 128 MB
-
-# Data paths
-paths:
-  raw_data: "data/raw/sales_raw"
-  analytics_data: "data/analytics/sales_analytics"
-  log_data: "data/logs/etl_log"
-  
-# Database configuration (optional for actual DB connections)
-database:
-  jdbc_url: "jdbc:postgresql://localhost:5432/etl_db"
-  driver: "org.postgresql.Driver"
-  table_raw: "zsales_raw"
-  table_analytics: "zsales_analytics"
-  table_log: "zetl_log"
-
-# Validation rules
-validation:
-  required_fields:
-    - "trans_id"
-    - "customer_id"
-    - "product_id"
-    - "quantity"
-    - "unit_price"
-    - "currency"
-  
-  min_quantity: 1
-  max_quantity: 10000
-  min_price: 0.01
-  max_price: 1000000.00
-  
-  valid_currencies:
-    - "USD"
-    - "EUR"
-    - "GBP"
-  
-  valid_regions:
-    - "NORTH"
-    - "SOUTH"
-    - "EAST"
-    - "WEST"
-
-# Message templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+    spark.executor.memory: "4g"
+    spark.driver.memory: "2g"
