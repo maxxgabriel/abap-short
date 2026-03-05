@@ -1,107 +1,29 @@
 # ETL Configuration File
-# Sales Data ETL Process Configuration
+# This file contains all configurable parameters for the Sales ETL system
+# Migrated from ABAP ZCL_ETL_CONSTANTS class
 
-# Source Configuration
-source:
-  # Source table/database name
-  table_name: "sales_raw"
-  
-  # Date range for extraction (days back from today)
-  default_days_back: 7
-  
-  # Maximum records to extract per batch
-  max_records_per_batch: 10000
-  
-  # Filter criteria
-  filters:
-    status: "N"  # New records only
-
-# Target Configuration
-target:
-  # Target table/database name
-  table_name: "sales_analytics"
-  
-  # Write mode: overwrite, append, upsert
-  write_mode: "append"
-  
-  # Partition columns
-  partition_by:
-    - "trans_date"
-
-# Business Rules
-business_rules:
-  # Discount tiers
-  discount:
-    tier1:
-      quantity_threshold: 10
-      discount_rate: 0.05
-    tier2:
-      quantity_threshold: 15
-      discount_rate: 0.10
-  
-  # Tax configuration
-  tax:
-    rate: 0.08
-  
-  # Cost calculation
-  cost:
-    ratio: 0.60  # Cost is 60% of unit price
-  
-  # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
-# ETL Processing Configuration
-processing:
-  # Batch size for processing
+# ETL Process Configuration
+etl:
+  # Default batch size for processing records
   batch_size: 1000
   
-  # Commit interval (records)
+  # Number of records to process before committing transaction
   commit_interval: 500
   
-  # Number of parallel workers
-  parallel_workers: 4
+  # Number of retry attempts for failed operations
+  retry_attempts: 3
   
-  # Retry configuration
-  retry:
-    max_attempts: 3
-    backoff_seconds: 5
+  # Timeout for ETL process in seconds
+  timeout_seconds: 3600
   
-  # Timeout configuration (seconds)
-  timeout:
-    extract: 3600
-    transform: 1800
-    load: 3600
-    total: 7200
+  # Enable test mode (no commits to database)
+  test_mode: false
+  
+  # Number of parallel processing jobs
+  parallel_jobs: 4
 
-# Logging Configuration
-logging:
-  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "INFO"
-  
-  # Log format
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # Log output
-  console:
-    enabled: true
-    level: "INFO"
-  
-  file:
-    enabled: true
-    path: "logs/etl_{run_id}.log"
-    level: "DEBUG"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
-  
-  # Database logging
-  database:
-    enabled: true
-    table: "etl_log"
-
-# Status Codes
-status:
+# Status Codes (corresponds to gc_status in ABAP)
+status_codes:
   new: "N"
   processed: "P"
   error: "E"
@@ -109,93 +31,181 @@ status:
   success: "S"
   info: "I"
 
-# ID Prefixes
+# ETL Process Steps (corresponds to gc_step in ABAP)
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
+  orchestrate: "ORCHESTRATE"
+
+# Business Rules - Sales Categories (corresponds to gc_category in ABAP)
+categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
+  
+  # Category thresholds in monetary units
+  thresholds:
+    high: 2000.00
+    medium: 500.00
+
+# Business Rules - Discount Configuration
+discounts:
+  # Quantity thresholds for discount tiers
+  quantity_tiers:
+    tier1: 10
+    tier2: 15
+  
+  # Discount rates (as decimal fractions)
+  rates:
+    tier1: 0.05  # 5% discount
+    tier2: 0.10  # 10% discount
+
+# Business Rules - Tax Configuration
+tax:
+  # Tax rate applied to (gross - discount)
+  rate: 0.08  # 8% tax rate
+
+# Business Rules - Cost Calculation
+cost:
+  # Cost ratio (cost as percentage of unit price)
+  ratio: 0.60  # 60% cost ratio
+
+# ID Prefixes (corresponds to gc_prefix_* in ABAP)
 id_prefixes:
   etl_run: "ETL"
-  log: "LOG"
-  analytics: "ANL"
+  log_id: "LOG"
+  analytics_id: "ANL"
 
-# Spark Configuration
-spark:
-  app_name: "SalesETL"
+# Logging Configuration
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: "INFO"
   
-  # Spark configuration properties
-  config:
-    "spark.sql.adaptive.enabled": "true"
-    "spark.sql.adaptive.coalescePartitions.enabled": "true"
-    "spark.sql.shuffle.partitions": "200"
-    "spark.serializer": "org.apache.spark.serializer.KryoSerializer"
-    "spark.sql.sources.partitionOverwriteMode": "dynamic"
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   
-  # Resource allocation
-  resources:
-    executor_memory: "4g"
-    executor_cores: 2
-    driver_memory: "2g"
+  # Date format for logs
+  date_format: "%Y-%m-%d %H:%M:%S"
+  
+  # Log file path (null for stdout only)
+  file_path: null
+  
+  # Enable console logging
+  console_enabled: true
+  
+  # Enable database logging
+  database_enabled: true
+
+# Database Configuration
+database:
+  # Source table for raw sales data
+  source_table: "zsales_raw"
+  
+  # Target table for analytics data
+  target_table: "zsales_analytics"
+  
+  # ETL log table
+  log_table: "zetl_log"
+  
+  # Connection timeout in seconds
+  connection_timeout: 30
+  
+  # Query timeout in seconds
+  query_timeout: 300
 
 # Data Quality Rules
 data_quality:
-  # Required fields
-  required_fields:
-    extract:
-      - "trans_id"
-      - "trans_date"
-      - "customer_id"
-      - "product_id"
-      - "quantity"
-      - "unit_price"
-    
-    load:
-      - "analytics_id"
-      - "customer_id"
-      - "product_id"
-      - "gross_amount"
-      - "net_amount"
+  # Minimum required fields for extraction
+  required_extract_fields:
+    - trans_id
+    - trans_date
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
+    - currency
   
-  # Value ranges
-  ranges:
-    quantity:
-      min: 0
-      max: 1000000
-    unit_price:
-      min: 0.01
-      max: 1000000.00
-    profit_margin:
-      min: -100.00
-      max: 100.00
+  # Minimum required fields for analytics
+  required_analytics_fields:
+    - analytics_id
+    - customer_id
+    - product_id
+    - gross_amount
+    - currency
+    - category
   
-  # Valid categories
-  valid_categories:
-    - "HIGH"
-    - "MEDIUM"
-    - "LOW"
+  # Valid currency codes
+  valid_currencies:
+    - USD
+    - EUR
+    - GBP
+  
+  # Maximum field lengths
+  max_lengths:
+    trans_id: 10
+    customer_id: 10
+    product_id: 10
+    analytics_id: 20
+    sales_rep: 20
+    region: 10
 
 # Error Handling
 error_handling:
-  # Continue processing on errors
+  # Continue processing on record-level errors
   continue_on_error: true
   
-  # Maximum error percentage before aborting
-  max_error_percentage: 5.0
+  # Maximum number of errors before stopping
+  max_errors: 100
   
-  # Save failed records
-  save_failed_records: true
-  failed_records_path: "errors/failed_records_{run_id}.csv"
+  # Maximum error rate (percentage) before stopping
+  max_error_rate: 10.0
+  
+  # Enable detailed error logging
+  detailed_errors: true
+
+# Performance Tuning
+performance:
+  # Enable caching
+  cache_enabled: true
+  
+  # Cache size (number of records)
+  cache_size: 10000
+  
+  # Enable query optimization
+  optimize_queries: true
+  
+  # Use bulk operations
+  use_bulk_operations: true
 
 # Monitoring and Alerting
 monitoring:
-  # Enable monitoring
+  # Enable performance monitoring
   enabled: true
   
-  # Metrics to track
-  metrics:
-    - "records_processed"
-    - "records_success"
-    - "records_error"
-    - "processing_time"
-    - "throughput"
+  # Metrics collection interval in seconds
+  metrics_interval: 60
+  
+  # Enable alerts
+  alerts_enabled: false
   
   # Alert thresholds
-  alerts:
-    error_rate_threshold: 0.05
-    processing_time_threshold: 7200
+  alert_thresholds:
+    error_rate: 5.0
+    processing_time: 7200  # 2 hours
+
+# Message Templates (corresponds to gc_msg_* in ABAP)
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
