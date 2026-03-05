@@ -1,102 +1,58 @@
-# PySpark ETL Configuration for Sales Data Pipeline
-app_name: "Sales ETL Integration Pipeline"
-environment: "production"
-
-# Spark Configuration
+# ETL Integration Test Configuration
 spark:
+  app_name: "Sales_ETL_Integration_Tests"
   master: "local[*]"
-  executor_memory: "4g"
-  driver_memory: "2g"
-  sql_shuffle_partitions: 200
-  log_level: "WARN"
+  config:
+    spark.sql.shuffle.partitions: 4
+    spark.sql.adaptive.enabled: true
+    spark.driver.memory: "2g"
+    spark.executor.memory: "2g"
 
-# Database Configuration
-database:
-  source:
-    format: "jdbc"
-    url: "jdbc:postgresql://localhost:5432/sales_db"
-    driver: "org.postgresql.Driver"
-    table: "zsales_raw"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
-    fetch_size: 10000
-  
-  target:
-    format: "jdbc"
-    url: "jdbc:postgresql://localhost:5432/analytics_db"
-    driver: "org.postgresql.Driver"
-    table: "zsales_analytics"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
-    batch_size: 5000
-    mode: "append"
-  
-  log:
-    format: "jdbc"
-    url: "jdbc:postgresql://localhost:5432/etl_db"
-    driver: "org.postgresql.Driver"
-    table: "zetl_log"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
-
-# ETL Business Rules
-business_rules:
-  tax_rate: 0.08
-  cost_ratio: 0.60
+etl:
+  # Business Rules
   discount:
     tier1_quantity: 10
-    tier1_rate: 0.05
     tier2_quantity: 15
+    tier1_rate: 0.05
     tier2_rate: 0.10
+  
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  
+  # Category Thresholds
   category:
     high_threshold: 2000.00
     medium_threshold: 500.00
-
-# ETL Processing Configuration
-processing:
+  
+  # Processing Configuration
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
-  parallel_jobs: 4
 
-# Date Range Configuration
-date_range:
-  default_days_back: 7
-  date_format: "yyyy-MM-dd"
+# Test Data Configuration
+test_data:
+  sample_size: 100
+  date_range_days: 30
+  regions:
+    - "NORTH"
+    - "SOUTH"
+    - "EAST"
+    - "WEST"
+  currencies:
+    - "USD"
+    - "EUR"
+    - "GBP"
 
-# Status Codes
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
-
-# Process Steps
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+# Database Configuration (for integration tests)
+database:
+  raw_sales_table: "raw_sales"
+  analytics_table: "analytics"
+  log_table: "etl_log"
+  checkpoint_location: "/tmp/etl_checkpoint"
 
 # Logging Configuration
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  console: true
-  file:
-    enabled: true
-    path: "logs/etl_pipeline.log"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
-
-# Testing Configuration
-testing:
-  test_mode: false
-  sample_size: 100
-  mock_data: false
+  file: "logs/etl_integration_tests.log"
