@@ -1,78 +1,48 @@
 """
 ETL Logging Utility Module
-Provides logging functionality for ETL processes with structured message handling,
-statistics tracking, and unique run ID generation.
+
+Provides logging functionality for ETL processes including message logging,
+statistics tracking, and run ID management.
 """
 
 import logging
 from datetime import datetime
 from typing import Optional
-from dataclasses import dataclass, field
-
-
-@dataclass
-class LogEntry:
-    """Structured log entry for ETL operations."""
-    log_id: str
-    etl_run_id: str
-    execution_date: str
-    execution_time: str
-    process_step: str
-    status: str
-    records_processed: int = 0
-    records_success: int = 0
-    records_error: int = 0
-    message: str = ""
-    
-    def to_dict(self):
-        """Convert log entry to dictionary format."""
-        return {
-            "log_id": self.log_id,
-            "etl_run_id": self.etl_run_id,
-            "execution_date": self.execution_date,
-            "execution_time": self.execution_time,
-            "process_step": self.process_step,
-            "status": self.status,
-            "records_processed": self.records_processed,
-            "records_success": self.records_success,
-            "records_error": self.records_error,
-            "message": self.message
-        }
+from pyspark.sql import SparkSession
 
 
 class ETLLogger:
     """
-    ETL Logger class for structured logging with statistics tracking.
-    Provides utilities equivalent to ABAP ZETL_MACROS functionality.
+    Logger class for ETL operations.
+    
+    Handles logging of ETL process steps, statistics, and messages
+    with support for structured logging and metrics tracking.
     """
     
-    # Status constants (equivalent to ABAP constants)
-    STATUS_SUCCESS = 'S'
-    STATUS_ERROR = 'E'
-    STATUS_WARNING = 'W'
-    STATUS_INFO = 'I'
-    
-    # Step constants
-    STEP_INIT = 'INIT'
-    STEP_EXTRACT = 'EXTRACT'
-    STEP_TRANSFORM = 'TRANSFORM'
-    STEP_LOAD = 'LOAD'
-    STEP_VALIDATE = 'VALIDATE'
-    STEP_COMPLETE = 'COMPLETE'
-    STEP_ERROR = 'ERROR'
-    
-    def __init__(self, etl_run_id: str, logger_name: str = "etl"):
+    def __init__(self, etl_run_id: str, spark: Optional[SparkSession] = None):
         """
-        Initialize ETL Logger.
+        Initialize ETL logger.
         
         Args:
             etl_run_id: Unique identifier for the ETL run
-            logger_name: Name for the Python logger instance
+            spark: Optional SparkSession for distributed logging
         """
         self.etl_run_id = etl_run_id
-        self.logger = logging.getLogger(logger_name)
-        self.log_entries = []
+        self.spark = spark
         
+        # Setup Python logging
+        self.logger = logging.getLogger(f"ETL_{etl_run_id}")
+        self.logger.setLevel(logging.INFO)
+        
+        # Create console handler if not exists
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+    
     def log_message(
         self,
         step: str,
@@ -83,48 +53,37 @@ class ETLLogger:
         records_error: int = 0
     ) -> None:
         """
-        Log a message with step, status and optional statistics.
-        Equivalent to log_etl_message and log_etl_statistics macros.
+        Log a message with ETL context.
         
         Args:
-            step: ETL process step
-            status: Log status (S/E/W/I)
+            step: ETL process step (INIT, EXTRACT, TRANSFORM, LOAD, etc.)
+            status: Status code (S=Success, E=Error, W=Warning, I=Info)
             message: Log message text
-            records_processed: Number of records processed
-            records_success: Number of successful records
-            records_error: Number of error records
+            records_processed: Total records processed
+            records_success: Successfully processed records
+            records_error: Records with errors
         """
-        now = datetime.now()
-        log_id = self._generate_log_id()
+        log_entry = {
+            'etl_run_id': self.etl_run_id,
+            'timestamp': datetime.now().isoformat(),
+            'step': step,
+            'status': status,
+            'records_processed': records_processed,
+            'records_success': records_success,
+            'records_error': records_error,
+            'message': message
+        }
         
-        log_entry = LogEntry(
-            log_id=log_id,
-            etl_run_id=self.etl_run_id,
-            execution_date=now.strftime('%Y-%m-%d'),
-            execution_time=now.strftime('%H:%M:%S'),
-            process_step=step,
-            status=status,
-            records_processed=records_processed,
-            records_success=records_success,
-            records_error=records_error,
-            message=message
+        # Log to Python logger
+        log_level = self._get_log_level(status)
+        self.logger.log(
+            log_level,
+            f"[{step}] {message} | Processed: {records_processed}, "
+            f"Success: {records_success}, Errors: {records_error}"
         )
         
-        self.log_entries.append(log_entry)
-        
-        # Log to Python logger based on status
-        log_text = f"[{step}] {message}"
-        if records_processed > 0:
-            log_text += f" (Processed: {records_processed}, Success: {records_success}, Error: {records_error})"
-        
-        if status == self.STATUS_ERROR:
-            self.logger.error(log_text)
-        elif status == self.STATUS_WARNING:
-            self.logger.warning(log_text)
-        elif status == self.STATUS_INFO:
-            self.logger.info(log_text)
-        else:
-            self.logger.info(log_text)
+        # TODO: Write to database/log table if needed
+        # self._write_to_log_table(log_entry)
     
     def log_statistics(
         self,
@@ -136,16 +95,15 @@ class ETLLogger:
         message: str
     ) -> None:
         """
-        Log statistics with record counts.
-        Equivalent to log_etl_statistics macro.
+        Log statistics for an ETL step.
         
         Args:
             step: ETL process step
-            status: Log status
+            status: Status code
             records_processed: Total records processed
-            records_success: Successful records
-            records_error: Error records
-            message: Additional message
+            records_success: Successfully processed records
+            records_error: Records with errors
+            message: Statistics message
         """
         self.log_message(
             step=step,
@@ -160,183 +118,116 @@ class ETLLogger:
         """Get the ETL run ID."""
         return self.etl_run_id
     
-    def get_log_entries(self) -> list:
-        """Get all log entries for this ETL run."""
-        return self.log_entries
-    
-    def _generate_log_id(self) -> str:
-        """
-        Generate unique log ID.
-        Equivalent to generate_unique_id macro.
-        
-        Returns:
-            Unique log identifier
-        """
+    @staticmethod
+    def generate_log_id() -> str:
+        """Generate a unique log ID."""
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-        return f"LOG{timestamp[:14]}"
+        return f"LOG{timestamp}"
     
     @staticmethod
     def generate_etl_run_id() -> str:
+        """Generate a unique ETL run ID."""
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        return f"ETL{timestamp}"
+    
+    def _get_log_level(self, status: str) -> int:
         """
-        Generate unique ETL run ID.
+        Map status code to logging level.
         
+        Args:
+            status: Status code (S, E, W, I)
+            
         Returns:
-            Unique ETL run identifier
+            Logging level constant
         """
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-        return f"ETL{timestamp[:14]}"
+        status_map = {
+            'S': logging.INFO,
+            'E': logging.ERROR,
+            'W': logging.WARNING,
+            'I': logging.INFO
+        }
+        return status_map.get(status, logging.INFO)
+    
+    def _write_to_log_table(self, log_entry: dict) -> None:
+        """
+        Write log entry to persistent storage.
+        
+        Args:
+            log_entry: Log entry dictionary
+        """
+        # TODO: Implement database/Delta Lake logging if needed
+        pass
 
 
-def validate_field(value, field_name: str = "field") -> bool:
+def log_etl_message(logger: ETLLogger, step: str, status: str, message: str) -> None:
     """
-    Validate that a field is not empty/null.
-    Equivalent to validate_field macro.
+    Utility function to log ETL message.
     
     Args:
-        value: Value to validate
-        field_name: Name of the field for error messages
+        logger: ETLLogger instance
+        step: Process step
+        status: Status code
+        message: Log message
+    """
+    logger.log_message(step=step, status=status, message=message)
+
+
+def log_etl_statistics(
+    logger: ETLLogger,
+    step: str,
+    status: str,
+    records_processed: int,
+    records_success: int,
+    records_error: int,
+    message: str
+) -> None:
+    """
+    Utility function to log ETL statistics.
+    
+    Args:
+        logger: ETLLogger instance
+        step: Process step
+        status: Status code
+        records_processed: Total records processed
+        records_success: Successfully processed records
+        records_error: Records with errors
+        message: Statistics message
+    """
+    logger.log_statistics(
+        step=step,
+        status=status,
+        records_processed=records_processed,
+        records_success=records_success,
+        records_error=records_error,
+        message=message
+    )
+
+
+def generate_unique_id(prefix: str) -> str:
+    """
+    Generate a unique ID with prefix.
+    
+    Args:
+        prefix: ID prefix (e.g., 'ETL', 'LOG', 'ANL')
         
     Returns:
-        True if valid, False otherwise
+        Unique ID string
     """
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return False
-    return True
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+    return f"{prefix}{timestamp}"
 
 
 def calculate_percentage(numerator: float, denominator: float) -> float:
     """
     Calculate percentage safely.
-    Equivalent to calculate_percentage macro.
     
     Args:
         numerator: Numerator value
         denominator: Denominator value
         
     Returns:
-        Percentage value (0 if denominator is 0)
+        Percentage value (0.0 if denominator is 0)
     """
     if denominator > 0:
         return (numerator / denominator) * 100
     return 0.0
-
-
-def format_currency(amount: float, currency: str = "USD", decimals: int = 2) -> str:
-    """
-    Format currency value.
-    Equivalent to format_currency macro.
-    
-    Args:
-        amount: Amount to format
-        currency: Currency code
-        decimals: Number of decimal places
-        
-    Returns:
-        Formatted currency string
-    """
-    return f"{currency} {amount:,.{decimals}f}"
-
-
-def generate_unique_id(prefix: str = "") -> str:
-    """
-    Generate a unique ID with optional prefix.
-    Equivalent to generate_unique_id macro.
-    
-    Args:
-        prefix: Prefix for the ID
-        
-    Returns:
-        Unique identifier
-    """
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-    return f"{prefix}{timestamp[:14]}"
-
-
-class ETLError(Exception):
-    """
-    Base exception class for ETL errors.
-    Equivalent to ZCX_ETL_ERROR exception class.
-    """
-    
-    def __init__(
-        self,
-        message: str,
-        error_step: Optional[str] = None,
-        record_id: Optional[str] = None
-    ):
-        """
-        Initialize ETL error.
-        
-        Args:
-            message: Error message
-            error_step: ETL step where error occurred
-            record_id: Record identifier related to error
-        """
-        self.message = message
-        self.error_step = error_step
-        self.record_id = record_id
-        super().__init__(self.message)
-    
-    def __str__(self):
-        """String representation of error."""
-        error_text = f"ETL Error: {self.message}"
-        if self.error_step:
-            error_text += f" (Step: {self.error_step})"
-        if self.record_id:
-            error_text += f" (Record: {self.record_id})"
-        return error_text
-
-
-class ExtractError(ETLError):
-    """Exception for extraction errors."""
-    pass
-
-
-class TransformError(ETLError):
-    """Exception for transformation errors."""
-    pass
-
-
-class LoadError(ETLError):
-    """Exception for load errors."""
-    pass
-
-
-def handle_etl_error(logger: ETLLogger, step: str, error: Exception) -> None:
-    """
-    Handle ETL errors with logging.
-    Equivalent to handle_etl_error macro.
-    
-    Args:
-        logger: ETL logger instance
-        step: ETL step where error occurred
-        error: Exception that was raised
-    """
-    error_message = f"{step} failed: {str(error)}"
-    logger.log_message(
-        step=step,
-        status=ETLLogger.STATUS_ERROR,
-        message=error_message
-    )
-
-
-# Configure logging format
-def configure_logging(log_level: str = "INFO", log_file: Optional[str] = None):
-    """
-    Configure logging for ETL processes.
-    
-    Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        log_file: Optional log file path
-    """
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
-    handlers = [logging.StreamHandler()]
-    if log_file:
-        handlers.append(logging.FileHandler(log_file))
-    
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format=log_format,
-        handlers=handlers
-    )
