@@ -1,227 +1,234 @@
 """
-Session Factory Module
 Database session factory for connection pooling and transaction management.
+Provides managed database connections with automatic cleanup.
 """
 
-from pyspark.sql import SparkSession
-from typing import Optional, Dict, Any
-import logging
 from contextlib import contextmanager
+from typing import Generator, Optional
+from sqlalchemy import create_engine, Engine, event
+from sqlalchemy.orm import sessionmaker, Session, scoped_session
+from sqlalchemy.pool import QueuePool
+import logging
+
+from src.config import DatabaseConfig, get_config_manager
 
 
-class SparkSessionFactory:
+class SessionFactory:
     """
-    Factory for creating and managing Spark sessions with connection pooling.
-    Implements singleton pattern for session reuse.
+    Database session factory with connection pooling.
+    Manages database connections and transactions.
     """
-    
-    _instance: Optional['SparkSessionFactory'] = None
-    _spark_session: Optional[SparkSession] = None
-    
-    def __new__(cls):
-        """Singleton pattern to ensure single factory instance."""
-        if cls._instance is None:
-            cls._instance = super(SparkSessionFactory, cls).__new__(cls)
-        return cls._instance
-    
-    def __init__(self):
-        """Initialize session factory."""
-        self.logger = logging.getLogger(__name__)
-    
-    def create_session(self, config: Optional[Dict[str, Any]] = None) -> SparkSession:
+
+    def __init__(self, config: Optional[DatabaseConfig] = None):
         """
-        Create or retrieve Spark session.
-        
+        Initialize session factory.
+
         Args:
-            config: Optional configuration dictionary
-            
-        Returns:
-            SparkSession instance
+            config: Database configuration
         """
-        if self._spark_session is not None:
-            self.logger.info("Reusing existing Spark session")
-            return self._spark_session
-        
-        if config is None:
-            from src.config_manager import config as cfg
-            config = cfg.get_spark_config()
-        
-        self.logger.info("Creating new Spark session")
-        
-        builder = SparkSession.builder
-        
-        # Set application name
-        app_name = config.get('app_name', 'ETL_Application')
-        builder = builder.appName(app_name)
-        
-        # Set master
-        master = config.get('master', 'local[*]')
-        builder = builder.master(master)
-        
-        # Set Spark configurations
-        spark_configs = config.get('configs', {})
-        for key, value in spark_configs.items():
-            builder = builder.config(key, value)
-        
-        # Enable Hive support if configured
-        if config.get('enable_hive_support', False):
-            builder = builder.enableHiveSupport()
-        
-        # Create session
-        self._spark_session = builder.getOrCreate()
-        
-        # Set log level
-        log_level = config.get('log_level', 'WARN')
-        self._spark_session.sparkContext.setLogLevel(log_level)
-        
-        self.logger.info(f"Spark session created: {app_name}")
-        
-        return self._spark_session
-    
-    def get_session(self) -> Optional[SparkSession]:
-        """
-        Get existing Spark session.
-        
-        Returns:
-            SparkSession instance or None if not created
-        """
-        return self._spark_session
-    
-    def stop_session(self) -> None:
-        """Stop the current Spark session."""
-        if self._spark_session is not None:
-            self.logger.info("Stopping Spark session")
-            self._spark_session.stop()
-            self._spark_session = None
-    
+        self.config = config or get_config_manager().get_database_config()
+        self.logger = logging.getLogger(__name__)
+        self._engine: Optional[Engine] = None
+        self._session_factory: Optional[sessionmaker] = None
+        self._scoped_session: Optional[scoped_session] = None
+
+    @property
+    def engine(self) -> Engine:
+        """Get or create database engine."""
+        if self._engine is None:
+            self._engine = self._create_engine()
+        return self._engine
+
+    def _create_engine(self) -> Engine:
+        """Create SQLAlchemy engine with connection pooling."""
+        connection_url = self._build_connection_url()
+
+        engine = create_engine(
+            connection_url,
+            poolclass=QueuePool,
+            pool_size=self.config.pool_size,
+            max_overflow=self.config.max_overflow,
+            pool_timeout=self.config.pool_timeout,
+            pool_recycle=self.config.pool_recycle,
+            pool_pre_ping=True,  # Verify connections before using
+            echo=False
+        )
+
+        # Setup connection event listeners
+        self._setup_event_listeners(engine)
+
+        self.logger.info(
+            f"Database engine created: {self.config.host}:{self.config.port}/{self.config.database}"
+        )
+
+        return engine
+
+    def _build_connection_url(self) -> str:
+        """Build database connection URL."""
+        if self.config.driver == "postgresql":
+            driver = "postgresql+psycopg2"
+        elif self.config.driver == "mysql":
+            driver = "mysql+pymysql"
+        elif self.config.driver == "oracle":
+            driver = "oracle+cx_oracle"
+        else:
+            driver = self.config.driver
+
+        return (
+            f"{driver}://{self.config.username}:{self.config.password}"
+            f"@{self.config.host}:{self.config.port}/{self.config.database}"
+        )
+
+    def _setup_event_listeners(self, engine: Engine) -> None:
+        """Setup SQLAlchemy event listeners."""
+
+        @event.listens_for(engine, "connect")
+        def receive_connect(dbapi_conn, connection_record):
+            self.logger.debug("Database connection established")
+
+        @event.listens_for(engine, "close")
+        def receive_close(dbapi_conn, connection_record):
+            self.logger.debug("Database connection closed")
+
+    @property
+    def session_factory(self) -> sessionmaker:
+        """Get or create session factory."""
+        if self._session_factory is None:
+            self._session_factory = sessionmaker(
+                bind=self.engine,
+                autocommit=False,
+                autoflush=False
+            )
+        return self._session_factory
+
+    @property
+    def scoped_session_factory(self) -> scoped_session:
+        """Get or create scoped session factory for thread-safe operations."""
+        if self._scoped_session is None:
+            self._scoped_session = scoped_session(self.session_factory)
+        return self._scoped_session
+
     @contextmanager
-    def get_transaction_context(self):
+    def get_session(self) -> Generator[Session, None, None]:
         """
-        Context manager for transactional operations.
-        
+        Context manager for database sessions with automatic cleanup.
+
         Yields:
-            SparkSession instance
+            Database session
+
+        Example:
+            with session_factory.get_session() as session:
+                result = session.query(Model).all()
         """
-        session = self.get_session()
-        if session is None:
-            session = self.create_session()
-        
+        session = self.session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"Session error, rolling back: {str(e)}")
+            raise
+        finally:
+            session.close()
+
+    @contextmanager
+    def get_transactional_session(self) -> Generator[Session, None, None]:
+        """
+        Context manager for transactional sessions.
+        Does not auto-commit; caller must explicitly commit.
+
+        Yields:
+            Database session
+        """
+        session = self.session_factory()
         try:
             yield session
         except Exception as e:
-            self.logger.error(f"Transaction error: {str(e)}")
+            session.rollback()
+            self.logger.error(f"Transaction error, rolling back: {str(e)}")
             raise
         finally:
-            # Spark doesn't have explicit transactions like traditional databases
-            # but we can ensure checkpoints or actions are completed
-            pass
+            session.close()
+
+    def create_session(self) -> Session:
+        """
+        Create new session without context manager.
+        Caller is responsible for closing the session.
+
+        Returns:
+            Database session
+        """
+        return self.session_factory()
+
+    def get_scoped_session(self) -> Session:
+        """
+        Get thread-local scoped session.
+
+        Returns:
+            Scoped database session
+        """
+        return self.scoped_session_factory()
+
+    def remove_scoped_session(self) -> None:
+        """Remove thread-local scoped session."""
+        if self._scoped_session:
+            self._scoped_session.remove()
+
+    def test_connection(self) -> bool:
+        """
+        Test database connection.
+
+        Returns:
+            True if connection successful
+        """
+        try:
+            with self.get_session() as session:
+                session.execute("SELECT 1")
+            self.logger.info("Database connection test successful")
+            return True
+        except Exception as e:
+            self.logger.error(f"Database connection test failed: {str(e)}")
+            return False
+
+    def dispose(self) -> None:
+        """Dispose of engine and close all connections."""
+        if self._engine:
+            self._engine.dispose()
+            self.logger.info("Database engine disposed")
+
+    def get_connection_info(self) -> dict:
+        """
+        Get connection pool information.
+
+        Returns:
+            Dictionary with pool statistics
+        """
+        if self._engine:
+            pool = self._engine.pool
+            return {
+                'pool_size': pool.size(),
+                'checked_out': pool.checkedout(),
+                'overflow': pool.overflow(),
+                'total_connections': pool.size() + pool.overflow()
+            }
+        return {}
 
 
-class DatabaseConnectionManager:
+# Singleton instance
+_session_factory: Optional[SessionFactory] = None
+
+
+def get_session_factory(config: Optional[DatabaseConfig] = None) -> SessionFactory:
     """
-    Manager for database connections with connection pooling.
-    Handles JDBC and other database connections.
+    Get singleton session factory instance.
+
+    Args:
+        config: Database configuration
+
+    Returns:
+        SessionFactory instance
     """
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        Initialize connection manager.
-        
-        Args:
-            config: Optional database configuration
-        """
-        if config is None:
-            from src.config_manager import config as cfg
-            config = cfg.get_database_config()
-        
-        self.config = config
-        self.logger = logging.getLogger(__name__)
-    
-    def get_jdbc_properties(self) -> Dict[str, str]:
-        """
-        Get JDBC connection properties.
-        
-        Returns:
-            Dictionary of JDBC properties
-        """
-        jdbc_config = self.config.get('jdbc', {})
-        
-        properties = {
-            'user': jdbc_config.get('user', ''),
-            'password': jdbc_config.get('password', ''),
-            'driver': jdbc_config.get('driver', 'org.postgresql.Driver')
-        }
-        
-        # Add connection pool settings
-        pool_config = jdbc_config.get('connection_pool', {})
-        if pool_config:
-            properties.update({
-                'numPartitions': str(pool_config.get('max_connections', 10)),
-                'fetchsize': str(pool_config.get('fetch_size', 1000))
-            })
-        
-        return properties
-    
-    def get_jdbc_url(self) -> str:
-        """
-        Get JDBC connection URL.
-        
-        Returns:
-            JDBC URL string
-        """
-        jdbc_config = self.config.get('jdbc', {})
-        
-        host = jdbc_config.get('host', 'localhost')
-        port = jdbc_config.get('port', 5432)
-        database = jdbc_config.get('database', 'etl_db')
-        
-        return f"jdbc:postgresql://{host}:{port}/{database}"
-    
-    def read_table(self, spark: SparkSession, table_name: str, **kwargs):
-        """
-        Read data from database table.
-        
-        Args:
-            spark: SparkSession instance
-            table_name: Name of the table to read
-            **kwargs: Additional read options
-            
-        Returns:
-            DataFrame with table data
-        """
-        self.logger.info(f"Reading table: {table_name}")
-        
-        return spark.read \
-            .format("jdbc") \
-            .option("url", self.get_jdbc_url()) \
-            .option("dbtable", table_name) \
-            .option("driver", self.get_jdbc_properties()['driver']) \
-            .options(**self.get_jdbc_properties()) \
-            .options(**kwargs) \
-            .load()
-    
-    def write_table(self, df, table_name: str, mode: str = "append", **kwargs):
-        """
-        Write DataFrame to database table.
-        
-        Args:
-            df: DataFrame to write
-            table_name: Target table name
-            mode: Write mode (append, overwrite, etc.)
-            **kwargs: Additional write options
-        """
-        self.logger.info(f"Writing to table: {table_name} (mode: {mode})")
-        
-        df.write \
-            .format("jdbc") \
-            .option("url", self.get_jdbc_url()) \
-            .option("dbtable", table_name) \
-            .option("driver", self.get_jdbc_properties()['driver']) \
-            .options(**self.get_jdbc_properties()) \
-            .mode(mode) \
-            .options(**kwargs) \
-            .save()
-
-
-# Global session factory instance
-session_factory = SparkSessionFactory()
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = SessionFactory(config)
+    return _session_factory
