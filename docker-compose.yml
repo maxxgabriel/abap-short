@@ -3,10 +3,11 @@ version: '3.8'
 services:
   pyspark:
     image: bitnami/spark:3.4.1
-    container_name: abap_short_pyspark
+    container_name: pyspark_abap_migration
     environment:
       - SPARK_MODE=master
       - SPARK_MASTER_HOST=pyspark
+      - SPARK_MASTER_PORT=7077
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
@@ -18,16 +19,17 @@ services:
     volumes:
       - ./:/app
       - ./data:/data
-      - ./output:/output
       - ./logs:/logs
+      - ./output:/output
     working_dir: /app
     command: >
-      bash -c "pip install --upgrade pip &&
-               pip install -r requirements.txt &&
-               tail -f /dev/null"
+      bash -c "
+      pip install --no-cache-dir -r requirements.txt &&
+      tail -f /dev/null
+      "
     networks:
-      - spark-network
+      - spark_network
 
 networks:
-  spark-network:
+  spark_network:
     driver: bridge
