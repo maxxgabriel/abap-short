@@ -1,30 +1,19 @@
 """
-PySpark Schema Definitions
-
-Defines StructType schemas for ETL data structures.
-Migrated from ABAP type definitions.
+Schema Definitions - Sales ETL System
+PySpark schema definitions for raw and analytics data
 """
-
 from pyspark.sql.types import (
-    StructType, StructField, StringType, DateType,
+    StructType, StructField, StringType, DateType, 
     IntegerType, DecimalType, TimestampType
 )
 
 
 class RawSalesSchema:
-    """
-    Schema for raw sales data.
-    Migrated from ABAP ty_raw_sales type.
-    """
+    """Schema for raw sales data"""
     
     @staticmethod
     def get_schema() -> StructType:
-        """
-        Get the StructType schema for raw sales data.
-        
-        Returns:
-            StructType schema
-        """
+        """Get raw sales schema"""
         return StructType([
             StructField("trans_id", StringType(), nullable=False),
             StructField("trans_date", DateType(), nullable=False),
@@ -40,19 +29,11 @@ class RawSalesSchema:
 
 
 class AnalyticsSchema:
-    """
-    Schema for analytics data.
-    Migrated from ABAP ty_analytics type.
-    """
+    """Schema for analytics data"""
     
     @staticmethod
     def get_schema() -> StructType:
-        """
-        Get the StructType schema for analytics data.
-        
-        Returns:
-            StructType schema
-        """
+        """Get analytics schema"""
         return StructType([
             StructField("analytics_id", StringType(), nullable=False),
             StructField("trans_date", DateType(), nullable=False),
@@ -66,28 +47,19 @@ class AnalyticsSchema:
             StructField("currency", StringType(), nullable=False),
             StructField("sales_rep", StringType(), nullable=True),
             StructField("region", StringType(), nullable=True),
-            StructField("profit_margin", DecimalType(5, 2), nullable=True),
+            StructField("profit_margin", DecimalType(5, 2), nullable=False),
             StructField("category", StringType(), nullable=False),
             StructField("etl_run_id", StringType(), nullable=False),
-            StructField("loaded_at", TimestampType(), nullable=True),
-            StructField("loaded_by", StringType(), nullable=True),
+            StructField("loaded_at", TimestampType(), nullable=False),
         ])
 
 
 class ETLLogSchema:
-    """
-    Schema for ETL log entries.
-    Migrated from ABAP ty_etl_log type.
-    """
+    """Schema for ETL log data"""
     
     @staticmethod
     def get_schema() -> StructType:
-        """
-        Get the StructType schema for ETL log data.
-        
-        Returns:
-            StructType schema
-        """
+        """Get ETL log schema"""
         return StructType([
             StructField("log_id", StringType(), nullable=False),
             StructField("etl_run_id", StringType(), nullable=False),
@@ -95,8 +67,8 @@ class ETLLogSchema:
             StructField("execution_time", StringType(), nullable=False),
             StructField("process_step", StringType(), nullable=False),
             StructField("status", StringType(), nullable=False),
-            StructField("records_processed", IntegerType(), nullable=True),
-            StructField("records_success", IntegerType(), nullable=True),
-            StructField("records_error", IntegerType(), nullable=True),
+            StructField("records_processed", IntegerType(), nullable=False),
+            StructField("records_success", IntegerType(), nullable=False),
+            StructField("records_error", IntegerType(), nullable=False),
             StructField("message", StringType(), nullable=True),
         ])
