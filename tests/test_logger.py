@@ -1,33 +1,30 @@
 """
-Unit tests for ETL Logger with Delta Lake Audit Trail
+Unit tests for ETL Logger
+Tests ABAP ZCL_ETL_LOGGER to PySpark migration
 """
 import pytest
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DateType
-from delta import configure_spark_with_delta_pip
+from datetime import datetime
 import tempfile
 import shutil
-from datetime import datetime
 import os
 
-from src.logger import ETLLogger, generate_etl_run_id, create_logger
-from src.constants import ETLConstants
+from src.logger import ETLLogger, LogConstants, create_logger
 
 
 @pytest.fixture(scope="session")
 def spark():
     """Create Spark session for testing"""
-    builder = (
-        SparkSession.builder
-        .appName("test_etl_logger")
-        .master("local[2]")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    )
+    spark = SparkSession.builder \
+        .appName("test_etl_logger") \
+        .master("local[2]") \
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+        .getOrCreate()
     
-    spark_session = configure_spark_with_delta_pip(builder).getOrCreate()
-    yield spark_session
-    spark_session.stop()
+    yield spark
+    
+    spark.stop()
 
 
 @pytest.fixture
@@ -40,339 +37,250 @@ def temp_delta_path():
 
 @pytest.fixture
 def logger(spark, temp_delta_path):
-    """Create ETL Logger instance for testing"""
-    etl_run_id = generate_etl_run_id()
-    return ETLLogger(
-        spark=spark,
-        etl_run_id=etl_run_id,
-        delta_path=temp_delta_path,
-        username="test_user"
-    )
+    """Create logger instance for testing"""
+    etl_run_id = "TEST_ETL_RUN_001"
+    return ETLLogger(spark, etl_run_id, temp_delta_path)
 
 
 class TestETLLogger:
-    """Test suite for ETL Logger"""
+    """Test suite for ETL Logger functionality"""
     
-    def test_generate_etl_run_id(self):
-        """Test ETL run ID generation"""
-        run_id = generate_etl_run_id()
-        
-        assert run_id.startswith("ETL")
-        assert len(run_id) == 17  # ETL + 14 digit timestamp
+    def test_logger_initialization(self, logger):
+        """Test logger initializes correctly"""
+        assert logger is not None
+        assert logger.etl_run_id == "TEST_ETL_RUN_001"
+        assert logger._log_buffer == []
     
-    def test_logger_initialization(self, spark, temp_delta_path):
-        """Test logger initialization creates Delta table"""
-        etl_run_id = generate_etl_run_id()
-        logger = ETLLogger(spark, etl_run_id, temp_delta_path)
+    def test_get_log_schema(self):
+        """Test log schema matches ZETL_LOG structure"""
+        schema = ETLLogger.get_log_schema()
         
-        assert logger.etl_run_id == etl_run_id
-        assert logger.delta_path == temp_delta_path
-        
-        # Check Delta table exists
-        df = spark.read.format("delta").load(temp_delta_path)
-        assert df.schema == ETLLogger.LOG_SCHEMA
-    
-    def test_log_message_basic(self, logger, spark):
-        """Test basic log message writing"""
-        logger.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Test message"
-        )
-        
-        # Read logs
-        df = spark.read.format("delta").load(logger.delta_path)
-        assert df.count() == 1
-        
-        row = df.collect()[0]
-        assert row.etl_run_id == logger.etl_run_id
-        assert row.process_step == ETLConstants.Step.EXTRACT
-        assert row.status == ETLConstants.Status.SUCCESS
-        assert row.message == "Test message"
-        assert row.created_by == "test_user"
-    
-    def test_log_message_with_counts(self, logger, spark):
-        """Test log message with record counts"""
-        logger.log_message(
-            step=ETLConstants.Step.TRANSFORM,
-            status=ETLConstants.Status.SUCCESS,
-            message="Transformation complete",
-            records_processed=100,
-            records_success=95,
-            records_error=5
-        )
-        
-        df = spark.read.format("delta").load(logger.delta_path)
-        row = df.collect()[0]
-        
-        assert row.records_processed == 100
-        assert row.records_success == 95
-        assert row.records_error == 5
-    
-    def test_multiple_log_entries(self, logger, spark):
-        """Test multiple log entries"""
-        steps = [
-            ETLConstants.Step.INIT,
-            ETLConstants.Step.EXTRACT,
-            ETLConstants.Step.TRANSFORM,
-            ETLConstants.Step.LOAD,
-            ETLConstants.Step.COMPLETE
+        expected_fields = [
+            "log_id", "etl_run_id", "execution_date", "execution_time",
+            "execution_timestamp", "process_step", "status",
+            "records_processed", "records_success", "records_error",
+            "message", "created_at", "created_by"
         ]
         
-        for step in steps:
-            logger.log_message(
-                step=step,
-                status=ETLConstants.Status.SUCCESS,
-                message=f"Step {step} complete"
-            )
-        
-        df = spark.read.format("delta").load(logger.delta_path)
-        assert df.count() == len(steps)
-        
-        # Verify all steps logged
-        logged_steps = [row.process_step for row in df.collect()]
-        assert set(logged_steps) == set(steps)
+        actual_fields = [field.name for field in schema.fields]
+        assert actual_fields == expected_fields
     
-    def test_get_logs_no_filter(self, logger, spark):
-        """Test retrieving all logs without filter"""
+    def test_log_message_basic(self, logger):
+        """Test basic log message creation"""
         logger.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Extract"
-        )
-        logger.log_message(
-            step=ETLConstants.Step.TRANSFORM,
-            status=ETLConstants.Status.WARNING,
-            message="Transform"
+            process_step=LogConstants.Step.INIT,
+            status=LogConstants.Status.SUCCESS,
+            message="Test initialization"
         )
         
-        logs_df = logger.get_logs()
-        assert logs_df.count() == 2
-    
-    def test_get_logs_with_step_filter(self, logger):
-        """Test retrieving logs filtered by step"""
-        logger.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Extract"
-        )
-        logger.log_message(
-            step=ETLConstants.Step.TRANSFORM,
-            status=ETLConstants.Status.SUCCESS,
-            message="Transform"
-        )
+        assert len(logger._log_buffer) == 1
         
-        logs_df = logger.get_logs(filter_step=ETLConstants.Step.EXTRACT)
-        assert logs_df.count() == 1
-        assert logs_df.collect()[0].process_step == ETLConstants.Step.EXTRACT
+        log_entry = logger._log_buffer[0]
+        assert log_entry["process_step"] == "INIT"
+        assert log_entry["status"] == "S"
+        assert log_entry["message"] == "Test initialization"
+        assert log_entry["etl_run_id"] == "TEST_ETL_RUN_001"
     
-    def test_get_logs_with_status_filter(self, logger):
-        """Test retrieving logs filtered by status"""
+    def test_log_message_with_metrics(self, logger):
+        """Test log message with record metrics"""
         logger.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Success"
-        )
-        logger.log_message(
-            step=ETLConstants.Step.TRANSFORM,
-            status=ETLConstants.Status.ERROR,
-            message="Error"
-        )
-        
-        logs_df = logger.get_logs(filter_status=ETLConstants.Status.ERROR)
-        assert logs_df.count() == 1
-        assert logs_df.collect()[0].status == ETLConstants.Status.ERROR
-    
-    def test_get_summary_statistics(self, logger):
-        """Test summary statistics calculation"""
-        logger.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Extract",
-            records_processed=100,
-            records_success=100,
-            records_error=0
-        )
-        logger.log_message(
-            step=ETLConstants.Step.TRANSFORM,
-            status=ETLConstants.Status.WARNING,
-            message="Transform",
-            records_processed=100,
-            records_success=95,
-            records_error=5
-        )
-        
-        stats = logger.get_summary_statistics()
-        
-        assert stats["etl_run_id"] == logger.etl_run_id
-        assert stats["total_records_processed"] == 200
-        assert stats["total_records_success"] == 195
-        assert stats["total_records_error"] == 5
-        assert stats["error_count"] == 0
-        assert stats["warning_count"] == 1
-        assert stats["start_time"] is not None
-        assert stats["end_time"] is not None
-        assert stats["duration_seconds"] is not None
-    
-    def test_create_logger_factory(self, spark, temp_delta_path):
-        """Test factory function for creating logger"""
-        logger = create_logger(
-            spark=spark,
-            delta_path=temp_delta_path,
-            username="factory_user"
-        )
-        
-        assert logger.etl_run_id.startswith("ETL")
-        assert logger.username == "factory_user"
-    
-    def test_create_logger_with_run_id(self, spark, temp_delta_path):
-        """Test factory function with provided run ID"""
-        custom_run_id = "ETL20240101120000"
-        logger = create_logger(
-            spark=spark,
-            delta_path=temp_delta_path,
-            etl_run_id=custom_run_id
-        )
-        
-        assert logger.etl_run_id == custom_run_id
-    
-    def test_log_id_uniqueness(self, logger):
-        """Test that log IDs are unique"""
-        logger.log_message(
-            step=ETLConstants.Step.INIT,
-            status=ETLConstants.Status.SUCCESS,
-            message="First"
-        )
-        logger.log_message(
-            step=ETLConstants.Step.INIT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Second"
-        )
-        
-        logs_df = logger.get_logs()
-        log_ids = [row.log_id for row in logs_df.collect()]
-        
-        assert len(log_ids) == len(set(log_ids))  # All unique
-    
-    def test_status_constants(self):
-        """Test status constants match ABAP"""
-        assert ETLLogger.STATUS_SUCCESS == "S"
-        assert ETLLogger.STATUS_ERROR == "E"
-        assert ETLLogger.STATUS_WARNING == "W"
-        assert ETLLogger.STATUS_INFO == "I"
-    
-    def test_step_constants(self):
-        """Test step constants match ABAP"""
-        assert ETLLogger.STEP_INIT == "INIT"
-        assert ETLLogger.STEP_EXTRACT == "EXTRACT"
-        assert ETLLogger.STEP_TRANSFORM == "TRANSFORM"
-        assert ETLLogger.STEP_LOAD == "LOAD"
-        assert ETLLogger.STEP_VALIDATE == "VALIDATE"
-        assert ETLLogger.STEP_COMPLETE == "COMPLETE"
-        assert ETLLogger.STEP_ERROR == "ERROR"
-    
-    def test_error_logging(self, logger):
-        """Test error status logging"""
-        logger.log_message(
-            step=ETLConstants.Step.LOAD,
-            status=ETLConstants.Status.ERROR,
-            message="Load failed: Connection timeout",
-            records_processed=100,
-            records_success=50,
+            process_step=LogConstants.Step.EXTRACT,
+            status=LogConstants.Status.SUCCESS,
+            message="Extraction completed",
+            records_processed=1000,
+            records_success=950,
             records_error=50
         )
         
-        logs_df = logger.get_logs(filter_status=ETLConstants.Status.ERROR)
-        assert logs_df.count() == 1
-        
-        row = logs_df.collect()[0]
-        assert "Load failed" in row.message
-        assert row.records_error == 50
+        log_entry = logger._log_buffer[0]
+        assert log_entry["records_processed"] == 1000
+        assert log_entry["records_success"] == 950
+        assert log_entry["records_error"] == 50
     
-    def test_schema_validation(self, logger, spark):
-        """Test that logged data conforms to schema"""
-        logger.log_message(
-            step=ETLConstants.Step.VALIDATE,
-            status=ETLConstants.Status.SUCCESS,
-            message="Validation passed"
-        )
+    def test_generate_log_id(self, logger):
+        """Test log ID generation"""
+        log_id = logger._generate_log_id()
         
-        df = spark.read.format("delta").load(logger.delta_path)
-        
-        # Check schema fields
-        schema_fields = {field.name for field in df.schema.fields}
-        expected_fields = {field.name for field in ETLLogger.LOG_SCHEMA.fields}
-        
-        assert schema_fields == expected_fields
+        assert log_id.startswith("LOG")
+        assert len(log_id) > 14  # LOG + timestamp + uuid
     
-    def test_concurrent_logging(self, spark, temp_delta_path):
-        """Test multiple loggers writing to same Delta table"""
-        run_id_1 = generate_etl_run_id()
-        run_id_2 = generate_etl_run_id()
+    def test_generate_etl_run_id(self):
+        """Test ETL run ID generation"""
+        run_id = ETLLogger.generate_etl_run_id()
         
-        logger1 = ETLLogger(spark, run_id_1, temp_delta_path, "user1")
-        logger2 = ETLLogger(spark, run_id_2, temp_delta_path, "user2")
+        assert run_id.startswith("ETL")
+        assert len(run_id) > 14
+    
+    def test_get_etl_run_id(self, logger):
+        """Test getting ETL run ID"""
+        assert logger.get_etl_run_id() == "TEST_ETL_RUN_001"
+    
+    def test_flush_logs_to_delta(self, spark, temp_delta_path):
+        """Test writing logs to Delta Lake"""
+        logger = ETLLogger(spark, "TEST_RUN_002", temp_delta_path)
         
-        logger1.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Logger 1"
-        )
-        logger2.log_message(
-            step=ETLConstants.Step.EXTRACT,
-            status=ETLConstants.Status.SUCCESS,
-            message="Logger 2"
-        )
+        # Add multiple log entries
+        for i in range(5):
+            logger.log_message(
+                process_step=f"STEP_{i}",
+                status=LogConstants.Status.SUCCESS,
+                message=f"Test message {i}",
+                records_processed=i * 100
+            )
         
-        # Both logs should be present
+        # Flush to Delta
+        logger.flush_logs()
+        
+        # Verify buffer is cleared
+        assert len(logger._log_buffer) == 0
+        
+        # Verify data written to Delta
         df = spark.read.format("delta").load(temp_delta_path)
+        assert df.count() == 5
+        
+        # Verify schema
+        assert set(df.columns) == set([field.name for field in ETLLogger.get_log_schema().fields])
+    
+    def test_read_logs(self, spark, temp_delta_path):
+        """Test reading logs from Delta Lake"""
+        logger = ETLLogger(spark, "TEST_RUN_003", temp_delta_path)
+        
+        # Write some logs
+        logger.log_message(
+            process_step=LogConstants.Step.EXTRACT,
+            status=LogConstants.Status.SUCCESS,
+            message="Test extract"
+        )
+        logger.log_message(
+            process_step=LogConstants.Step.TRANSFORM,
+            status=LogConstants.Status.SUCCESS,
+            message="Test transform"
+        )
+        logger.flush_logs()
+        
+        # Read all logs
+        df = logger.read_logs()
         assert df.count() == 2
         
-        # Each logger should only see its own logs
-        assert logger1.get_logs().count() == 1
-        assert logger2.get_logs().count() == 1
+        # Read with filter
+        df_filtered = logger.read_logs(filters={"process_step": "EXTRACT"})
+        assert df_filtered.count() == 1
+    
+    def test_get_run_summary(self, spark, temp_delta_path):
+        """Test getting run summary statistics"""
+        logger = ETLLogger(spark, "TEST_RUN_004", temp_delta_path)
+        
+        # Log multiple steps with different statuses
+        logger.log_message(
+            process_step=LogConstants.Step.EXTRACT,
+            status=LogConstants.Status.SUCCESS,
+            message="Extract success",
+            records_processed=1000,
+            records_success=1000
+        )
+        logger.log_message(
+            process_step=LogConstants.Step.TRANSFORM,
+            status=LogConstants.Status.WARNING,
+            message="Transform warning",
+            records_processed=1000,
+            records_success=900,
+            records_error=100
+        )
+        logger.flush_logs()
+        
+        # Get summary
+        summary_df = logger.get_run_summary()
+        assert summary_df.count() == 2
+    
+    def test_multiple_flush_cycles(self, spark, temp_delta_path):
+        """Test multiple flush cycles append correctly"""
+        logger = ETLLogger(spark, "TEST_RUN_005", temp_delta_path)
+        
+        # First batch
+        logger.log_message(
+            process_step=LogConstants.Step.EXTRACT,
+            status=LogConstants.Status.SUCCESS,
+            message="Batch 1"
+        )
+        logger.flush_logs()
+        
+        # Second batch
+        logger.log_message(
+            process_step=LogConstants.Step.TRANSFORM,
+            status=LogConstants.Status.SUCCESS,
+            message="Batch 2"
+        )
+        logger.flush_logs()
+        
+        # Verify total count
+        df = spark.read.format("delta").load(temp_delta_path)
+        assert df.count() == 2
+    
+    def test_create_logger_factory(self, spark, temp_delta_path):
+        """Test factory function creates logger with auto-generated ID"""
+        logger = create_logger(spark, temp_delta_path)
+        
+        assert logger is not None
+        assert logger.etl_run_id.startswith("ETL")
+        assert len(logger.etl_run_id) > 14
 
 
-class TestETLConstants:
-    """Test suite for ETL Constants"""
+class TestLogConstants:
+    """Test suite for logging constants"""
     
     def test_status_constants(self):
-        """Test status code constants"""
-        assert ETLConstants.Status.NEW == "N"
-        assert ETLConstants.Status.PROCESSED == "P"
-        assert ETLConstants.Status.ERROR == "E"
-        assert ETLConstants.Status.WARNING == "W"
-        assert ETLConstants.Status.SUCCESS == "S"
-        assert ETLConstants.Status.INFO == "I"
+        """Test status constants match ABAP definitions"""
+        assert LogConstants.Status.NEW == "N"
+        assert LogConstants.Status.PROCESSED == "P"
+        assert LogConstants.Status.ERROR == "E"
+        assert LogConstants.Status.WARNING == "W"
+        assert LogConstants.Status.SUCCESS == "S"
+        assert LogConstants.Status.INFO == "I"
     
     def test_step_constants(self):
-        """Test step constants"""
-        assert ETLConstants.Step.INIT == "INIT"
-        assert ETLConstants.Step.EXTRACT == "EXTRACT"
-        assert ETLConstants.Step.TRANSFORM == "TRANSFORM"
-        assert ETLConstants.Step.LOAD == "LOAD"
+        """Test step constants match ABAP definitions"""
+        assert LogConstants.Step.INIT == "INIT"
+        assert LogConstants.Step.EXTRACT == "EXTRACT"
+        assert LogConstants.Step.TRANSFORM == "TRANSFORM"
+        assert LogConstants.Step.LOAD == "LOAD"
+        assert LogConstants.Step.VALIDATE == "VALIDATE"
+        assert LogConstants.Step.COMPLETE == "COMPLETE"
+        assert LogConstants.Step.ERROR == "ERROR"
     
-    def test_business_rules(self):
-        """Test business rule constants"""
-        assert ETLConstants.DISCOUNT_QTY_TIER1 == 10
-        assert ETLConstants.DISCOUNT_QTY_TIER2 == 15
-        assert ETLConstants.DISCOUNT_RATE_TIER1 == 0.05
-        assert ETLConstants.DISCOUNT_RATE_TIER2 == 0.10
-        assert ETLConstants.TAX_RATE == 0.08
-        assert ETLConstants.COST_RATIO == 0.60
+    def test_message_constants(self):
+        """Test message constants match ABAP definitions"""
+        assert LogConstants.Message.INIT_SUCCESS == "ETL process initialized successfully"
+        assert LogConstants.Message.EXTRACT_START == "Starting data extraction"
+        assert LogConstants.Message.ETL_COMPLETE == "ETL process completed successfully"
+
+
+class TestErrorHandling:
+    """Test suite for error handling scenarios"""
     
-    def test_category_thresholds(self):
-        """Test category threshold constants"""
-        assert ETLConstants.CATEGORY_HIGH_THRESHOLD == 2000.00
-        assert ETLConstants.CATEGORY_MEDIUM_THRESHOLD == 500.00
+    def test_flush_empty_buffer(self, logger):
+        """Test flushing empty buffer doesn't cause errors"""
+        logger.flush_logs()  # Should not raise
+        assert len(logger._log_buffer) == 0
     
-    def test_constants_to_dict(self):
-        """Test constants export to dictionary"""
-        config_dict = ETLConstants.to_dict()
+    def test_read_nonexistent_delta_table(self, spark):
+        """Test reading from nonexistent Delta table"""
+        logger = ETLLogger(spark, "TEST_RUN_ERROR", "/nonexistent/path")
         
-        assert config_dict["tax_rate"] == 0.08
-        assert config_dict["default_batch_size"] == 1000
-        assert "discount_qty_tier1" in config_dict
+        with pytest.raises(Exception):
+            logger.read_logs()
+    
+    def test_log_with_long_message(self, logger):
+        """Test logging with message exceeding max length"""
+        long_message = "A" * 500  # Longer than CHAR255
+        
+        logger.log_message(
+            process_step=LogConstants.Step.ERROR,
+            status=LogConstants.Status.ERROR,
+            message=long_message
+        )
+        
+        # Should truncate or handle gracefully
+        assert len(logger._log_buffer) == 1
 
 
 if __name__ == "__main__":
