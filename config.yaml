@@ -1,78 +1,78 @@
-# Sales ETL System Configuration
-# Migrated from ABAP Package $ZETL
+# ETL Configuration File
+# PySpark Sales Data ETL System
 
-etl:
-  # ETL Run Configuration
+# Application settings
+application:
+  name: "Sales ETL System"
+  version: "1.0.0"
+  description: "ETL system for sales data processing"
+
+# Spark configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"
+  config:
+    spark.sql.shuffle.partitions: 10
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.driver.memory: "2g"
+    spark.executor.memory: "2g"
+
+# Data paths
+paths:
+  source: "data/input/sales_raw"
+  target: "data/output/sales_analytics"
+  logs: "data/logs"
+  checkpoint: "data/checkpoint"
+
+# Business rules
+business_rules:
+  # Discount thresholds
+  discount_tier1_quantity: 10
+  discount_tier2_quantity: 15
+  discount_tier1_rate: 0.05  # 5%
+  discount_tier2_rate: 0.10  # 10%
+  
+  # Tax rate
+  tax_rate: 0.08  # 8%
+  
+  # Cost ratio for profit calculation
+  cost_ratio: 0.60  # 60%
+  
+  # Category thresholds
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
+
+# ETL processing configuration
+processing:
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
   parallel_jobs: 4
 
-  # Date Range Configuration
-  default_days_back: 7
-  
-  # Execution Mode
-  test_mode: false
-  enable_logging: true
+# Date settings
+date_settings:
+  default_lookback_days: 7
+  date_format: "%Y-%m-%d"
+  timestamp_format: "%Y-%m-%d %H:%M:%S"
 
-# Business Rules Configuration
-business_rules:
-  # Discount Thresholds
-  discount:
-    tier1_quantity: 10
-    tier2_quantity: 15
-    tier1_rate: 0.05
-    tier2_rate: 0.10
-  
-  # Tax Configuration
-  tax_rate: 0.08
-  
-  # Cost Configuration
-  cost_ratio: 0.60
-  
-  # Category Thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
-# Database Configuration
-database:
-  # Source Table
-  source:
-    table_name: "zsales_raw"
-    database: "sales_db"
-    
-  # Target Table
-  target:
-    table_name: "zsales_analytics"
-    database: "analytics_db"
-    
-  # Log Table
-  log:
-    table_name: "zetl_log"
-    database: "etl_db"
-
-# Spark Configuration
-spark:
-  app_name: "Sales ETL Process"
-  master: "local[*]"
-  executor_memory: "4g"
-  driver_memory: "2g"
-  shuffle_partitions: 200
-  
-  # Optimization Settings
-  adaptive_query_execution: true
-  dynamic_partition_overwrite: true
-  
-# Logging Configuration
+# Logging configuration
 logging:
   level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
-  console: true
-  
-# Status Codes
+  format: "[%(asctime)s] [%(levelname)s] %(name)s: %(message)s"
+  console_output: true
+  file_output: true
+  log_file: "etl_execution.log"
+
+# Data quality rules
+data_quality:
+  validate_required_fields: true
+  validate_data_types: true
+  validate_ranges: true
+  max_error_percentage: 5.0
+
+# Status codes
 status_codes:
   new: "N"
   processed: "P"
@@ -81,17 +81,13 @@ status_codes:
   success: "S"
   info: "I"
 
-# Process Steps
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+# ID prefixes
+id_prefixes:
+  etl_run: "ETL"
+  log_id: "LOG"
+  analytics_id: "ANL"
 
-# Message Templates
+# Message templates
 messages:
   init_success: "ETL process initialized successfully"
   extract_start: "Starting data extraction"
