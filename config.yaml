@@ -1,181 +1,129 @@
-# ETL Configuration
-# Sales Data ETL System Configuration
+# ETL Configuration File
+# Sales Analytics ETL System
 
-etl:
-  # Process configuration
-  process:
-    batch_size: 1000
-    commit_interval: 500
-    retry_attempts: 3
-    timeout_seconds: 3600
-    parallel_jobs: 1
-    
-  # Date range configuration
-  date_range:
-    default_days_back: 7
-    max_date_range_days: 365
-    
-  # ID prefixes
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+# Spark Configuration
+spark:
+  app_name: "Sales_ETL_Loader"
+  master: "local[*]"
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.parquet.compression.codec: "snappy"
+    spark.databricks.delta.optimizeWrite.enabled: "true"
+    spark.databricks.delta.autoCompact.enabled: "true"
 
-# Business rules configuration
+# Source Configuration
+source:
+  path: "data/raw/sales_raw"
+  format: "parquet"
+  date_column: "trans_date"
+
+# Target Configuration
+target:
+  path: "data/analytics/sales_analytics"
+  format: "delta"  # Options: delta, parquet, orc
+  write_mode: "append"  # Options: append, overwrite, errorifexists
+  
+  # Partitioning
+  partition_by:
+    - "trans_date"
+    - "region"
+  
+  # Bucketing (optional)
+  bucket_by:
+    num_buckets: 10
+    columns:
+      - "customer_id"
+  
+  # Compression
+  compression: "snappy"  # Options: snappy, gzip, lz4, zstd
+  
+  # Optimization
+  optimize_after_write: true
+  vacuum_retention_hours: 168  # 7 days
+  
+  # Additional options
+  options:
+    mergeSchema: "true"
+    overwriteSchema: "false"
+
+# Error Handling Configuration
+error_handling:
+  error_path: "data/errors/invalid_records"
+  max_invalid_records_log: 100
+  fail_on_validation_threshold: 0.1  # Fail if >10% records invalid
+
+# Business Rules
 business_rules:
-  # Discount thresholds
+  # Discount tiers
   discount:
     tier1:
       quantity_threshold: 10
-      discount_rate: 0.05
+      rate: 0.05
     tier2:
       quantity_threshold: 15
-      discount_rate: 0.10
+      rate: 0.10
   
-  # Tax configuration
-  tax:
-    default_rate: 0.08
+  # Tax rate
+  tax_rate: 0.08
   
-  # Cost and profit
-  cost:
-    default_ratio: 0.60  # Cost is 60% of unit price
+  # Cost ratio for profit calculation
+  cost_ratio: 0.60
   
   # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  category_thresholds:
+    high: 2000.00
+    medium: 500.00
 
-# Extraction configuration
-extract:
-  # Source configuration
-  source:
-    table: "zsales_raw"
-    status_field: "status"
-    new_status: "N"
-    processed_status: "P"
-  
-  # Field mapping
-  fields:
-    - trans_id
-    - trans_date
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-    - currency
-    - sales_rep
-    - region
-    - status
-
-# Transformation configuration
-transform:
-  # Calculation settings
-  calculations:
-    precision: 2
-    rounding_mode: "ROUND_HALF_UP"
-  
-  # Validation rules
-  validation:
-    required_fields:
-      - trans_id
-      - customer_id
-      - product_id
-      - quantity
-      - unit_price
-    
-    numeric_fields:
-      - quantity
-      - unit_price
-      - gross_amount
-      - net_amount
-    
-    min_values:
-      quantity: 1
-      unit_price: 0.01
-      gross_amount: 0.01
-
-# Load configuration
-load:
-  # Target configuration
-  target:
-    table: "zsales_analytics"
-    mode: "APPEND"  # APPEND, OVERWRITE, UPSERT
-  
-  # Validation before load
-  validate_before_load: true
-  skip_invalid_records: false
-  
-  # Field mapping
-  fields:
+# Validation Rules
+validation:
+  required_fields:
     - analytics_id
-    - trans_date
     - customer_id
     - product_id
-    - total_quantity
     - gross_amount
-    - net_amount
-    - discount_amount
-    - tax_amount
     - currency
-    - sales_rep
-    - region
-    - profit_margin
     - category
-    - etl_run_id
+  
+  allowed_categories:
+    - "HIGH"
+    - "MEDIUM"
+    - "LOW"
+  
+  numeric_ranges:
+    gross_amount:
+      min: 0.01
+      max: 999999.99
+    quantity:
+      min: 1
+      max: 10000
 
-# Logging configuration
+# ETL Configuration
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
+
+# Logging Configuration
 logging:
-  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  level: "INFO"
-  
-  # Log table
-  table: "zetl_log"
-  
-  # Log retention
-  retention_days: 90
-  
-  # Console output
+  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+  log_path: "logs/etl_load.log"
   console_output: true
-  
-  # Format
-  format: "[%(levelname)s] %(asctime)s - %(name)s - %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
+  db_logging: true
+  log_table: "etl_log"
 
-# Status codes
-status:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
+# System Configuration
+system:
+  system_user: "spark_etl"
+  run_id_prefix: "ETL"
+  timezone: "UTC"
 
-# ETL steps
-steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# Categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-
-# Error handling
-error_handling:
-  # Continue on error
-  continue_on_error: false
-  
-  # Maximum errors before stopping
-  max_errors: 100
-  
-  # Error notification
-  notify_on_error: true
-  
-  # Rollback on error
-  rollback_on_error: true
+# Performance Tuning
+performance:
+  cache_intermediate_results: true
+  repartition_before_write: true
+  target_partition_size_mb: 128
+  max_records_per_file: 100000
