@@ -1,55 +1,57 @@
 """
-ETL Configuration Module
-Converts ABAP constants structure to Python configuration class
+Configuration module for Sales ETL System.
+Migrated from ABAP ZETL_TOP include and ZCL_ETL_CONSTANTS class.
 """
+
 from dataclasses import dataclass
+from typing import Dict, Any
 from decimal import Decimal
-from enum import Enum
-from typing import Dict
 
 
-class StatusCode(Enum):
-    """Status codes for ETL processes"""
-    NEW = 'N'
-    PROCESSED = 'P'
-    ERROR = 'E'
-    WARNING = 'W'
-    SUCCESS = 'S'
-    INFO = 'I'
+@dataclass
+class StatusCodes:
+    """ETL status codes."""
+    NEW: str = 'N'
+    PROCESSED: str = 'P'
+    ERROR: str = 'E'
+    WARNING: str = 'W'
+    SUCCESS: str = 'S'
+    INFO: str = 'I'
 
 
-class ProcessStep(Enum):
-    """ETL process steps"""
-    INIT = 'INIT'
-    EXTRACT = 'EXTRACT'
-    TRANSFORM = 'TRANSFORM'
-    LOAD = 'LOAD'
-    VALIDATE = 'VALIDATE'
-    COMPLETE = 'COMPLETE'
-    ERROR = 'ERROR'
+@dataclass
+class ProcessSteps:
+    """ETL process step identifiers."""
+    INIT: str = 'INIT'
+    EXTRACT: str = 'EXTRACT'
+    TRANSFORM: str = 'TRANSFORM'
+    LOAD: str = 'LOAD'
+    VALIDATE: str = 'VALIDATE'
+    COMPLETE: str = 'COMPLETE'
+    ERROR: str = 'ERROR'
 
 
-class SaleCategory(Enum):
-    """Sale categorization levels"""
-    HIGH = 'HIGH'
-    MEDIUM = 'MEDIUM'
-    LOW = 'LOW'
+@dataclass
+class SaleCategories:
+    """Sale categorization values."""
+    HIGH: str = 'HIGH'
+    MEDIUM: str = 'MEDIUM'
+    LOW: str = 'LOW'
 
 
-@dataclass(frozen=True)
+@dataclass
 class BusinessRules:
-    """Business rule constants for ETL transformations"""
-    
+    """Business rules and thresholds for ETL transformations."""
     # Discount thresholds
     DISCOUNT_QTY_TIER1: int = 10
     DISCOUNT_QTY_TIER2: int = 15
     DISCOUNT_RATE_TIER1: Decimal = Decimal('0.05')
     DISCOUNT_RATE_TIER2: Decimal = Decimal('0.10')
     
-    # Tax configuration
+    # Tax rate
     TAX_RATE: Decimal = Decimal('0.08')
     
-    # Cost calculation
+    # Cost ratio for profit calculation
     COST_RATIO: Decimal = Decimal('0.60')
     
     # Category thresholds
@@ -57,11 +59,9 @@ class BusinessRules:
     CATEGORY_MEDIUM_THRESHOLD: Decimal = Decimal('500.00')
 
 
-@dataclass(frozen=True)
-class ETLConfiguration:
-    """ETL system configuration defaults"""
-    
-    # Batch processing settings
+@dataclass
+class ETLConfig:
+    """ETL runtime configuration parameters."""
     DEFAULT_BATCH_SIZE: int = 1000
     DEFAULT_COMMIT_INTERVAL: int = 500
     DEFAULT_RETRY_ATTEMPTS: int = 3
@@ -71,126 +71,118 @@ class ETLConfiguration:
     PREFIX_ETL_RUN: str = 'ETL'
     PREFIX_LOG_ID: str = 'LOG'
     PREFIX_ANALYTICS_ID: str = 'ANL'
+    
+    # Operational parameters
+    batch_size: int = 1000
+    commit_interval: int = 500
+    retry_attempts: int = 3
+    timeout_seconds: int = 3600
+    test_mode: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass
 class MessageTemplates:
-    """Standard message templates for logging"""
-    
-    # Initialization messages
-    MSG_INIT_SUCCESS: str = 'ETL process initialized successfully'
-    
-    # Extract phase messages
-    MSG_EXTRACT_START: str = 'Starting data extraction'
-    MSG_EXTRACT_COMPLETE: str = 'Data extraction completed'
-    
-    # Transform phase messages
-    MSG_TRANSFORM_START: str = 'Starting data transformation'
-    MSG_TRANSFORM_COMPLETE: str = 'Data transformation completed'
-    
-    # Load phase messages
-    MSG_LOAD_START: str = 'Starting data load'
-    MSG_LOAD_COMPLETE: str = 'Data load completed'
-    
-    # Completion messages
-    MSG_ETL_COMPLETE: str = 'ETL process completed successfully'
-    MSG_ETL_ERROR: str = 'ETL process failed'
+    """Standard message templates for ETL logging."""
+    INIT_SUCCESS: str = 'ETL process initialized successfully'
+    EXTRACT_START: str = 'Starting data extraction'
+    EXTRACT_COMPLETE: str = 'Data extraction completed'
+    TRANSFORM_START: str = 'Starting data transformation'
+    TRANSFORM_COMPLETE: str = 'Data transformation completed'
+    LOAD_START: str = 'Starting data load'
+    LOAD_COMPLETE: str = 'Data load completed'
+    ETL_COMPLETE: str = 'ETL process completed successfully'
+    ETL_ERROR: str = 'ETL process failed'
 
 
 class ETLConstants:
     """
-    Main constants class for Sales ETL System
-    Provides static access to all configuration, business rules, and constants
+    Main configuration class containing all ETL constants and configurations.
+    Migrated from ABAP ZCL_ETL_CONSTANTS and ZETL_TOP.
     """
     
-    # Status and step enums
-    Status = StatusCode
-    Step = ProcessStep
-    Category = SaleCategory
-    
-    # Configuration instances
-    business_rules = BusinessRules()
-    config = ETLConfiguration()
+    status = StatusCodes()
+    steps = ProcessSteps()
+    categories = SaleCategories()
+    rules = BusinessRules()
+    config = ETLConfig()
     messages = MessageTemplates()
     
-    @staticmethod
-    def get_status_dict() -> Dict[str, str]:
-        """Get status codes as dictionary"""
-        return {status.name: status.value for status in StatusCode}
+    @classmethod
+    def get_config_dict(cls) -> Dict[str, Any]:
+        """Return configuration as dictionary for serialization."""
+        return {
+            'batch_size': cls.config.batch_size,
+            'commit_interval': cls.config.commit_interval,
+            'retry_attempts': cls.config.retry_attempts,
+            'timeout_seconds': cls.config.timeout_seconds,
+            'test_mode': cls.config.test_mode,
+            'discount_qty_tier1': int(cls.rules.DISCOUNT_QTY_TIER1),
+            'discount_qty_tier2': int(cls.rules.DISCOUNT_QTY_TIER2),
+            'discount_rate_tier1': float(cls.rules.DISCOUNT_RATE_TIER1),
+            'discount_rate_tier2': float(cls.rules.DISCOUNT_RATE_TIER2),
+            'tax_rate': float(cls.rules.TAX_RATE),
+            'cost_ratio': float(cls.rules.COST_RATIO),
+            'category_high_threshold': float(cls.rules.CATEGORY_HIGH_THRESHOLD),
+            'category_medium_threshold': float(cls.rules.CATEGORY_MEDIUM_THRESHOLD),
+        }
     
-    @staticmethod
-    def get_step_dict() -> Dict[str, str]:
-        """Get process steps as dictionary"""
-        return {step.name: step.value for step in ProcessStep}
-    
-    @staticmethod
-    def get_category_dict() -> Dict[str, str]:
-        """Get sale categories as dictionary"""
-        return {cat.name: cat.value for cat in SaleCategory}
-    
-    @staticmethod
-    def get_discount_rate(quantity: int) -> Decimal:
-        """
-        Calculate discount rate based on quantity
+    @classmethod
+    def update_from_dict(cls, config_dict: Dict[str, Any]) -> None:
+        """Update configuration from dictionary (e.g., loaded from YAML)."""
+        if 'batch_size' in config_dict:
+            cls.config.batch_size = config_dict['batch_size']
+        if 'commit_interval' in config_dict:
+            cls.config.commit_interval = config_dict['commit_interval']
+        if 'retry_attempts' in config_dict:
+            cls.config.retry_attempts = config_dict['retry_attempts']
+        if 'timeout_seconds' in config_dict:
+            cls.config.timeout_seconds = config_dict['timeout_seconds']
+        if 'test_mode' in config_dict:
+            cls.config.test_mode = config_dict['test_mode']
         
-        Args:
-            quantity: Sales quantity
-            
-        Returns:
-            Applicable discount rate as Decimal
-        """
-        rules = ETLConstants.business_rules
-        
-        if quantity > rules.DISCOUNT_QTY_TIER2:
-            return rules.DISCOUNT_RATE_TIER2
-        elif quantity > rules.DISCOUNT_QTY_TIER1:
-            return rules.DISCOUNT_RATE_TIER1
-        else:
-            return Decimal('0.00')
-    
-    @staticmethod
-    def categorize_sale(gross_amount: Decimal) -> str:
-        """
-        Categorize sale based on gross amount
-        
-        Args:
-            gross_amount: Gross sale amount
-            
-        Returns:
-            Category string (HIGH, MEDIUM, LOW)
-        """
-        rules = ETLConstants.business_rules
-        
-        if gross_amount >= rules.CATEGORY_HIGH_THRESHOLD:
-            return SaleCategory.HIGH.value
-        elif gross_amount >= rules.CATEGORY_MEDIUM_THRESHOLD:
-            return SaleCategory.MEDIUM.value
-        else:
-            return SaleCategory.LOW.value
-    
-    @staticmethod
-    def validate_status(status: str) -> bool:
-        """Validate if status code is valid"""
-        return status in [s.value for s in StatusCode]
-    
-    @staticmethod
-    def validate_step(step: str) -> bool:
-        """Validate if process step is valid"""
-        return step in [s.value for s in ProcessStep]
-    
-    @staticmethod
-    def validate_category(category: str) -> bool:
-        """Validate if category is valid"""
-        return category in [c.value for c in SaleCategory]
+        # Update business rules if provided
+        if 'discount_qty_tier1' in config_dict:
+            cls.rules.DISCOUNT_QTY_TIER1 = config_dict['discount_qty_tier1']
+        if 'discount_qty_tier2' in config_dict:
+            cls.rules.DISCOUNT_QTY_TIER2 = config_dict['discount_qty_tier2']
+        if 'discount_rate_tier1' in config_dict:
+            cls.rules.DISCOUNT_RATE_TIER1 = Decimal(str(config_dict['discount_rate_tier1']))
+        if 'discount_rate_tier2' in config_dict:
+            cls.rules.DISCOUNT_RATE_TIER2 = Decimal(str(config_dict['discount_rate_tier2']))
+        if 'tax_rate' in config_dict:
+            cls.rules.TAX_RATE = Decimal(str(config_dict['tax_rate']))
+        if 'cost_ratio' in config_dict:
+            cls.rules.COST_RATIO = Decimal(str(config_dict['cost_ratio']))
+        if 'category_high_threshold' in config_dict:
+            cls.rules.CATEGORY_HIGH_THRESHOLD = Decimal(str(config_dict['category_high_threshold']))
+        if 'category_medium_threshold' in config_dict:
+            cls.rules.CATEGORY_MEDIUM_THRESHOLD = Decimal(str(config_dict['category_medium_threshold']))
 
 
-# Convenience exports
-__all__ = [
-    'ETLConstants',
-    'StatusCode',
-    'ProcessStep',
-    'SaleCategory',
-    'BusinessRules',
-    'ETLConfiguration',
-    'MessageTemplates'
-]
+# Global statistics tracking (migrated from ZETL_TOP)
+@dataclass
+class ETLStatistics:
+    """Global statistics for ETL execution."""
+    total_extracted: int = 0
+    total_transformed: int = 0
+    total_loaded: int = 0
+    errors_count: int = 0
+    warnings_count: int = 0
+    
+    def reset(self) -> None:
+        """Reset all statistics to zero."""
+        self.total_extracted = 0
+        self.total_transformed = 0
+        self.total_loaded = 0
+        self.errors_count = 0
+        self.warnings_count = 0
+    
+    def to_dict(self) -> Dict[str, int]:
+        """Convert statistics to dictionary."""
+        return {
+            'total_extracted': self.total_extracted,
+            'total_transformed': self.total_transformed,
+            'total_loaded': self.total_loaded,
+            'errors_count': self.errors_count,
+            'warnings_count': self.warnings_count,
+        }
