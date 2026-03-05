@@ -1,0 +1,33 @@
+# Core Dependencies (Required)
+# These must be installed first in the order listed
+
+# Apache Spark for distributed data processing
+pyspark>=3.3.0
+
+# YAML configuration file parsing
+pyyaml>=6.0
+
+# Date/time manipulation utilities
+python-dateutil>=2.8.2
+
+# Development Dependencies (Optional)
+# Install with: pip install -e ".[dev]"
+
+# Testing framework
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Code formatting
+black>=23.0.0
+
+# Code linting
+flake8>=6.0.0
+pylint>=2.17.0
+
+# Static type checking
+mypy>=1.0.0
+
+# Documentation
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.2.0
