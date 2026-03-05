@@ -1,125 +1,87 @@
 # ETL System Configuration
 
-# Spark Configuration
-spark:
-  app_name: "Sales_ETL_System"
-  master: "local[*]"
-  enable_hive_support: false
-  log_level: "WARN"
-  configs:
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.driver.memory: "4g"
-    spark.executor.memory: "4g"
-    spark.executor.cores: "2"
-    spark.default.parallelism: "100"
-    spark.sql.sources.partitionOverwriteMode: "dynamic"
-
 # Database Configuration
 database:
-  jdbc:
-    driver: "org.postgresql.Driver"
-    host: "localhost"
-    port: 5432
-    database: "etl_db"
-    user: "etl_user"
-    password: "${DB_PASSWORD}"  # Use environment variable
-    connection_pool:
-      max_connections: 10
-      min_connections: 2
-      fetch_size: 1000
-      connection_timeout: 30000
-  
-  tables:
-    source: "sales_raw"
-    target: "sales_analytics"
-    log: "etl_log"
+  host: localhost
+  port: 5432
+  database: sales_etl
+  username: etl_user
+  password: ${DB_PASSWORD}  # Use environment variable
+  driver: postgresql
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  pool_recycle: 3600
 
-# ETL Processing Configuration
+# Spark Configuration
+spark:
+  app_name: "Sales ETL System"
+  master: "local[*]"  # Use local[*] for local mode, yarn for cluster
+  executor_memory: "4g"
+  driver_memory: "2g"
+  executor_cores: 2
+  shuffle_partitions: 200
+  dynamic_allocation: true
+  additional_conf:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.sources.partitionOverwriteMode: "dynamic"
+    spark.sql.session.timeZone: "UTC"
+
+# ETL Process Configuration
 etl:
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
   parallel_jobs: 4
-  
-  # Date range for processing
-  default_lookback_days: 7
-  
-  # Status codes
-  status:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
+  checkpoint_enabled: true
+  checkpoint_location: "/tmp/etl_checkpoint"
 
 # Business Rules Configuration
 business_rules:
-  # Discount rules
-  discount:
-    tier1_quantity: 10
-    tier2_quantity: 15
-    tier1_rate: 0.05
-    tier2_rate: 0.10
+  # Discount thresholds
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
   
-  # Tax configuration
+  # Tax rate
   tax_rate: 0.08
   
   # Cost calculation
   cost_ratio: 0.60
   
   # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
 # Logging Configuration
 logging:
-  level: "INFO"
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   log_dir: "logs"
+  log_file: "etl_process.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
   console_output: true
-  file_output: true
-  structured_logging: true
-  
-  # Log rotation
-  rotation:
-    max_bytes: 10485760  # 10 MB
-    backup_count: 5
 
-# Data Quality Configuration
+# Source and Target Table Names
+tables:
+  source_raw: "zsales_raw"
+  target_analytics: "zsales_analytics"
+  etl_log: "zetl_log"
+
+# Data Quality Rules
 data_quality:
-  validation_enabled: true
-  validation_rules:
-    - field: "customer_id"
-      rule: "not_null"
-    - field: "product_id"
-      rule: "not_null"
-    - field: "quantity"
-      rule: "greater_than"
-      value: 0
-    - field: "unit_price"
-      rule: "greater_than"
-      value: 0
-    - field: "gross_amount"
-      rule: "greater_than"
-      value: 0
-    - field: "currency"
-      rule: "not_null"
-    - field: "category"
-      rule: "in_list"
-      values: ["HIGH", "MEDIUM", "LOW"]
-
-# Performance Configuration
+  null_threshold: 0.05  # 5% null values allowed
+  duplicate_check: true
+  date_range_check: true
+  amount_validation: true
+  
+# Performance Tuning
 performance:
-  enable_caching: true
-  cache_storage_level: "MEMORY_AND_DISK"
-  broadcast_threshold: 10485760  # 10 MB
-  shuffle_partitions: 200
-
-# Monitoring Configuration
-monitoring:
-  metrics_enabled: true
-  metrics_interval_seconds: 60
-  health_check_enabled: true
+  cache_intermediate_results: true
+  broadcast_join_threshold: 10485760  # 10MB
+  partition_size_mb: 128
+  compression_codec: "snappy"
