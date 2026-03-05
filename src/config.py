@@ -1,197 +1,183 @@
 """
-Configuration management module for the ETL framework.
-Provides centralized configuration loading and validation.
+Configuration Loading Module
+
+This module handles loading and validating ETL configuration
+from YAML files and environment variables.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
-import yaml
+import os
 from pathlib import Path
+from typing import Any, Dict, Optional
+import yaml
+from dataclasses import dataclass, field, asdict
 
-
-@dataclass
-class DatabaseConfig:
-    """Database connection configuration."""
-    host: str
-    port: int
-    database: str
-    username: str
-    password: str
-    driver: str = "postgresql"
-    pool_size: int = 10
-    max_overflow: int = 20
-    pool_timeout: int = 30
-    pool_recycle: int = 3600
-
-
-@dataclass
-class SparkConfig:
-    """Spark session configuration."""
-    app_name: str = "Sales ETL System"
-    master: str = "local[*]"
-    executor_memory: str = "4g"
-    driver_memory: str = "2g"
-    executor_cores: int = 2
-    shuffle_partitions: int = 200
-    dynamic_allocation: bool = True
-    additional_conf: Dict[str, str] = field(default_factory=dict)
+from src.constants import ETLConstants
 
 
 @dataclass
 class ETLConfig:
-    """ETL process configuration."""
-    batch_size: int = 1000
-    commit_interval: int = 500
-    retry_attempts: int = 3
-    timeout_seconds: int = 3600
-    parallel_jobs: int = 4
-    checkpoint_enabled: bool = True
-    checkpoint_location: str = "/tmp/etl_checkpoint"
-
-
-@dataclass
-class BusinessRulesConfig:
-    """Business rules configuration."""
-    discount_qty_tier1: int = 10
-    discount_qty_tier2: int = 15
-    discount_rate_tier1: float = 0.05
-    discount_rate_tier2: float = 0.10
-    tax_rate: float = 0.08
-    cost_ratio: float = 0.60
-    category_high_threshold: float = 2000.00
-    category_medium_threshold: float = 500.00
-
-
-@dataclass
-class LoggingConfig:
-    """Logging configuration."""
-    level: str = "INFO"
-    format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    log_dir: str = "logs"
-    log_file: str = "etl_process.log"
-    max_bytes: int = 10485760  # 10MB
-    backup_count: int = 5
-    console_output: bool = True
-
-
-class ConfigurationManager:
-    """
-    Centralized configuration manager for the ETL system.
-    Loads and validates configuration from YAML files.
-    """
-
-    def __init__(self, config_path: Optional[str] = None):
-        """
-        Initialize configuration manager.
-
-        Args:
-            config_path: Path to configuration file. Defaults to config.yaml
-        """
-        self.config_path = Path(config_path or "config.yaml")
-        self._config_data: Dict[str, Any] = {}
-        self._load_config()
-
-    def _load_config(self) -> None:
-        """Load configuration from YAML file."""
-        if not self.config_path.exists():
-            raise FileNotFoundError(
-                f"Configuration file not found: {self.config_path}"
-            )
-
-        with open(self.config_path, 'r') as f:
-            self._config_data = yaml.safe_load(f) or {}
-
-    def get_database_config(self) -> DatabaseConfig:
-        """Get database configuration."""
-        db_conf = self._config_data.get('database', {})
-        return DatabaseConfig(**db_conf)
-
-    def get_spark_config(self) -> SparkConfig:
-        """Get Spark configuration."""
-        spark_conf = self._config_data.get('spark', {})
-        return SparkConfig(**spark_conf)
-
-    def get_etl_config(self) -> ETLConfig:
-        """Get ETL process configuration."""
-        etl_conf = self._config_data.get('etl', {})
-        return ETLConfig(**etl_conf)
-
-    def get_business_rules_config(self) -> BusinessRulesConfig:
-        """Get business rules configuration."""
-        rules_conf = self._config_data.get('business_rules', {})
-        return BusinessRulesConfig(**rules_conf)
-
-    def get_logging_config(self) -> LoggingConfig:
-        """Get logging configuration."""
-        log_conf = self._config_data.get('logging', {})
-        return LoggingConfig(**log_conf)
-
-    def get_raw_config(self) -> Dict[str, Any]:
-        """Get raw configuration dictionary."""
-        return self._config_data.copy()
-
-    def get_value(self, key_path: str, default: Any = None) -> Any:
-        """
-        Get configuration value by dot-separated key path.
-
-        Args:
-            key_path: Dot-separated key path (e.g., 'database.host')
-            default: Default value if key not found
-
-        Returns:
-            Configuration value
-        """
-        keys = key_path.split('.')
-        value = self._config_data
-
-        for key in keys:
-            if isinstance(value, dict):
-                value = value.get(key)
-                if value is None:
-                    return default
-            else:
-                return default
-
-        return value
-
-    def validate_config(self) -> bool:
-        """
-        Validate configuration completeness.
-
-        Returns:
-            True if valid, raises ValueError otherwise
-        """
-        required_sections = ['database', 'spark', 'etl', 'business_rules', 'logging']
-
-        for section in required_sections:
-            if section not in self._config_data:
-                raise ValueError(f"Missing required configuration section: {section}")
-
-        # Validate database config
-        db_conf = self._config_data['database']
-        required_db_fields = ['host', 'port', 'database', 'username', 'password']
-        for field in required_db_fields:
-            if field not in db_conf:
-                raise ValueError(f"Missing required database field: {field}")
-
+    """ETL configuration data class"""
+    
+    # Processing configuration
+    batch_size: int = ETLConstants.DEFAULTS.BATCH_SIZE
+    commit_interval: int = ETLConstants.DEFAULTS.COMMIT_INTERVAL
+    retry_attempts: int = ETLConstants.DEFAULTS.RETRY_ATTEMPTS
+    timeout_seconds: int = ETLConstants.DEFAULTS.TIMEOUT_SECONDS
+    
+    # Spark configuration
+    spark_app_name: str = "SalesETL"
+    spark_master: str = "local[*]"
+    spark_config: Dict[str, str] = field(default_factory=lambda: {
+        "spark.sql.shuffle.partitions": "200",
+        "spark.sql.adaptive.enabled": "true",
+        "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    })
+    
+    # Data paths
+    input_path: Optional[str] = None
+    output_path: Optional[str] = None
+    log_path: Optional[str] = None
+    
+    # Database configuration (if applicable)
+    db_url: Optional[str] = None
+    db_table_raw: str = "zsales_raw"
+    db_table_analytics: str = "zsales_analytics"
+    db_table_log: str = "zetl_log"
+    
+    # Business rules override
+    rules_override: Dict[str, Any] = field(default_factory=dict)
+    
+    # Logging configuration
+    log_level: str = "INFO"
+    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary"""
+        return asdict(self)
+    
+    def validate(self) -> bool:
+        """Validate configuration values"""
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if self.commit_interval <= 0:
+            raise ValueError("commit_interval must be positive")
+        if self.retry_attempts < 0:
+            raise ValueError("retry_attempts must be non-negative")
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.log_level not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+            raise ValueError(f"Invalid log_level: {self.log_level}")
         return True
 
 
-# Singleton instance
-_config_manager: Optional[ConfigurationManager] = None
-
-
-def get_config_manager(config_path: Optional[str] = None) -> ConfigurationManager:
-    """
-    Get singleton configuration manager instance.
-
-    Args:
-        config_path: Path to configuration file
-
-    Returns:
-        ConfigurationManager instance
-    """
-    global _config_manager
-    if _config_manager is None:
-        _config_manager = ConfigurationManager(config_path)
-    return _config_manager
+class ConfigLoader:
+    """Configuration loader with multiple source support"""
+    
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize config loader
+        
+        Args:
+            config_path: Path to YAML config file (optional)
+        """
+        self.config_path = config_path or self._find_default_config()
+    
+    @staticmethod
+    def _find_default_config() -> Optional[str]:
+        """Find default config file in standard locations"""
+        search_paths = [
+            Path("config.yaml"),
+            Path("config/config.yaml"),
+            Path("conf/config.yaml"),
+            Path.home() / ".etl" / "config.yaml"
+        ]
+        
+        for path in search_paths:
+            if path.exists():
+                return str(path)
+        return None
+    
+    def load(self) -> ETLConfig:
+        """
+        Load configuration from file and environment
+        
+        Returns:
+            ETLConfig instance with loaded configuration
+        """
+        config_dict = self._load_yaml_config()
+        config_dict = self._merge_env_vars(config_dict)
+        
+        config = ETLConfig(**config_dict)
+        config.validate()
+        
+        return config
+    
+    def _load_yaml_config(self) -> Dict[str, Any]:
+        """Load configuration from YAML file"""
+        if not self.config_path or not Path(self.config_path).exists():
+            return {}
+        
+        try:
+            with open(self.config_path, 'r') as f:
+                config_data = yaml.safe_load(f) or {}
+            return config_data
+        except Exception as e:
+            raise ValueError(f"Failed to load config from {self.config_path}: {e}")
+    
+    def _merge_env_vars(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge environment variables into configuration"""
+        env_mapping = {
+            'ETL_BATCH_SIZE': ('batch_size', int),
+            'ETL_COMMIT_INTERVAL': ('commit_interval', int),
+            'ETL_RETRY_ATTEMPTS': ('retry_attempts', int),
+            'ETL_TIMEOUT_SECONDS': ('timeout_seconds', int),
+            'ETL_SPARK_MASTER': ('spark_master', str),
+            'ETL_INPUT_PATH': ('input_path', str),
+            'ETL_OUTPUT_PATH': ('output_path', str),
+            'ETL_LOG_PATH': ('log_path', str),
+            'ETL_DB_URL': ('db_url', str),
+            'ETL_LOG_LEVEL': ('log_level', str),
+        }
+        
+        for env_var, (config_key, type_func) in env_mapping.items():
+            value = os.getenv(env_var)
+            if value is not None:
+                try:
+                    config_dict[config_key] = type_func(value)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(f"Invalid value for {env_var}: {value} - {e}")
+        
+        return config_dict
+    
+    @staticmethod
+    def create_default_config(output_path: str = "config.yaml") -> None:
+        """
+        Create a default configuration file
+        
+        Args:
+            output_path: Path where to save the config file
+        """
+        default_config = {
+            'batch_size': ETLConstants.DEFAULTS.BATCH_SIZE,
+            'commit_interval': ETLConstants.DEFAULTS.COMMIT_INTERVAL,
+            'retry_attempts': ETLConstants.DEFAULTS.RETRY_ATTEMPTS,
+            'timeout_seconds': ETLConstants.DEFAULTS.TIMEOUT_SECONDS,
+            'spark_app_name': 'SalesETL',
+            'spark_master': 'local[*]',
+            'spark_config': {
+                'spark.sql.shuffle.partitions': '200',
+                'spark.sql.adaptive.enabled': 'true',
+                'spark.sql.adaptive.coalescePartitions.enabled': 'true'
+            },
+            'input_path': '/data/input',
+            'output_path': '/data/output',
+            'log_path': '/data/logs',
+            'db_table_raw': 'zsales_raw',
+            'db_table_analytics': 'zsales_analytics',
+            'db_table_log': 'zetl_log',
+            'log_level': 'INFO',
+            'log_format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        }
+        
+        with open(output_path, 'w') as f:
+            yaml.dump(default_config, f, default_flow_style=False, sort_keys=False)
