@@ -1,77 +1,81 @@
 """
-PySpark Schema Definitions
-Migrated from ZETL_TYPES
+Schema definitions for ETL data structures.
+Replaces ABAP TYPE definitions with PySpark StructType schemas.
 """
 
 from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    IntegerType,
-    DecimalType,
-    DateType,
-    TimestampType,
+    StructType, StructField, StringType, IntegerType, 
+    DecimalType, DateType, TimestampType
 )
 
 
 class ETLSchemas:
-    """Central schema definitions for ETL system"""
+    """Container for all ETL schema definitions"""
     
     @staticmethod
     def raw_sales_schema() -> StructType:
-        """Schema for raw sales data (ZSALES_RAW table)"""
+        """
+        Schema for raw sales data (replaces ABAP ty_raw_sales)
+        Equivalent to ZSALES_RAW table structure
+        """
         return StructType([
-            StructField("trans_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("quantity", IntegerType(), False),
-            StructField("unit_price", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("status", StringType(), False),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True),
+            StructField("trans_id", StringType(), nullable=False),
+            StructField("trans_date", DateType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("product_id", StringType(), nullable=False),
+            StructField("quantity", IntegerType(), nullable=False),
+            StructField("unit_price", DecimalType(16, 2), nullable=False),
+            StructField("currency", StringType(), nullable=False),
+            StructField("sales_rep", StringType(), nullable=True),
+            StructField("region", StringType(), nullable=True),
+            StructField("status", StringType(), nullable=False),
+            StructField("created_at", TimestampType(), nullable=True),
+            StructField("created_by", StringType(), nullable=True)
         ])
     
     @staticmethod
     def analytics_schema() -> StructType:
-        """Schema for analytics data (ZSALES_ANALYTICS table)"""
+        """
+        Schema for analytics data (replaces ABAP ty_analytics)
+        Equivalent to ZSALES_ANALYTICS table structure
+        """
         return StructType([
-            StructField("analytics_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("total_quantity", IntegerType(), False),
-            StructField("gross_amount", DecimalType(16, 2), False),
-            StructField("net_amount", DecimalType(16, 2), False),
-            StructField("discount_amount", DecimalType(16, 2), False),
-            StructField("tax_amount", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("profit_margin", DecimalType(5, 2), False),
-            StructField("category", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("loaded_at", TimestampType(), True),
-            StructField("loaded_by", StringType(), True),
+            StructField("analytics_id", StringType(), nullable=False),
+            StructField("trans_date", DateType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("product_id", StringType(), nullable=False),
+            StructField("total_quantity", IntegerType(), nullable=False),
+            StructField("gross_amount", DecimalType(16, 2), nullable=False),
+            StructField("net_amount", DecimalType(16, 2), nullable=False),
+            StructField("discount_amount", DecimalType(16, 2), nullable=False),
+            StructField("tax_amount", DecimalType(16, 2), nullable=False),
+            StructField("currency", StringType(), nullable=False),
+            StructField("sales_rep", StringType(), nullable=True),
+            StructField("region", StringType(), nullable=True),
+            StructField("profit_margin", DecimalType(5, 2), nullable=False),
+            StructField("category", StringType(), nullable=False),
+            StructField("etl_run_id", StringType(), nullable=False),
+            StructField("loaded_at", TimestampType(), nullable=True),
+            StructField("loaded_by", StringType(), nullable=True)
         ])
     
     @staticmethod
     def etl_log_schema() -> StructType:
-        """Schema for ETL log data (ZETL_LOG table)"""
+        """
+        Schema for ETL log data (replaces ABAP ty_etl_log)
+        Equivalent to ZETL_LOG table structure
+        """
         return StructType([
-            StructField("log_id", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("execution_date", DateType(), False),
-            StructField("execution_time", StringType(), False),
-            StructField("process_step", StringType(), False),
-            StructField("status", StringType(), False),
-            StructField("records_processed", IntegerType(), True),
-            StructField("records_success", IntegerType(), True),
-            StructField("records_error", IntegerType(), True),
-            StructField("message", StringType(), True),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True),
+            StructField("log_id", StringType(), nullable=False),
+            StructField("etl_run_id", StringType(), nullable=False),
+            StructField("execution_date", DateType(), nullable=False),
+            StructField("execution_time", StringType(), nullable=False),
+            StructField("process_step", StringType(), nullable=False),
+            StructField("status", StringType(), nullable=False),
+            StructField("records_processed", IntegerType(), nullable=False),
+            StructField("records_success", IntegerType(), nullable=False),
+            StructField("records_error", IntegerType(), nullable=False),
+            StructField("message", StringType(), nullable=True),
+            StructField("created_at", TimestampType(), nullable=True),
+            StructField("created_by", StringType(), nullable=True)
         ])
