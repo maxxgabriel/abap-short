@@ -1,32 +1,30 @@
 """
-Extract module for Sales ETL pipeline.
-Handles data extraction from source systems.
+Sales ETL - Data Extraction Module
+Extracts raw sales data from source systems
 """
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
 from datetime import datetime
-from typing import Tuple
+from typing import List, Dict, Any
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType, 
+    DecimalType, DateType, TimestampType
+)
 import logging
-
 from src.logger import ETLLogger
+from src.config import ETLConfig
 
 
 class SalesExtractor:
-    """Extracts raw sales data from source systems."""
+    """Handles extraction of raw sales data"""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger):
-        """
-        Initialize the extractor.
-        
-        Args:
-            spark: Active SparkSession
-            logger: ETL logger instance
-        """
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: ETLConfig):
         self.spark = spark
         self.logger = logger
-        
-    def get_raw_sales_schema(self) -> StructType:
-        """Define schema for raw sales data."""
+        self.config = config
+        self.schema = self._define_schema()
+    
+    def _define_schema(self) -> StructType:
+        """Define schema for raw sales data"""
         return StructType([
             StructField("trans_id", StringType(), False),
             StructField("trans_date", DateType(), False),
@@ -37,25 +35,27 @@ class SalesExtractor:
             StructField("currency", StringType(), False),
             StructField("sales_rep", StringType(), True),
             StructField("region", StringType(), True),
-            StructField("status", StringType(), False)
+            StructField("status", StringType(), False),
+            StructField("created_at", TimestampType(), True),
+            StructField("created_by", StringType(), True)
         ])
     
     def extract_data(
         self, 
         from_date: str, 
         to_date: str,
-        source_path: str
-    ) -> Tuple[DataFrame, bool]:
+        source_path: str = None
+    ) -> DataFrame:
         """
-        Extract sales data for the specified date range.
+        Extract raw sales data for date range
         
         Args:
             from_date: Start date (YYYY-MM-DD)
             to_date: End date (YYYY-MM-DD)
-            source_path: Path to source data
+            source_path: Optional path override for source data
             
         Returns:
-            Tuple of (DataFrame, success_flag)
+            DataFrame containing extracted sales records
         """
         try:
             self.logger.log_message(
@@ -64,18 +64,17 @@ class SalesExtractor:
                 message=f"Starting extraction from {from_date} to {to_date}"
             )
             
-            # Read raw sales data
-            schema = self.get_raw_sales_schema()
-            df = self.spark.read \
-                .schema(schema) \
-                .option("header", "true") \
-                .csv(source_path)
+            # Use config path if not overridden
+            if source_path is None:
+                source_path = self.config.get("source.path")
+            
+            # Read source data
+            df = self._read_source_data(source_path)
             
             # Filter by date range and status
             df_filtered = df.filter(
-                (df.trans_date >= from_date) & 
-                (df.trans_date <= to_date) &
-                (df.status == 'N')
+                (df.trans_date.between(from_date, to_date)) &
+                (df.status == "N")
             )
             
             # Cache for performance
@@ -90,7 +89,7 @@ class SalesExtractor:
                 message=f"Extracted {record_count} records successfully"
             )
             
-            return df_filtered, True
+            return df_filtered
             
         except Exception as e:
             self.logger.log_message(
@@ -98,5 +97,48 @@ class SalesExtractor:
                 status="E",
                 message=f"Extraction failed: {str(e)}"
             )
-            logging.error(f"Extraction error: {str(e)}", exc_info=True)
-            return self.spark.createDataFrame([], self.get_raw_sales_schema()), False
+            raise
+    
+    def _read_source_data(self, source_path: str) -> DataFrame:
+        """Read data from source system"""
+        source_format = self.config.get("source.format", "parquet")
+        
+        if source_format == "parquet":
+            return self.spark.read.schema(self.schema).parquet(source_path)
+        elif source_format == "csv":
+            return self.spark.read.schema(self.schema).option("header", "true").csv(source_path)
+        elif source_format == "delta":
+            return self.spark.read.format("delta").load(source_path)
+        elif source_format == "jdbc":
+            return self._read_from_database()
+        else:
+            raise ValueError(f"Unsupported source format: {source_format}")
+    
+    def _read_from_database(self) -> DataFrame:
+        """Read data from database using JDBC"""
+        jdbc_config = self.config.get("source.jdbc")
+        
+        return self.spark.read.format("jdbc").options(
+            url=jdbc_config["url"],
+            dbtable=jdbc_config["table"],
+            user=jdbc_config["user"],
+            password=jdbc_config["password"],
+            driver=jdbc_config["driver"]
+        ).load()
+    
+    def create_sample_data(self) -> DataFrame:
+        """Create sample data for testing"""
+        sample_data = [
+            ("T000001", "2024-01-15", "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N", 
+             datetime.now(), "SYSTEM"),
+            ("T000002", "2024-01-15", "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N",
+             datetime.now(), "SYSTEM"),
+            ("T000003", "2024-01-15", "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N",
+             datetime.now(), "SYSTEM"),
+            ("T000004", "2024-01-15", "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N",
+             datetime.now(), "SYSTEM"),
+            ("T000005", "2024-01-15", "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N",
+             datetime.now(), "SYSTEM")
+        ]
+        
+        return self.spark.createDataFrame(sample_data, schema=self.schema)
