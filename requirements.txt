@@ -1,10 +1,14 @@
-pyspark==3.4.1
-PyYAML==6.0.1
-pytest==7.4.3
-pytest-cov==4.1.0
-pandas==2.1.3
-numpy==1.26.2
-python-dateutil==2.8.2
-pytz==2023.3
-setuptools==69.0.2
-wheel==0.42.0
+# Core dependencies
+pyspark>=3.3.0,<4.0.0
+pyyaml>=6.0,<7.0
+python-dateutil>=2.8.2,<3.0.0
+
+# Optional: Database connectors
+# psycopg2-binary>=2.9.0  # PostgreSQL
+# pymysql>=1.0.0          # MySQL
+# cx-Oracle>=8.3.0        # Oracle
+
+# Optional: Cloud storage
+# boto3>=1.26.0           # AWS S3
+# google-cloud-storage>=2.7.0  # GCS
+# azure-storage-blob>=12.14.0  # Azure Blob
