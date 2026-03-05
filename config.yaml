@@ -1,96 +1,175 @@
-# ETL Logger Configuration
-
-# Logging Configuration
-logging:
-  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  level: INFO
-  
-  # Log format
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # Console output
-  console_output: true
-  
-  # File output configuration
-  file_output:
-    enabled: false
-    path: "/tmp/etl_logs"
-    filename_pattern: "etl_{run_id}_{date}.log"
-    max_size_mb: 100
-    backup_count: 5
+# ETL Configuration File
+# Sales Data ETL System Configuration
 
 # Database Configuration
 database:
-  # Log table configuration
-  log_table:
-    name: "etl_log"
-    database: "etl_db"
-    write_mode: "append"
+  source:
+    host: localhost
+    port: 5432
+    database: sales_source
+    schema: public
+    table: zsales_raw
+  
+  target:
+    host: localhost
+    port: 5432
+    database: sales_analytics
+    schema: public
+    table: zsales_analytics
+  
+  log:
+    host: localhost
+    port: 5432
+    database: sales_etl
+    schema: public
+    table: zetl_log
+
+# Spark Configuration
+spark:
+  app_name: "Sales ETL Pipeline"
+  master: "local[*]"
+  driver_memory: "2g"
+  executor_memory: "4g"
+  executor_cores: 2
+  log_level: "WARN"
+  
+  # Spark SQL settings
+  sql:
+    shuffle_partitions: 200
+    adaptive_enabled: true
     
-  # Connection settings
-  connection:
-    url: "jdbc:postgresql://localhost:5432/etl"
-    driver: "org.postgresql.Driver"
-    user: "etl_user"
-    password_env: "ETL_DB_PASSWORD"
+  # Catalog settings (if using Delta Lake or Iceberg)
+  catalog:
+    type: "hive"  # Options: hive, delta, iceberg
+    warehouse_dir: "/user/hive/warehouse"
 
-# ETL Run Configuration
-etl_run:
-  # ID generation
-  id_prefix: "ETL"
-  id_format: "timestamp"  # timestamp, uuid, sequential
+# ETL Processing Configuration
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  parallel_jobs: 4
+  retry_attempts: 3
+  timeout_seconds: 3600
+  test_mode: false
   
-  # Log entry ID generation
-  log_id_prefix: "LOG"
+  # Date range defaults
+  default_lookback_days: 7
+  
+  # Error handling
+  error_handling:
+    max_errors_per_batch: 10
+    continue_on_error: true
+    error_threshold_percent: 5.0
 
-# Status Codes Configuration
-status_codes:
-  success: "S"
-  error: "E"
-  warning: "W"
-  info: "I"
+# Business Rules
+business_rules:
+  discount:
+    tier1_quantity: 10
+    tier1_rate: 0.05
+    tier2_quantity: 15
+    tier2_rate: 0.10
+  
+  tax:
+    rate: 0.08
+  
+  cost:
+    ratio: 0.60
+  
+  categories:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# Process Steps Configuration
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+# Logging Configuration
+logging:
+  level: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # File logging
+  file:
+    enabled: true
+    path: "logs/etl_execution.log"
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+  
+  # Console logging
+  console:
+    enabled: true
+    colored: true
 
-# Performance Configuration
+# Data Quality Checks
+data_quality:
+  enabled: true
+  
+  validation_rules:
+    - field: trans_id
+      type: not_null
+      required: true
+    
+    - field: customer_id
+      type: not_null
+      required: true
+    
+    - field: product_id
+      type: not_null
+      required: true
+    
+    - field: quantity
+      type: range
+      min: 1
+      max: 10000
+    
+    - field: unit_price
+      type: range
+      min: 0.01
+      max: 999999.99
+    
+    - field: currency
+      type: in_list
+      values: ["USD", "EUR", "GBP", "JPY"]
+  
+  # Duplicate detection
+  duplicate_check:
+    enabled: true
+    key_fields: ["trans_id"]
+
+# Performance Tuning
 performance:
-  # Batch logging (group multiple log entries)
-  batch_logging:
-    enabled: false
-    batch_size: 100
-    flush_interval_seconds: 30
+  # Caching
+  cache_enabled: true
+  cache_intermediate_results: true
   
-  # Async logging
-  async_logging:
-    enabled: false
-    queue_size: 1000
-    worker_threads: 2
-
-# Message Templates
-message_templates:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Retention Policy
-retention:
-  # Days to keep logs
-  log_retention_days: 90
+  # Partitioning
+  partition_columns: ["trans_date", "region"]
+  num_partitions: 10
   
-  # Cleanup schedule
-  cleanup_enabled: true
-  cleanup_schedule: "0 2 * * *"  # Daily at 2 AM
+  # Broadcast join threshold (in bytes)
+  broadcast_threshold: 10485760  # 10MB
+  
+  # Compression
+  compression_codec: "snappy"  # Options: none, snappy, gzip, lz4
+
+# Monitoring and Alerting
+monitoring:
+  enabled: true
+  
+  # Metrics collection
+  metrics:
+    enabled: true
+    interval_seconds: 60
+  
+  # Health checks
+  health_check:
+    enabled: true
+    interval_seconds: 300
+  
+  # Alerting thresholds
+  alerts:
+    error_rate_threshold: 5.0  # percent
+    duration_threshold_seconds: 7200
+    memory_threshold_percent: 90
+
+# Runtime Environment
+environment:
+  name: "development"  # Options: development, staging, production
+  timezone: "UTC"
+  locale: "en_US"
