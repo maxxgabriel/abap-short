@@ -1,152 +1,189 @@
 """
-Data loading component for Sales ETL system.
-Converted from ABAP ZCL_ETL_LOADER.
+ETL Loader Module
+Handles loading of transformed analytics data into target systems
 """
 
 from typing import Optional
+import logging
 
-from pyspark.sql import DataFrame
+from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 
 from src.logger import ETLLogger
-from src.schemas import ProcessSteps, SaleCategories, StatusCodes
+from src.config import ETLConfig
+from src.exceptions import LoadError
 
 
-class ETLLoader:
-    """Loads transformed data into target analytics table."""
-
-    def __init__(self, logger: ETLLogger):
+class SalesDataLoader:
+    """
+    Loads transformed analytics data into target systems.
+    
+    Responsibilities:
+    - Validate analytics data before loading
+    - Write to target tables/files
+    - Update source record status
+    - Handle load errors
+    """
+    
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: ETLConfig):
         """
-        Initialize loader.
+        Initialize the sales data loader.
         
         Args:
+            spark: SparkSession instance
             logger: ETL logger instance
+            config: ETL configuration object
         """
+        self.spark = spark
         self.logger = logger
-
-    def load_data(
-        self,
-        df_analytics: DataFrame,
-        target_path: Optional[str] = None,
-        mode: str = "append",
-    ) -> bool:
+        self.config = config
+    
+    def load_data(self, analytics_df: DataFrame) -> bool:
         """
-        Load analytics data to target.
+        Load analytics data to target system.
         
         Args:
-            df_analytics: DataFrame with analytics data
-            target_path: Optional path to target location
-            mode: Write mode (append, overwrite, etc.)
+            analytics_df: DataFrame containing analytics data
             
         Returns:
-            True if successful, False otherwise
+            True if load successful, False otherwise
+            
+        Raises:
+            LoadError: If load encounters critical error
         """
         try:
             self.logger.log_message(
-                step=ProcessSteps.LOAD,
-                status=StatusCodes.SUCCESS,
-                message="Starting data load",
+                step="LOAD",
+                status="S",
+                message="Starting data load"
             )
-
-            record_count = df_analytics.count()
-
-            # Validate records before loading
-            df_valid = self._validate_records(df_analytics)
-            valid_count = df_valid.count()
-            error_count = record_count - valid_count
-
+            
+            # Validate data before loading
+            valid_df = self._validate_records(analytics_df)
+            
+            total_count = analytics_df.count()
+            valid_count = valid_df.count()
+            error_count = total_count - valid_count
+            
             if error_count > 0:
                 self.logger.log_message(
-                    step=ProcessSteps.LOAD,
-                    status=StatusCodes.WARNING,
-                    message=f"{error_count} invalid records will be skipped",
+                    step="LOAD",
+                    status="W",
+                    message=f"Skipped {error_count} invalid records"
                 )
-
+            
             # Write to target
-            if target_path:
-                self._write_to_file(df_valid, target_path, mode)
-            else:
-                self._write_to_table(df_valid, mode)
-
+            self._write_to_target(valid_df)
+            
             self.logger.log_message(
-                step=ProcessSteps.LOAD,
-                status=StatusCodes.SUCCESS,
-                records_processed=record_count,
+                step="LOAD",
+                status="S",
+                records_processed=total_count,
                 records_success=valid_count,
                 records_error=error_count,
-                message=f"Loaded {valid_count} of {record_count} records",
+                message=f"Loaded {valid_count} of {total_count} records"
             )
-
+            
             return True
-
+            
         except Exception as e:
             self.logger.log_message(
-                step=ProcessSteps.LOAD,
-                status=StatusCodes.ERROR,
-                message=f"Load failed: {str(e)}",
+                step="LOAD",
+                status="E",
+                message=f"Load failed: {str(e)}"
             )
-            return False
-
+            raise LoadError(f"Load error: {str(e)}")
+    
     def _validate_records(self, df: DataFrame) -> DataFrame:
         """
-        Validate analytics records.
+        Validate analytics records before loading.
         
         Args:
             df: DataFrame to validate
             
         Returns:
-            DataFrame with only valid records
+            DataFrame containing only valid records
         """
-        return df.filter(
-            # Required fields must not be null
-            F.col("analytics_id").isNotNull()
-            & F.col("customer_id").isNotNull()
-            & F.col("product_id").isNotNull()
-            & (F.col("gross_amount") > 0)
-            & F.col("currency").isNotNull()
-            # Category must be valid
-            & F.col("category").isin(
-                SaleCategories.HIGH,
-                SaleCategories.MEDIUM,
-                SaleCategories.LOW,
-            )
+        # Validate required fields are not null
+        valid_df = df.filter(
+            F.col("analytics_id").isNotNull() &
+            F.col("customer_id").isNotNull() &
+            F.col("product_id").isNotNull() &
+            (F.col("gross_amount") > 0)
         )
-
-    def _write_to_file(
-        self,
-        df: DataFrame,
-        target_path: str,
-        mode: str,
-    ) -> None:
+        
+        # Validate currency
+        valid_df = valid_df.filter(F.col("currency").isNotNull())
+        
+        # Validate category
+        valid_df = valid_df.filter(
+            F.col("category").isin(["HIGH", "MEDIUM", "LOW"])
+        )
+        
+        return valid_df
+    
+    def _write_to_target(self, df: DataFrame):
         """
-        Write analytics data to file.
+        Write DataFrame to target system.
         
         Args:
             df: DataFrame to write
-            target_path: Target file path
-            mode: Write mode
         """
-        # Write based on file format
-        if target_path.endswith(".parquet"):
-            df.write.mode(mode).parquet(target_path)
-        elif target_path.endswith(".csv"):
-            df.write.mode(mode).csv(target_path, header=True)
-        elif target_path.endswith(".json"):
-            df.write.mode(mode).json(target_path)
+        target_config = self.config.get_target_config()
+        target_type = target_config.get("type", "parquet")
+        target_path = target_config.get("path")
+        
+        if target_type == "jdbc":
+            self._write_to_jdbc(df, target_config)
+        elif target_type == "parquet":
+            self._write_to_parquet(df, target_path)
+        elif target_type == "delta":
+            self._write_to_delta(df, target_path)
         else:
-            # Default to parquet
-            df.write.mode(mode).parquet(target_path)
-
-    def _write_to_table(self, df: DataFrame, mode: str) -> None:
+            # Default: write as parquet
+            self._write_to_parquet(df, target_path)
+    
+    def _write_to_jdbc(self, df: DataFrame, jdbc_config: dict):
         """
-        Write analytics data to database table.
+        Write DataFrame to JDBC target.
         
         Args:
             df: DataFrame to write
-            mode: Write mode
+            jdbc_config: JDBC connection configuration
         """
-        # In production, this would write to actual database
-        # Example: df.write.jdbc(url, "zsales_analytics", mode, properties)
+        df.write \
+            .format("jdbc") \
+            .option("url", jdbc_config.get("url")) \
+            .option("dbtable", jdbc_config.get("table", "zsales_analytics")) \
+            .option("user", jdbc_config.get("user")) \
+            .option("password", jdbc_config.get("password")) \
+            .option("driver", jdbc_config.get("driver", "com.sap.db.jdbc.Driver")) \
+            .mode("append") \
+            .save()
+    
+    def _write_to_parquet(self, df: DataFrame, path: str):
+        """
+        Write DataFrame to Parquet files.
         
-        # For now, write to temporary location
-        df.write.mode(mode).saveAsTable("zsales_analytics")
+        Args:
+            df: DataFrame to write
+            path: Target path for parquet files
+        """
+        df.write \
+            .mode("append") \
+            .partitionBy("trans_date") \
+            .parquet(path)
+    
+    def _write_to_delta(self, df: DataFrame, path: str):
+        """
+        Write DataFrame to Delta Lake.
+        
+        Args:
+            df: DataFrame to write
+            path: Target path for delta table
+        """
+        df.write \
+            .format("delta") \
+            .mode("append") \
+            .partitionBy("trans_date") \
+            .save(path)
