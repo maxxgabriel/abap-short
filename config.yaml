@@ -1,129 +1,143 @@
-# ETL Configuration File
-# Sales Analytics ETL System
+# Sales ETL System Configuration
+# This file contains all configurable parameters for the ETL process
 
-# Spark Configuration
-spark:
-  app_name: "Sales_ETL_Loader"
-  master: "local[*]"
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.parquet.compression.codec: "snappy"
-    spark.databricks.delta.optimizeWrite.enabled: "true"
-    spark.databricks.delta.autoCompact.enabled: "true"
+etl:
+  # Batch processing configuration
+  batch_size: 1000              # Number of records per batch
+  commit_interval: 500          # Records between commits
+  retry_attempts: 3             # Number of retry attempts on failure
+  timeout_seconds: 3600         # Maximum execution time (1 hour)
+  
+  # Run mode
+  test_mode: false              # Set to true to skip data commits
 
-# Source Configuration
-source:
-  path: "data/raw/sales_raw"
-  format: "parquet"
-  date_column: "trans_date"
-
-# Target Configuration
-target:
-  path: "data/analytics/sales_analytics"
-  format: "delta"  # Options: delta, parquet, orc
-  write_mode: "append"  # Options: append, overwrite, errorifexists
-  
-  # Partitioning
-  partition_by:
-    - "trans_date"
-    - "region"
-  
-  # Bucketing (optional)
-  bucket_by:
-    num_buckets: 10
-    columns:
-      - "customer_id"
-  
-  # Compression
-  compression: "snappy"  # Options: snappy, gzip, lz4, zstd
-  
-  # Optimization
-  optimize_after_write: true
-  vacuum_retention_hours: 168  # 7 days
-  
-  # Additional options
-  options:
-    mergeSchema: "true"
-    overwriteSchema: "false"
-
-# Error Handling Configuration
-error_handling:
-  error_path: "data/errors/invalid_records"
-  max_invalid_records_log: 100
-  fail_on_validation_threshold: 0.1  # Fail if >10% records invalid
-
-# Business Rules
+# Business rules configuration
 business_rules:
-  # Discount tiers
+  # Discount calculation rules
   discount:
-    tier1:
-      quantity_threshold: 10
-      rate: 0.05
-    tier2:
-      quantity_threshold: 15
-      rate: 0.10
+    qty_tier1: 10               # First discount tier quantity threshold
+    qty_tier2: 15               # Second discount tier quantity threshold
+    rate_tier1: 0.05            # First tier discount rate (5%)
+    rate_tier2: 0.10            # Second tier discount rate (10%)
   
-  # Tax rate
-  tax_rate: 0.08
+  # Tax configuration
+  tax_rate: 0.08                # Tax rate (8%)
   
-  # Cost ratio for profit calculation
-  cost_ratio: 0.60
+  # Cost and profit calculation
+  cost_ratio: 0.60              # Cost as percentage of unit price (60%)
   
-  # Category thresholds
+  # Sale categorization thresholds
   category_thresholds:
-    high: 2000.00
-    medium: 500.00
+    high: 2000.00               # High value sale threshold
+    medium: 500.00              # Medium value sale threshold
+    # Below medium is considered LOW
 
-# Validation Rules
+# Spark configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"            # Use all available cores
+  executor_memory: "2g"
+  driver_memory: "1g"
+  executor_cores: 2
+  sql_shuffle_partitions: 200
+  
+  # Advanced Spark settings
+  advanced:
+    adaptive_enabled: true
+    broadcast_timeout: 300
+    network_timeout: 120
+
+# Data paths configuration
+paths:
+  # Input data location
+  input: "data/input"
+  input_format: "parquet"       # parquet, csv, json
+  
+  # Output data location
+  output: "data/output"
+  output_format: "parquet"      # parquet, csv, json
+  output_mode: "append"         # append, overwrite
+  
+  # Logging location
+  logs: "logs"
+  log_level: "INFO"             # DEBUG, INFO, WARNING, ERROR
+
+# Database connection (optional - for actual database integration)
+database:
+  enabled: false
+  host: "localhost"
+  port: 5432
+  database: "sales_etl"
+  user: "etl_user"
+  password: ""                  # Use environment variable in production
+  
+  # Table names
+  tables:
+    raw_sales: "zsales_raw"
+    analytics: "zsales_analytics"
+    etl_log: "zetl_log"
+
+# Status codes
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
+
+# Process step identifiers
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
+
+# Category definitions
+categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
+
+# ID prefixes for generated identifiers
+id_prefixes:
+  etl_run: "ETL"
+  log: "LOG"
+  analytics: "ANL"
+
+# Message templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
+
+# Validation rules
 validation:
   required_fields:
-    - analytics_id
+    - trans_id
     - customer_id
     - product_id
-    - gross_amount
-    - currency
-    - category
+    - quantity
+    - unit_price
   
-  allowed_categories:
-    - "HIGH"
-    - "MEDIUM"
-    - "LOW"
-  
-  numeric_ranges:
-    gross_amount:
-      min: 0.01
-      max: 999999.99
-    quantity:
-      min: 1
-      max: 10000
+  field_constraints:
+    quantity_min: 1
+    quantity_max: 10000
+    unit_price_min: 0.01
+    unit_price_max: 999999.99
 
-# ETL Configuration
-etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
-
-# Logging Configuration
-logging:
-  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
-  log_path: "logs/etl_load.log"
-  console_output: true
-  db_logging: true
-  log_table: "etl_log"
-
-# System Configuration
-system:
-  system_user: "spark_etl"
-  run_id_prefix: "ETL"
-  timezone: "UTC"
-
-# Performance Tuning
+# Performance tuning
 performance:
-  cache_intermediate_results: true
-  repartition_before_write: true
-  target_partition_size_mb: 128
-  max_records_per_file: 100000
+  enable_cache: true
+  persist_level: "MEMORY_AND_DISK"
+  checkpoint_interval: 10
+  repartition_count: null       # null for auto-detect
