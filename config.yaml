@@ -1,47 +1,23 @@
-# ETL Configuration
-# Replaces ABAP ZCL_ETL_CONSTANTS and etl_config.json
+# ETL Configuration File
+# Configuration for Sales ETL System
 
 etl:
-  # Process configuration
-  process:
-    batch_size: 1000
-    commit_interval: 500
-    parallel_jobs: 4
-    timeout_seconds: 3600
+  # Run configuration
+  run_id_prefix: "ETL"
+  log_id_prefix: "LOG"
+  analytics_id_prefix: "ANL"
   
-  # Retry configuration
-  retry:
-    max_attempts: 3
-    initial_delay_seconds: 1.0
-    backoff_factor: 2.0
-    retryable_errors:
-      - "ConnectionError"
-      - "TimeoutError"
-      - "TransientError"
+  # Batch processing
+  default_batch_size: 1000
+  default_commit_interval: 500
+  default_retry_attempts: 3
+  default_timeout_seconds: 3600
   
-  # Business rules - Discount thresholds
-  business_rules:
-    discount:
-      tier1:
-        quantity_threshold: 10
-        discount_rate: 0.05  # 5%
-      tier2:
-        quantity_threshold: 15
-        discount_rate: 0.10  # 10%
-    
-    # Tax rate
-    tax:
-      rate: 0.08  # 8%
-    
-    # Cost ratio
-    cost:
-      ratio: 0.60  # 60%
-    
-    # Category thresholds
-    category:
-      high_threshold: 2000.00
-      medium_threshold: 500.00
-
+  # Logging
+  log_level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+  log_to_file: true
+  log_file_path: "logs/etl_run_{run_id}.log"
+  
   # Status codes
   status:
     new: "N"
@@ -50,7 +26,7 @@ etl:
     warning: "W"
     success: "S"
     info: "I"
-
+  
   # Process steps
   steps:
     init: "INIT"
@@ -61,54 +37,83 @@ etl:
     complete: "COMPLETE"
     error: "ERROR"
 
-  # Categories
-  categories:
-    high: "HIGH"
-    medium: "MEDIUM"
-    low: "LOW"
-
-# Logging configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  handlers:
-    console:
-      enabled: true
-      level: "INFO"
-    file:
-      enabled: true
-      level: "DEBUG"
-      filename: "logs/etl_{date}.log"
-      max_bytes: 10485760  # 10MB
-      backup_count: 5
-
-# Database configuration (example)
-database:
-  source:
-    type: "spark"
-    format: "delta"
-    path: "data/raw/sales_raw"
+# Business rules configuration
+business_rules:
+  # Discount thresholds
+  discount:
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
   
-  target:
-    type: "spark"
-    format: "delta"
-    path: "data/processed/sales_analytics"
+  # Tax configuration
+  tax:
+    rate: 0.08
   
-  log:
+  # Cost configuration
+  cost:
+    ratio: 0.60
+  
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+    high_label: "HIGH"
+    medium_label: "MEDIUM"
+    low_label: "LOW"
+
+# Data source configuration
+data_source:
+  # Source table
+  raw_table: "zsales_raw"
+  
+  # Target table
+  analytics_table: "zsales_analytics"
+  
+  # Log table
+  log_table: "zetl_log"
+  
+  # Database connection (configure as needed)
+  connection:
     type: "spark"
-    format: "delta"
-    path: "data/logs/etl_log"
+    options:
+      driver: "org.postgresql.Driver"  # Example
+      url: "jdbc:postgresql://localhost:5432/etl_db"
+      user: "etl_user"
+      password: "${ETL_DB_PASSWORD}"  # Use environment variable
 
 # Spark configuration
 spark:
   app_name: "SalesETL"
   master: "local[*]"
+  
+  # Spark configurations
   config:
     spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
     spark.executor.memory: "4g"
     spark.driver.memory: "2g"
+    spark.sql.shuffle.partitions: "200"
+
+# Validation rules
+validation:
+  required_fields:
+    - trans_id
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
+  
+  # Field constraints
+  constraints:
+    quantity:
+      min: 1
+      max: 10000
+    unit_price:
+      min: 0.01
+      max: 999999.99
+    currency:
+      allowed_values: ["USD", "EUR", "GBP"]
 
 # Message templates
 messages:
