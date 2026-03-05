@@ -1,51 +1,45 @@
-"""Constants and enumerations for ETL system."""
-from enum import Enum
+"""
+Constants and configuration values for ETL system.
+"""
 
 
-class Status(str, Enum):
-    """Status codes for ETL processing."""
-    NEW = 'N'
-    PROCESSED = 'P'
-    ERROR = 'E'
-    WARNING = 'W'
-    SUCCESS = 'S'
-    INFO = 'I'
-
-
-class ProcessStep(str, Enum):
-    """ETL process steps."""
-    INIT = 'INIT'
-    EXTRACT = 'EXTRACT'
-    TRANSFORM = 'TRANSFORM'
-    LOAD = 'LOAD'
-    VALIDATE = 'VALIDATE'
-    COMPLETE = 'COMPLETE'
-    ERROR = 'ERROR'
-
-
-class Category(str, Enum):
-    """Sales category classifications."""
-    HIGH = 'HIGH'
-    MEDIUM = 'MEDIUM'
-    LOW = 'LOW'
-
-
-class IDPrefix(str, Enum):
-    """ID prefixes for generated identifiers."""
-    ETL_RUN = 'ETL'
-    LOG = 'LOG'
-    ANALYTICS = 'ANL'
-
-
-# Message templates
-class Messages:
-    """Standard message templates."""
-    INIT_SUCCESS = 'ETL process initialized successfully'
-    EXTRACT_START = 'Starting data extraction'
-    EXTRACT_COMPLETE = 'Data extraction completed'
-    TRANSFORM_START = 'Starting data transformation'
-    TRANSFORM_COMPLETE = 'Data transformation completed'
-    LOAD_START = 'Starting data load'
-    LOAD_COMPLETE = 'Data load completed'
-    ETL_COMPLETE = 'ETL process completed successfully'
-    ETL_ERROR = 'ETL process failed'
+class ETLConstants:
+    """ETL system constants."""
+    
+    # Status codes
+    STATUS_NEW = "N"
+    STATUS_PROCESSED = "P"
+    STATUS_ERROR = "E"
+    STATUS_WARNING = "W"
+    STATUS_SUCCESS = "S"
+    STATUS_INFO = "I"
+    
+    # ETL process steps
+    STEP_INIT = "INIT"
+    STEP_EXTRACT = "EXTRACT"
+    STEP_TRANSFORM = "TRANSFORM"
+    STEP_LOAD = "LOAD"
+    STEP_VALIDATE = "VALIDATE"
+    STEP_COMPLETE = "COMPLETE"
+    STEP_ERROR = "ERROR"
+    
+    # Sale categories
+    CATEGORY_HIGH = "HIGH"
+    CATEGORY_MEDIUM = "MEDIUM"
+    CATEGORY_LOW = "LOW"
+    
+    # ID prefixes
+    PREFIX_ETL_RUN = "ETL"
+    PREFIX_LOG_ID = "LOG"
+    PREFIX_ANALYTICS_ID = "ANL"
+    
+    # Message texts
+    MSG_INIT_SUCCESS = "ETL process initialized successfully"
+    MSG_EXTRACT_START = "Starting data extraction"
+    MSG_EXTRACT_COMPLETE = "Data extraction completed"
+    MSG_TRANSFORM_START = "Starting data transformation"
+    MSG_TRANSFORM_COMPLETE = "Data transformation completed"
+    MSG_LOAD_START = "Starting data load"
+    MSG_LOAD_COMPLETE = "Data load completed"
+    MSG_ETL_COMPLETE = "ETL process completed successfully"
+    MSG_ETL_ERROR = "ETL process failed"
