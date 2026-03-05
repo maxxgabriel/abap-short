@@ -1,48 +1,20 @@
-# ETL Logger Configuration
-# Migrated from ABAP ETL system configuration
+# ETL Configuration
+# Converted from ABAP constants and configuration
 
-# Logging Configuration
-logging:
-  log_level: INFO
-  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  log_output_path: "/data/etl_logs"
-  log_write_mode: "append"
-  enable_console_logging: true
-
-# Spark Configuration
-spark:
-  app_name: "ETL_Logger"
-  master: "local[*]"
-  log_level: "WARN"
-  
-  # Spark SQL settings
-  sql:
-    shuffle_partitions: 200
-    adaptive_enabled: true
-    
-  # Memory settings
-  executor:
-    memory: "4g"
-    cores: 2
-  driver:
-    memory: "2g"
-
-# ETL Process Configuration
 etl:
-  # Batch processing
+  # Run configuration
   default_batch_size: 1000
   default_commit_interval: 500
-  
-  # Retry settings
   default_retry_attempts: 3
   default_timeout_seconds: 3600
+  parallel_jobs: 4
   
-  # ID prefixes (matching ABAP constants)
+  # ID prefixes
   prefix_etl_run: "ETL"
   prefix_log_id: "LOG"
   prefix_analytics_id: "ANL"
 
-# Business Rules (from ABAP constants)
+# Business Rules Configuration
 business_rules:
   # Discount thresholds
   discount_qty_tier1: 10
@@ -50,25 +22,18 @@ business_rules:
   discount_rate_tier1: 0.05
   discount_rate_tier2: 0.10
   
-  # Tax rate
+  # Tax configuration
   tax_rate: 0.08
   
-  # Cost ratio
+  # Cost calculation
   cost_ratio: 0.60
   
   # Category thresholds
   category_high_threshold: 2000.00
   category_medium_threshold: 500.00
 
-# Storage Paths
-storage:
-  raw_data_path: "/data/raw/sales"
-  analytics_data_path: "/data/analytics/sales"
-  log_data_path: "/data/logs/etl"
-  checkpoint_path: "/data/checkpoints"
-
-# Status Codes (matching ABAP)
-status_codes:
+# Status codes
+status:
   new: "N"
   processed: "P"
   error: "E"
@@ -76,8 +41,8 @@ status_codes:
   success: "S"
   info: "I"
 
-# Process Steps (matching ABAP)
-process_steps:
+# Process steps
+steps:
   init: "INIT"
   extract: "EXTRACT"
   transform: "TRANSFORM"
@@ -86,8 +51,76 @@ process_steps:
   complete: "COMPLETE"
   error: "ERROR"
 
-# Category Codes (matching ABAP)
+# Sale categories
 categories:
   high: "HIGH"
   medium: "MEDIUM"
   low: "LOW"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+
+# Spark configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.files.maxPartitionBytes: "134217728"  # 128 MB
+
+# Data paths
+paths:
+  raw_data: "data/raw/sales_raw"
+  analytics_data: "data/analytics/sales_analytics"
+  log_data: "data/logs/etl_log"
+  
+# Database configuration (optional for actual DB connections)
+database:
+  jdbc_url: "jdbc:postgresql://localhost:5432/etl_db"
+  driver: "org.postgresql.Driver"
+  table_raw: "zsales_raw"
+  table_analytics: "zsales_analytics"
+  table_log: "zetl_log"
+
+# Validation rules
+validation:
+  required_fields:
+    - "trans_id"
+    - "customer_id"
+    - "product_id"
+    - "quantity"
+    - "unit_price"
+    - "currency"
+  
+  min_quantity: 1
+  max_quantity: 10000
+  min_price: 0.01
+  max_price: 1000000.00
+  
+  valid_currencies:
+    - "USD"
+    - "EUR"
+    - "GBP"
+  
+  valid_regions:
+    - "NORTH"
+    - "SOUTH"
+    - "EAST"
+    - "WEST"
+
+# Message templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
