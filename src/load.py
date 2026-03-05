@@ -1,21 +1,28 @@
 """
-Data loading module for Sales ETL System.
-Loads transformed analytics data into target storage.
+Data Loading Module
+Loads transformed analytics data to target storage.
 """
+
+from typing import Optional
 from pyspark.sql import SparkSession, DataFrame
-from typing import Tuple, Optional
-import logging
+from pyspark.sql.functions import col
 
 from src.logger import ETLLogger
-from src.constants import ETLConstants
+from src.exceptions import LoadError
 
 
-class DataLoader:
-    """Loads transformed analytics data into target systems."""
+class Loader:
+    """
+    Handles loading of transformed analytics data to target systems.
+    
+    Attributes:
+        spark: SparkSession instance
+        logger: ETL logger instance
+    """
     
     def __init__(self, spark: SparkSession, logger: ETLLogger):
         """
-        Initialize the data loader.
+        Initialize the loader.
         
         Args:
             spark: Active SparkSession
@@ -23,130 +30,130 @@ class DataLoader:
         """
         self.spark = spark
         self.logger = logger
-        self.constants = ETLConstants()
     
-    def load_data(
-        self,
-        analytics_df: DataFrame,
-        target_path: Optional[str] = None,
-        mode: str = "append"
-    ) -> Tuple[int, bool]:
+    def load_data(self, analytics_data: DataFrame, target_path: Optional[str] = None) -> None:
         """
         Load analytics data to target storage.
         
         Args:
-            analytics_df: DataFrame with analytics data
-            target_path: Optional path to target storage
-            mode: Write mode (append, overwrite, etc.)
-        
-        Returns:
-            Tuple of (number of records loaded, success flag)
+            analytics_data: Transformed analytics DataFrame
+            target_path: Optional target path (defaults to config)
+            
+        Raises:
+            LoadError: If loading fails
         """
         try:
             self.logger.log_message(
-                step=self.constants.STEP_LOAD,
-                status=self.constants.STATUS_INFO,
+                step="LOAD",
+                status="S",
                 message="Starting data load"
             )
             
-            # Validate records before loading
-            valid_df = self._validate_records(analytics_df)
+            # Validate data before loading
+            validated_data = self._validate_records(analytics_data)
             
-            total_count = analytics_df.count()
-            valid_count = valid_df.count()
-            error_count = total_count - valid_count
+            initial_count = analytics_data.count()
+            validated_count = validated_data.count()
+            error_count = initial_count - validated_count
             
-            # Write to target
-            if target_path:
-                self._write_to_file(valid_df, target_path, mode)
-            else:
-                self._write_to_database(valid_df, mode)
+            if error_count > 0:
+                self.logger.log_message(
+                    step="LOAD",
+                    status="W",
+                    message=f"{error_count} records failed validation and were skipped"
+                )
+            
+            # Load to target (in production, this would be a database or data lake)
+            # For demonstration, write to parquet
+            output_path = target_path or "output/sales_analytics"
+            
+            validated_data.write.mode("append").parquet(output_path)
             
             self.logger.log_message(
-                step=self.constants.STEP_LOAD,
-                status=self.constants.STATUS_SUCCESS,
-                records_processed=total_count,
-                records_success=valid_count,
+                step="LOAD",
+                status="S",
+                records_processed=initial_count,
+                records_success=validated_count,
                 records_error=error_count,
-                message=f"Loaded {valid_count} of {total_count} records"
+                message=f"Loaded {validated_count} of {initial_count} records to {output_path}"
             )
-            
-            return valid_count, True
             
         except Exception as e:
             self.logger.log_message(
-                step=self.constants.STEP_LOAD,
-                status=self.constants.STATUS_ERROR,
+                step="LOAD",
+                status="E",
                 message=f"Load failed: {str(e)}"
             )
-            logging.error(f"Load error: {str(e)}", exc_info=True)
-            return 0, False
+            raise LoadError(
+                error_text=f"Failed to load data: {str(e)}",
+                error_step="LOAD"
+            ) from e
     
     def _validate_records(self, df: DataFrame) -> DataFrame:
         """
         Validate records before loading.
         
         Args:
-            df: Analytics DataFrame
-        
+            df: Input DataFrame
+            
         Returns:
             DataFrame with only valid records
         """
-        # Filter out records with invalid data
-        valid_df = df.filter(
-            (df.analytics_id.isNotNull()) &
-            (df.customer_id.isNotNull()) &
-            (df.product_id.isNotNull()) &
-            (df.gross_amount > 0) &
-            (df.currency.isNotNull()) &
-            (df.category.isin([
-                self.constants.CATEGORY_HIGH,
-                self.constants.CATEGORY_MEDIUM,
-                self.constants.CATEGORY_LOW
-            ]))
+        # Validate required fields are not null
+        validated = df.filter(
+            col("analytics_id").isNotNull() &
+            col("customer_id").isNotNull() &
+            col("product_id").isNotNull() &
+            (col("gross_amount") > 0)
         )
         
-        # Log validation results
-        invalid_count = df.count() - valid_df.count()
-        if invalid_count > 0:
-            self.logger.log_message(
-                step=self.constants.STEP_LOAD,
-                status=self.constants.STATUS_WARNING,
-                message=f"Filtered out {invalid_count} invalid records"
+        # Validate currency
+        validated = validated.filter(col("currency").isNotNull())
+        
+        # Validate category
+        validated = validated.filter(col("category").isin("HIGH", "MEDIUM", "LOW"))
+        
+        return validated
+    
+    def load_to_database(
+        self,
+        analytics_data: DataFrame,
+        jdbc_url: str,
+        table_name: str,
+        properties: dict
+    ) -> None:
+        """
+        Load data to a JDBC database.
+        
+        Args:
+            analytics_data: Analytics DataFrame
+            jdbc_url: JDBC connection URL
+            table_name: Target table name
+            properties: JDBC connection properties
+            
+        Raises:
+            LoadError: If database load fails
+        """
+        try:
+            validated_data = self._validate_records(analytics_data)
+            
+            validated_data.write.jdbc(
+                url=jdbc_url,
+                table=table_name,
+                mode="append",
+                properties=properties
             )
-        
-        return valid_df
-    
-    def _write_to_file(self, df: DataFrame, target_path: str, mode: str) -> None:
-        """
-        Write data to file storage.
-        
-        Args:
-            df: DataFrame to write
-            target_path: Target file path
-            mode: Write mode
-        """
-        if target_path.endswith('.parquet'):
-            df.write.mode(mode).parquet(target_path)
-        elif target_path.endswith('.json'):
-            df.write.mode(mode).json(target_path)
-        elif target_path.endswith('.csv'):
-            df.write.mode(mode).option("header", "true").csv(target_path)
-        else:
-            raise ValueError(f"Unsupported file format: {target_path}")
-    
-    def _write_to_database(self, df: DataFrame, mode: str) -> None:
-        """
-        Write data to database.
-        
-        Args:
-            df: DataFrame to write
-            mode: Write mode
-        """
-        # In production, this would write to actual database
-        # For now, log the action
-        self.logger.log_message(
-            step=self.constants.STEP_LOAD,
-            status=self.constants.STATUS_INFO,
-            message=f"Writing {df.count()} records to database (mode: {mode})"
-        )
+            
+            count = validated_data.count()
+            self.logger.log_message(
+                step="LOAD",
+                status="S",
+                records_success=count,
+                message=f"Loaded {count} records to database table {table_name}"
+            )
+            
+        except Exception as e:
+            raise LoadError(
+                error_text=f"Database load failed: {str(e)}",
+                error_step="LOAD"
+            ) from e
