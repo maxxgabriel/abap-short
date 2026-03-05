@@ -1,211 +1,159 @@
 # ETL Configuration File
-# This file contains all configurable parameters for the Sales ETL system
-# Migrated from ABAP ZCL_ETL_CONSTANTS class
+# Sales Data ETL System
 
-# ETL Process Configuration
-etl:
-  # Default batch size for processing records
-  batch_size: 1000
-  
-  # Number of records to process before committing transaction
-  commit_interval: 500
-  
-  # Number of retry attempts for failed operations
-  retry_attempts: 3
-  
-  # Timeout for ETL process in seconds
-  timeout_seconds: 3600
-  
-  # Enable test mode (no commits to database)
-  test_mode: false
-  
-  # Number of parallel processing jobs
-  parallel_jobs: 4
+# Application Settings
+application:
+  name: "Sales ETL System"
+  version: "1.0.0"
+  environment: "production"
 
-# Status Codes (corresponds to gc_status in ABAP)
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
-
-# ETL Process Steps (corresponds to gc_step in ABAP)
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-  orchestrate: "ORCHESTRATE"
-
-# Business Rules - Sales Categories (corresponds to gc_category in ABAP)
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-  
-  # Category thresholds in monetary units
-  thresholds:
-    high: 2000.00
-    medium: 500.00
-
-# Business Rules - Discount Configuration
-discounts:
-  # Quantity thresholds for discount tiers
-  quantity_tiers:
-    tier1: 10
-    tier2: 15
-  
-  # Discount rates (as decimal fractions)
-  rates:
-    tier1: 0.05  # 5% discount
-    tier2: 0.10  # 10% discount
-
-# Business Rules - Tax Configuration
-tax:
-  # Tax rate applied to (gross - discount)
-  rate: 0.08  # 8% tax rate
-
-# Business Rules - Cost Calculation
-cost:
-  # Cost ratio (cost as percentage of unit price)
-  ratio: 0.60  # 60% cost ratio
-
-# ID Prefixes (corresponds to gc_prefix_* in ABAP)
-id_prefixes:
-  etl_run: "ETL"
-  log_id: "LOG"
-  analytics_id: "ANL"
-
-# Logging Configuration
-logging:
-  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  level: "INFO"
-  
-  # Log format
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # Date format for logs
-  date_format: "%Y-%m-%d %H:%M:%S"
-  
-  # Log file path (null for stdout only)
-  file_path: null
-  
-  # Enable console logging
-  console_enabled: true
-  
-  # Enable database logging
-  database_enabled: true
+# Spark Configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"
+  config:
+    spark.sql.shuffle.partitions: 200
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.driver.memory: "4g"
+    spark.executor.memory: "4g"
 
 # Database Configuration
 database:
-  # Source table for raw sales data
-  source_table: "zsales_raw"
-  
-  # Target table for analytics data
-  target_table: "zsales_analytics"
-  
-  # ETL log table
+  raw_table: "zsales_raw"
+  analytics_table: "zsales_analytics"
   log_table: "zetl_log"
-  
-  # Connection timeout in seconds
-  connection_timeout: 30
-  
-  # Query timeout in seconds
-  query_timeout: 300
+  jdbc_url: "jdbc:postgresql://localhost:5432/etl_db"
+  driver: "org.postgresql.Driver"
+  connection_properties:
+    user: "etl_user"
+    password: "${DB_PASSWORD}"
 
-# Data Quality Rules
-data_quality:
-  # Minimum required fields for extraction
-  required_extract_fields:
-    - trans_id
-    - trans_date
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-    - currency
+# ETL Process Configuration
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
   
-  # Minimum required fields for analytics
-  required_analytics_fields:
-    - analytics_id
-    - customer_id
-    - product_id
-    - gross_amount
-    - currency
-    - category
+  # Date range defaults
+  default_lookback_days: 7
   
-  # Valid currency codes
-  valid_currencies:
-    - USD
-    - EUR
-    - GBP
+  # Status codes
+  status:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+    info: "I"
+
+# Business Rules
+business_rules:
+  # Discount configuration
+  discount:
+    tier1:
+      quantity_threshold: 10
+      rate: 0.05
+    tier2:
+      quantity_threshold: 15
+      rate: 0.10
   
-  # Maximum field lengths
-  max_lengths:
-    trans_id: 10
-    customer_id: 10
-    product_id: 10
-    analytics_id: 20
-    sales_rep: 20
-    region: 10
+  # Tax configuration
+  tax:
+    rate: 0.08
+  
+  # Cost calculation
+  cost:
+    ratio: 0.60
+  
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+    categories:
+      - "HIGH"
+      - "MEDIUM"
+      - "LOW"
+
+# Validation Rules
+validation:
+  required_fields:
+    raw_sales:
+      - trans_id
+      - trans_date
+      - customer_id
+      - product_id
+      - quantity
+      - unit_price
+      - currency
+    
+    analytics:
+      - analytics_id
+      - customer_id
+      - product_id
+      - gross_amount
+      - currency
+      - category
+  
+  currency_codes:
+    - "USD"
+    - "EUR"
+    - "GBP"
+    - "JPY"
+  
+  numeric_ranges:
+    quantity:
+      min: 1
+      max: 10000
+    unit_price:
+      min: 0.01
+      max: 1000000.00
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Log file configuration
+  file:
+    enabled: true
+    path: "logs/etl_{date}.log"
+    max_size_mb: 100
+    backup_count: 10
+  
+  # Database logging
+  database_logging:
+    enabled: true
+    batch_size: 100
+
+# ID Generation
+id_generation:
+  prefixes:
+    etl_run: "ETL"
+    log: "LOG"
+    analytics: "ANL"
+  
+  format: "{prefix}{timestamp}"
 
 # Error Handling
 error_handling:
-  # Continue processing on record-level errors
-  continue_on_error: true
-  
-  # Maximum number of errors before stopping
-  max_errors: 100
-  
-  # Maximum error rate (percentage) before stopping
-  max_error_rate: 10.0
-  
-  # Enable detailed error logging
-  detailed_errors: true
+  continue_on_error: false
+  error_threshold_percent: 5
+  send_alerts: true
+  alert_email: "etl-admin@example.com"
 
-# Performance Tuning
-performance:
-  # Enable caching
-  cache_enabled: true
-  
-  # Cache size (number of records)
-  cache_size: 10000
-  
-  # Enable query optimization
-  optimize_queries: true
-  
-  # Use bulk operations
-  use_bulk_operations: true
-
-# Monitoring and Alerting
+# Performance Monitoring
 monitoring:
-  # Enable performance monitoring
   enabled: true
+  metrics:
+    - records_processed
+    - records_success
+    - records_error
+    - execution_time
+    - memory_usage
   
-  # Metrics collection interval in seconds
-  metrics_interval: 60
-  
-  # Enable alerts
-  alerts_enabled: false
-  
-  # Alert thresholds
-  alert_thresholds:
-    error_rate: 5.0
-    processing_time: 7200  # 2 hours
-
-# Message Templates (corresponds to gc_msg_* in ABAP)
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+  thresholds:
+    max_execution_minutes: 60
+    min_success_rate_percent: 95
