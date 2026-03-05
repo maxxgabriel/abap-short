@@ -1,71 +1,138 @@
-# PySpark ETL Configuration
+# ETL Configuration for Sales Analytics Pipeline
+# Maps ABAP constants and settings to PySpark configuration
+
 spark:
-  app_name: "Sales ETL Process"
-  master: "local[*]"
-  log_level: "WARN"
+  app_name: "SalesETLPipeline"
+  master: "local[*]"  # Change to yarn/kubernetes in production
   configs:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
+    spark.sql.shuffle.partitions: 200
+    spark.default.parallelism: 100
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
 
-# Data source configuration
-source:
-  format: "jdbc"
-  url: "jdbc:sap://hostname:port"
-  driver: "com.sap.db.jdbc.Driver"
-  table: "ZSALES_RAW"
-  user: "${DB_USER}"
-  password: "${DB_PASSWORD}"
+# Extractor Configuration (from ZCL_ETL_EXTRACTOR)
+extractor:
+  source_path: "dbfs:/mnt/raw/zsales_raw"
+  source_format: "parquet"  # or delta, jdbc for real SAP connection
+  date_column: "trans_date"
+  status_column: "status"
+  status_new: "N"  # Maps to gc_status-new
+  status_processed: "P"  # Maps to gc_status-processed
   
-  # Query options
-  partition_column: "TRANS_DATE"
-  num_partitions: 10
-  fetch_size: 1000
+  # JDBC configuration for SAP HANA/database connection
+  jdbc:
+    enabled: false
+    url: "jdbc:sap://hostname:30015"
+    driver: "com.sap.db.jdbc.Driver"
+    table: "ZSALES_RAW"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+    fetch_size: 10000
 
-# Target configuration
-target:
-  format: "jdbc"
-  url: "jdbc:sap://hostname:port"
-  driver: "com.sap.db.jdbc.Driver"
-  table: "ZSALES_ANALYTICS"
-  mode: "append"
-  batch_size: 500
+# Transformer Configuration (from ZCL_ETL_TRANSFORMER)
+transformer:
+  # Business rules from ZCL_ETL_CONSTANTS
+  discount_qty_tier1: 10  # gc_discount_qty_tier1
+  discount_qty_tier2: 15  # gc_discount_qty_tier2
+  discount_rate_tier1: 0.05  # gc_discount_rate_tier1
+  discount_rate_tier2: 0.10  # gc_discount_rate_tier2
   
-# Logging configuration
-logging:
-  log_table: "ZETL_LOG"
-  console_output: true
-  file_output: true
+  tax_rate: 0.08  # gc_tax_rate
+  cost_ratio: 0.60  # gc_cost_ratio
+  
+  # Category thresholds
+  category_high_threshold: 2000.00  # gc_category_high_threshold
+  category_medium_threshold: 500.00  # gc_category_medium_threshold
+  
+  # Categories
+  category_high: "HIGH"  # gc_category-high
+  category_medium: "MEDIUM"  # gc_category-medium
+  category_low: "LOW"  # gc_category-low
+  
+  # ID generation
+  analytics_id_prefix: "ANL"  # gc_prefix_analytics_id
+
+# Loader Configuration (from ZCL_ETL_LOADER)
+loader:
+  target_path: "dbfs:/mnt/analytics/zsales_analytics"
+  target_format: "delta"
+  write_mode: "merge"  # merge (MODIFY) or append (INSERT)
+  
+  # Batch configuration
+  batch_size: 1000  # gc_default_batch_size
+  commit_interval: 500  # gc_default_commit_interval
+  
+  # Partitioning strategy
+  partition_columns:
+    - "trans_date"
+    - "region"
+  
+  # Optimization settings
+  enable_optimization: true
+  z_order_columns:
+    - "customer_id"
+    - "product_id"
+  
+  # Validation
+  enable_validation: true
+  error_path: "dbfs:/mnt/errors/zsales_analytics"
+  
+  # Delta Lake specific
+  checkpoint_location: "dbfs:/mnt/checkpoints/zsales_analytics"
+  auto_optimize: true
+  optimize_write: true
+
+# Logger Configuration (from ZCL_ETL_LOGGER)
+logger:
   log_level: "INFO"
-
-# Business rules
-business_rules:
-  discount:
-    tier1:
-      quantity_threshold: 10
-      rate: 0.05
-    tier2:
-      quantity_threshold: 15
-      rate: 0.10
+  log_path: "dbfs:/mnt/logs/etl"
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  enable_console: true
+  enable_file: true
   
-  tax:
-    rate: 0.08
-  
-  cost:
-    ratio: 0.60
-  
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  # ETL run ID configuration
+  etl_run_id_prefix: "ETL"  # gc_prefix_etl_run
+  log_id_prefix: "LOG"  # gc_prefix_log_id
 
-# Processing configuration
-processing:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  test_mode: false
+# Orchestrator Configuration (from ZCL_ETL_ORCHESTRATOR)
+orchestrator:
+  retry_attempts: 3  # gc_default_retry_attempts
+  timeout_seconds: 3600  # gc_default_timeout_seconds
+  enable_parallel_execution: false
+  
+  # Process steps
+  steps:
+    - extract
+    - transform
+    - load
+    - validate
+  
+  # Error handling
+  stop_on_error: true
+  error_threshold_percent: 5.0
 
-# Date range (defaults)
-date_range:
-  default_days_back: 7
+# Environment-specific overrides
+environments:
+  development:
+    spark:
+      master: "local[4]"
+    loader:
+      target_path: "file:///tmp/analytics/zsales_analytics"
+      
+  production:
+    spark:
+      master: "yarn"
+      configs:
+        spark.executor.memory: "8g"
+        spark.executor.cores: 4
+        spark.executor.instances: 10
+    loader:
+      target_path: "s3a://production-bucket/analytics/zsales_analytics"
+      batch_size: 5000
+
+# Monitoring and Alerting
+monitoring:
+  enable_metrics: true
+  metrics_path: "dbfs:/mnt/metrics/etl"
+  alert_on_failure: true
+  alert_email: "etl-alerts@company.com"
