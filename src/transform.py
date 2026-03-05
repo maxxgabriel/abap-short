@@ -1,181 +1,224 @@
 """
-ETL Transformer Module
-Transforms raw sales data into analytics format
+PySpark ETL Transformer Module
+
+Migrated from ABAP ZCL_ETL_TRANSFORMER class.
+Transforms raw sales data into analytics format using DataFrame operations.
 """
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType, TimestampType
-from pyspark.sql.functions import col, when, lit, current_timestamp, concat, date_format
-import logging
+
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    StructType, StructField, StringType, DateType, 
+    IntegerType, DecimalType, TimestampType
+)
 from typing import Tuple
+import logging
+from datetime import datetime
+
+from src.logger import ETLLogger
+from src.schemas import RawSalesSchema, AnalyticsSchema
 
 
 class ETLTransformer:
-    """Transforms raw sales data into analytics format"""
+    """
+    Transforms raw sales data into analytics format.
+    Replaces ABAP LOOP AT patterns with DataFrame functional transformations.
+    """
     
-    def __init__(self, spark: SparkSession, logger: logging.Logger, config: dict, etl_run_id: str):
+    def __init__(self, logger: ETLLogger, spark: SparkSession):
         """
-        Initialize the transformer
+        Initialize transformer with logger and Spark session.
         
         Args:
-            spark: SparkSession instance
-            logger: Logger instance for logging
-            config: Configuration dictionary
-            etl_run_id: Unique ETL run identifier
+            logger: ETL logger instance
+            spark: Active SparkSession
         """
-        self.spark = spark
         self.logger = logger
-        self.config = config
-        self.etl_run_id = etl_run_id
-        self._schema = self._get_analytics_schema()
-    
-    def _get_analytics_schema(self) -> StructType:
-        """Define schema for analytics data"""
-        return StructType([
-            StructField("analytics_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("total_quantity", IntegerType(), False),
-            StructField("gross_amount", DecimalType(16, 2), False),
-            StructField("net_amount", DecimalType(16, 2), False),
-            StructField("discount_amount", DecimalType(16, 2), False),
-            StructField("tax_amount", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("profit_margin", DecimalType(5, 2), True),
-            StructField("category", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("loaded_at", TimestampType(), False)
-        ])
-    
-    def transform_data(self, raw_df: DataFrame) -> Tuple[bool, DataFrame]:
+        self.spark = spark
+        self.log = logging.getLogger(__name__)
+        
+    def transform_data(
+        self, 
+        raw_data: DataFrame
+    ) -> Tuple[DataFrame, bool]:
         """
-        Transform raw sales data into analytics format
+        Transform raw sales data into analytics format.
+        
+        Migrated from ABAP transform_data method.
+        Replaces LOOP AT with DataFrame transformations.
         
         Args:
-            raw_df: Raw sales DataFrame
+            raw_data: DataFrame with raw sales data
             
         Returns:
-            Tuple of (success_flag, transformed_dataframe)
+            Tuple of (transformed DataFrame, success boolean)
         """
         try:
-            self.logger.info("Starting data transformation")
-            
-            # Get configuration values
-            discount_tier1_qty = self.config['business_rules']['discount_qty_tier1']
-            discount_tier2_qty = self.config['business_rules']['discount_qty_tier2']
-            discount_rate_tier1 = self.config['business_rules']['discount_rate_tier1']
-            discount_rate_tier2 = self.config['business_rules']['discount_rate_tier2']
-            tax_rate = self.config['business_rules']['tax_rate']
-            cost_ratio = self.config['business_rules']['cost_ratio']
-            category_high = self.config['business_rules']['category_high_threshold']
-            category_medium = self.config['business_rules']['category_medium_threshold']
-            
-            # Calculate gross amount
-            df_with_gross = raw_df.withColumn(
-                "gross_amount",
-                col("quantity") * col("unit_price")
+            self.logger.log_message(
+                step='TRANSFORM',
+                status='S',
+                message='Starting data transformation'
             )
             
-            # Calculate discount
-            df_with_discount = df_with_gross.withColumn(
-                "discount_amount",
-                when(col("quantity") > discount_tier2_qty, 
-                     col("gross_amount") * lit(discount_rate_tier2))
-                .when(col("quantity") > discount_tier1_qty,
-                      col("gross_amount") * lit(discount_rate_tier1))
-                .otherwise(lit(0.0))
+            input_count = raw_data.count()
+            self.log.info(f"Transforming {input_count} records")
+            
+            # Apply transformations using DataFrame operations
+            analytics_df = self._calculate_analytics(raw_data)
+            
+            # Add metadata columns
+            analytics_df = self._add_metadata_columns(analytics_df)
+            
+            # Validate transformed data
+            analytics_df = analytics_df.filter(
+                F.col('gross_amount').isNotNull() &
+                (F.col('gross_amount') > 0)
             )
             
-            # Calculate tax
-            df_with_tax = df_with_discount.withColumn(
-                "tax_amount",
-                (col("gross_amount") - col("discount_amount")) * lit(tax_rate)
+            output_count = analytics_df.count()
+            error_count = input_count - output_count
+            
+            self.logger.log_message(
+                step='TRANSFORM',
+                status='S',
+                records_processed=input_count,
+                records_success=output_count,
+                records_error=error_count,
+                message=f'Transformed {output_count} of {input_count} records'
             )
             
-            # Calculate net amount
-            df_with_net = df_with_tax.withColumn(
-                "net_amount",
-                col("gross_amount") - col("discount_amount") + col("tax_amount")
-            )
-            
-            # Calculate profit margin
-            df_with_profit = df_with_net.withColumn(
-                "cost_amount",
-                col("quantity") * col("unit_price") * lit(cost_ratio)
-            ).withColumn(
-                "profit_margin",
-                when(col("net_amount") > 0,
-                     ((col("net_amount") - col("cost_amount")) / col("net_amount")) * lit(100.0))
-                .otherwise(lit(0.0))
-            )
-            
-            # Categorize sales
-            df_with_category = df_with_profit.withColumn(
-                "category",
-                when(col("gross_amount") >= category_high, lit("HIGH"))
-                .when(col("gross_amount") >= category_medium, lit("MEDIUM"))
-                .otherwise(lit("LOW"))
-            )
-            
-            # Generate analytics ID
-            df_with_id = df_with_category.withColumn(
-                "analytics_id",
-                concat(
-                    lit("ANL"),
-                    col("trans_id"),
-                    date_format(current_timestamp(), "HHmmss")
-                )
-            )
-            
-            # Add ETL metadata
-            df_final = df_with_id.withColumn(
-                "etl_run_id", lit(self.etl_run_id)
-            ).withColumn(
-                "loaded_at", current_timestamp()
-            ).withColumn(
-                "total_quantity", col("quantity")
-            )
-            
-            # Select final columns
-            analytics_df = df_final.select(
-                "analytics_id",
-                "trans_date",
-                "customer_id",
-                "product_id",
-                "total_quantity",
-                "gross_amount",
-                "net_amount",
-                "discount_amount",
-                "tax_amount",
-                "currency",
-                "sales_rep",
-                "region",
-                "profit_margin",
-                "category",
-                "etl_run_id",
-                "loaded_at"
-            )
-            
-            record_count = analytics_df.count()
-            
-            self.logger.info(
-                f"Transformed {record_count} records successfully",
-                extra={
-                    'step': 'TRANSFORM',
-                    'status': 'S',
-                    'records_processed': record_count,
-                    'records_success': record_count
-                }
-            )
-            
-            return True, analytics_df
+            return analytics_df, True
             
         except Exception as e:
-            self.logger.error(
-                f"Transformation failed: {str(e)}",
-                extra={'step': 'TRANSFORM', 'status': 'E'},
-                exc_info=True
+            self.log.error(f"Transformation failed: {str(e)}", exc_info=True)
+            self.logger.log_message(
+                step='TRANSFORM',
+                status='E',
+                message=f'Transformation failed: {str(e)}'
             )
-            return False, None
+            return self.spark.createDataFrame([], AnalyticsSchema.get_schema()), False
+    
+    def _calculate_analytics(self, raw_data: DataFrame) -> DataFrame:
+        """
+        Calculate all analytics fields using DataFrame operations.
+        
+        Migrated from ABAP calculate_analytics method.
+        Replaces row-by-row processing with vectorized operations.
+        
+        Args:
+            raw_data: Raw sales DataFrame
+            
+        Returns:
+            DataFrame with calculated analytics fields
+        """
+        # Calculate gross amount
+        df = raw_data.withColumn(
+            'gross_amount',
+            F.col('quantity') * F.col('unit_price')
+        )
+        
+        # Calculate discount based on quantity tiers
+        # Migrated from ABAP IF-ELSEIF logic for discount calculation
+        df = df.withColumn(
+            'discount_amount',
+            F.when(F.col('quantity') > 15, F.col('gross_amount') * 0.10)
+            .when(F.col('quantity') > 10, F.col('gross_amount') * 0.05)
+            .otherwise(0.0)
+        )
+        
+        # Calculate tax (8% on gross - discount)
+        df = df.withColumn(
+            'tax_amount',
+            (F.col('gross_amount') - F.col('discount_amount')) * 0.08
+        )
+        
+        # Calculate net amount
+        df = df.withColumn(
+            'net_amount',
+            F.col('gross_amount') - F.col('discount_amount') + F.col('tax_amount')
+        )
+        
+        # Calculate cost (60% of unit price * quantity)
+        df = df.withColumn(
+            'cost_amount',
+            F.col('quantity') * F.col('unit_price') * 0.60
+        )
+        
+        # Calculate profit margin as percentage
+        df = df.withColumn(
+            'profit_margin',
+            F.when(
+                F.col('net_amount') > 0,
+                ((F.col('net_amount') - F.col('cost_amount')) / F.col('net_amount') * 100)
+            ).otherwise(0.0)
+        )
+        
+        # Categorize sales
+        df = df.withColumn(
+            'category',
+            self._categorize_sale_udf()
+        )
+        
+        # Generate analytics ID
+        df = df.withColumn(
+            'analytics_id',
+            F.concat(
+                F.lit('ANL'),
+                F.col('trans_id'),
+                F.date_format(F.current_timestamp(), 'HHmmss')
+            )
+        )
+        
+        # Select and rename columns to match analytics schema
+        analytics_df = df.select(
+            F.col('analytics_id'),
+            F.col('trans_date'),
+            F.col('customer_id'),
+            F.col('product_id'),
+            F.col('quantity').alias('total_quantity'),
+            F.col('gross_amount'),
+            F.col('net_amount'),
+            F.col('discount_amount'),
+            F.col('tax_amount'),
+            F.col('currency'),
+            F.col('sales_rep'),
+            F.col('region'),
+            F.col('profit_margin'),
+            F.col('category')
+        )
+        
+        return analytics_df
+    
+    def _categorize_sale_udf(self) -> F.Column:
+        """
+        Categorize sales based on gross amount.
+        
+        Migrated from ABAP categorize_sale method.
+        
+        Returns:
+            Column expression for categorization
+        """
+        return F.when(F.col('gross_amount') >= 2000, 'HIGH') \
+                .when(F.col('gross_amount') >= 500, 'MEDIUM') \
+                .otherwise('LOW')
+    
+    def _add_metadata_columns(self, df: DataFrame) -> DataFrame:
+        """
+        Add ETL metadata columns to the DataFrame.
+        
+        Args:
+            df: DataFrame to add metadata to
+            
+        Returns:
+            DataFrame with metadata columns added
+        """
+        return df.withColumn(
+            'etl_run_id',
+            F.lit(self.logger.get_etl_run_id())
+        ).withColumn(
+            'loaded_at',
+            F.current_timestamp()
+        ).withColumn(
+            'loaded_by',
+            F.lit('pyspark_etl')
+        )
