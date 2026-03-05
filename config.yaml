@@ -1,73 +1,124 @@
-# ETL Logger Configuration
-# Converted from ABAP package $ZETL configuration
+# ETL Configuration
+# Migrated from ABAP ETL system configuration
 
 etl:
-  # Run identification
-  run_id_prefix: "ETL"
-  log_id_prefix: "LOG"
-  
-  # Logging configuration
-  logging:
-    console_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-    log_table: "etl_logs"  # Database table for persistent logs
-    enable_database_logging: true
-    flush_interval: 100  # Flush logs to DB every N entries
-    
-  # Process steps (for reference)
-  steps:
-    - INIT
-    - EXTRACT
-    - TRANSFORM
-    - LOAD
-    - VALIDATE
-    - COMPLETE
-    - ERROR
-    
-  # Status codes (for reference)
-  statuses:
-    - SUCCESS  # 'S'
-    - ERROR    # 'E'
-    - WARNING  # 'W'
-    - INFO     # 'I'
-
-# Message templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Database configuration
-database:
-  # Schema for ETL tables
-  schema: "etl_schema"
-  
-  # Table names
-  tables:
-    raw_sales: "sales_raw"
-    analytics: "sales_analytics"
-    etl_log: "etl_log"
-    
-  # Write options
-  write_mode: "append"  # append, overwrite
-  partition_by: ["execution_date"]
-  
-# Performance settings
-performance:
+  # Processing parameters
   batch_size: 1000
   commit_interval: 500
-  max_retries: 3
+  parallel_jobs: 4
+  retry_attempts: 3
   timeout_seconds: 3600
-  parallel_tasks: 4
+  
+  # Date range defaults (days from current date)
+  default_from_days_back: 7
+  default_to_days_back: 0
 
-# Monitoring and alerts
+# Spark Configuration
+spark:
+  app_name: "SalesETLProcess"
+  master: "local[*]"  # Override in production with cluster URL
+  
+  # Spark SQL configurations
+  configs:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.sources.partitionOverwriteMode: "dynamic"
+    spark.sql.legacy.timeParserPolicy: "LEGACY"
+    
+  # Memory settings
+  driver_memory: "4g"
+  executor_memory: "4g"
+  executor_cores: 2
+
+# Business Rules (from ZCL_ETL_CONSTANTS)
+business_rules:
+  # Discount tiers
+  discount:
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
+  
+  # Tax configuration
+  tax:
+    rate: 0.08
+  
+  # Cost calculation
+  cost:
+    ratio: 0.60
+  
+  # Sale categorization thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+
+# Data Source Configuration
+data_sources:
+  raw_sales:
+    format: "parquet"  # or "jdbc" for database connection
+    path: "data/raw/sales"  # Override with actual path
+    # For JDBC connections (uncomment and configure):
+    # jdbc_url: "jdbc:postgresql://localhost:5432/sales_db"
+    # table: "zsales_raw"
+    # user: "etl_user"
+    # password_env: "DB_PASSWORD"  # Read from environment variable
+  
+  # Alternative: For reading from database
+  database:
+    enabled: false
+    driver: "org.postgresql.Driver"
+    url: "jdbc:postgresql://localhost:5432/sales_db"
+    raw_table: "zsales_raw"
+    analytics_table: "zsales_analytics"
+    log_table: "zetl_log"
+    properties:
+      user: "etl_user"
+      password_env: "DB_PASSWORD"
+      fetchsize: 1000
+
+# Data Target Configuration
+data_targets:
+  analytics:
+    format: "parquet"
+    path: "data/analytics/sales"
+    mode: "overwrite"  # append, overwrite, error, ignore
+    partition_by:
+      - "trans_date"
+      - "region"
+  
+  logs:
+    format: "parquet"
+    path: "data/logs/etl"
+    mode: "append"
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Console logging
+  console:
+    enabled: true
+    level: "INFO"
+  
+  # File logging
+  file:
+    enabled: true
+    path: "logs/etl_process.log"
+    level: "DEBUG"
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+
+# Monitoring and Alerting
 monitoring:
-  enable_metrics: true
-  metrics_table: "etl_metrics"
-  alert_on_error: true
-  alert_threshold_errors: 10
+  enabled: false
+  metrics_path: "metrics/etl_metrics.json"
+  alert_on_failure: true
+  alert_email: "etl-team@example.com"
+
+# Testing Configuration
+testing:
+  test_mode: false
+  sample_size: 100  # Number of records to process in test mode
+  mock_data: false
