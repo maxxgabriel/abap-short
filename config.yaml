@@ -1,46 +1,77 @@
-# ETL System Configuration
-# Converted from ABAP ZCL_ETL_CONSTANTS class
+# Sales ETL System Configuration
+# Migrated from ABAP Package $ZETL
+
+etl:
+  # ETL Run Configuration
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
+
+  # Date Range Configuration
+  default_days_back: 7
+  
+  # Execution Mode
+  test_mode: false
+  enable_logging: true
 
 # Business Rules Configuration
 business_rules:
-  # Discount Configuration
+  # Discount Thresholds
   discount:
     tier1_quantity: 10
     tier2_quantity: 15
-    tier1_rate: "0.05"  # 5% discount
-    tier2_rate: "0.10"  # 10% discount
+    tier1_rate: 0.05
+    tier2_rate: 0.10
   
   # Tax Configuration
-  tax:
-    rate: "0.08"  # 8% tax rate
+  tax_rate: 0.08
   
-  # Cost and Profit Configuration
-  cost:
-    ratio: "0.60"  # Cost is 60% of unit price
+  # Cost Configuration
+  cost_ratio: 0.60
   
   # Category Thresholds
   category:
-    high_threshold: "2000.00"
-    medium_threshold: "500.00"
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# ETL Runtime Configuration
-etl_config:
-  # Batch Processing
-  batch:
-    default_size: 1000
-    commit_interval: 500
-  
-  # Retry and Timeout Settings
-  retry:
-    max_attempts: 3
-    timeout_seconds: 3600
-  
-  # ID Generation Prefixes
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+# Database Configuration
+database:
+  # Source Table
+  source:
+    table_name: "zsales_raw"
+    database: "sales_db"
+    
+  # Target Table
+  target:
+    table_name: "zsales_analytics"
+    database: "analytics_db"
+    
+  # Log Table
+  log:
+    table_name: "zetl_log"
+    database: "etl_db"
 
+# Spark Configuration
+spark:
+  app_name: "Sales ETL Process"
+  master: "local[*]"
+  executor_memory: "4g"
+  driver_memory: "2g"
+  shuffle_partitions: 200
+  
+  # Optimization Settings
+  adaptive_query_execution: true
+  dynamic_partition_overwrite: true
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/etl_process.log"
+  console: true
+  
 # Status Codes
 status_codes:
   new: "N"
@@ -52,116 +83,15 @@ status_codes:
 
 # Process Steps
 process_steps:
-  - INIT
-  - EXTRACT
-  - TRANSFORM
-  - LOAD
-  - VALIDATE
-  - COMPLETE
-  - ERROR
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
 
-# Sale Categories
-sale_categories:
-  - HIGH
-  - MEDIUM
-  - LOW
-
-# Logging Configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
-  
-  # Log Destinations
-  destinations:
-    console: true
-    file: true
-    database: true
-  
-  # Log File Configuration
-  file:
-    path: "logs/etl_{run_id}.log"
-    max_size_mb: 100
-    backup_count: 5
-
-# Spark Configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  
-  # Spark Settings
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
-  
-  # Checkpoint Configuration
-  checkpoint:
-    enabled: true
-    location: "/tmp/spark_checkpoints"
-
-# Database Configuration (example values)
-database:
-  # Source Database
-  source:
-    type: "hana"  # or "postgresql", "oracle", etc.
-    host: "localhost"
-    port: 30015
-    database: "SAPABAP"
-    schema: "SAPABAP1"
-    table_raw: "ZSALES_RAW"
-  
-  # Target Database
-  target:
-    type: "hana"
-    host: "localhost"
-    port: 30015
-    database: "SAPABAP"
-    schema: "SAPABAP1"
-    table_analytics: "ZSALES_ANALYTICS"
-    table_log: "ZETL_LOG"
-  
-  # Connection Pool Settings
-  connection_pool:
-    max_connections: 10
-    min_connections: 2
-    connection_timeout: 30
-
-# Data Quality Rules
-data_quality:
-  # Validation Rules
-  validation:
-    required_fields:
-      - trans_id
-      - trans_date
-      - customer_id
-      - product_id
-      - quantity
-      - unit_price
-    
-    numeric_ranges:
-      quantity:
-        min: 0
-        max: 10000
-      unit_price:
-        min: 0.01
-        max: 1000000.00
-    
-    date_ranges:
-      trans_date:
-        min_days_past: 3650  # 10 years
-        max_days_future: 0
-  
-  # Error Handling
-  error_handling:
-    continue_on_error: true
-    max_error_percentage: 5.0
-    quarantine_bad_records: true
-    quarantine_path: "/tmp/etl_quarantine"
-
-# Messages Configuration
+# Message Templates
 messages:
   init_success: "ETL process initialized successfully"
   extract_start: "Starting data extraction"
