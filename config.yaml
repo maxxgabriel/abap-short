@@ -1,171 +1,193 @@
-# ETL Configuration File
-# This file contains parameterized values for the ETL system
-# All values can be overridden at runtime or per environment
-
-# Environment settings
-environment: development
+# ETL Configuration for Sales Analytics Pipeline
+# Migrated from ABAP ZCL_ETL_CONSTANTS and package configuration
 
 # Spark Configuration
 spark:
-  app_name: "Sales ETL System"
+  app_name: "Sales_ETL_Pipeline"
   master: "local[*]"
-  driver_memory: "4g"
-  executor_memory: "4g"
-  executor_cores: 4
-  shuffle_partitions: 200
+  log_level: "INFO"
   
-# Data sources
-data_sources:
-  raw_sales:
-    format: "parquet"
-    path: "data/raw/sales"
-    schema_validation: true
-    
-  analytics_output:
-    format: "parquet"
-    path: "data/analytics/sales"
-    mode: "overwrite"  # append, overwrite, error
-    partition_by: ["trans_date"]
-    
-  etl_log:
-    format: "parquet"
-    path: "data/logs/etl"
-    mode: "append"
+  # Spark configs
+  configs:
+    spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
+    spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.databricks.delta.retentionDurationCheck.enabled: "false"
+    spark.databricks.delta.schema.autoMerge.enabled: "true"
 
-# Business Rules - can override defaults from config.py
-business_rules:
-  # Discount configuration
+# Extract Configuration
+extract:
+  # Source table configuration
+  source_table: "zsales_raw"
+  source_format: "parquet"  # or "jdbc" for direct database connection
+  source_path: "data/input/sales_raw"
+  
+  # Date range (can be overridden at runtime)
+  date_column: "trans_date"
+  default_lookback_days: 7
+  
+  # Filtering
+  status_filter: "N"  # New records only (corresponds to gc_status-new)
+  
+  # JDBC configuration (if reading from database)
+  jdbc:
+    url: "jdbc:oracle:thin:@localhost:1521:xe"
+    driver: "oracle.jdbc.driver.OracleDriver"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+    fetch_size: 1000
+    partition_column: "trans_date"
+    num_partitions: 4
+
+# Transform Configuration
+transform:
+  # Business rules - Discount thresholds
   discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
-    
-  # Tax configuration
-  tax:
-    rate: 0.08
-    
-  # Cost configuration
-  cost:
-    ratio: 0.60
-    
-  # Category thresholds
+    tier1_quantity: 10
+    tier1_rate: 0.05
+    tier2_quantity: 15
+    tier2_rate: 0.10
+  
+  # Business rules - Tax rate
+  tax_rate: 0.08
+  
+  # Business rules - Cost ratio for profit calculation
+  cost_ratio: 0.60
+  
+  # Business rules - Category thresholds
   category:
     high_threshold: 2000.00
     medium_threshold: 500.00
+  
+  # Category values
+  categories:
+    high: "HIGH"
+    medium: "MEDIUM"
+    low: "LOW"
+  
+  # Validation rules
+  validation:
+    max_quantity: 10000
+    max_unit_price: 100000.00
+    min_unit_price: 0.01
+    valid_currencies: ["USD", "EUR", "GBP"]
 
-# ETL Processing Configuration
-etl:
-  # Batch processing
-  batch_size: 1000
-  commit_interval: 500
+# Load Configuration
+load:
+  # Target Delta table configuration
+  target_table: "sales_analytics"
+  delta_path: "data/output/sales_analytics_delta"
   
+  # Write configuration
+  write_mode: "append"  # append, overwrite, or merge
+  batch_size: 1000  # corresponds to gc_default_batch_size
+  commit_interval: 500  # corresponds to gc_default_commit_interval
+  
+  # Partitioning
+  partition_columns: ["trans_date", "region"]
+  
+  # Delta Lake optimization
+  enable_optimize: true
+  enable_vacuum: false
+  vacuum_retention_hours: 168  # 7 days
+  
+  # Merge configuration (for upsert operations)
+  merge_keys: ["analytics_id"]
+  
+  # Performance tuning
+  max_records_per_file: 100000
+  compression: "snappy"
+
+# ETL Orchestration Configuration
+orchestration:
   # Retry configuration
-  retry_attempts: 3
-  retry_delay_seconds: 5
-  
-  # Timeout configuration
-  timeout_seconds: 3600
+  retry_attempts: 3  # corresponds to gc_default_retry_attempts
+  retry_delay_seconds: 30
+  timeout_seconds: 3600  # corresponds to gc_default_timeout_seconds
   
   # Parallel processing
-  parallel_jobs: 4
+  enable_parallel: false
+  max_parallel_tasks: 4
   
-  # Data quality
-  enable_validation: true
-  fail_on_validation_error: false
+  # Checkpointing
+  enable_checkpoint: true
+  checkpoint_path: "data/checkpoint"
   
-  # Logging
-  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  enable_console_output: true
-  enable_file_output: true
-
-# Data Quality Rules
-data_quality:
-  required_fields:
-    - trans_id
-    - trans_date
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-    - currency
-    
-  validation_rules:
-    quantity:
-      min: 1
-      max: 10000
-      
-    unit_price:
-      min: 0.01
-      max: 999999.99
-      
-    currency:
-      allowed_values: ["USD", "EUR", "GBP"]
-      
-  # Thresholds for data quality alerts
-  quality_thresholds:
-    max_error_rate: 0.05  # 5%
-    max_null_rate: 0.02   # 2%
-
-# ID Generation
-id_generation:
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
-    
-  # Timestamp format for ID generation
-  timestamp_format: "%Y%m%d%H%M%S"
-
-# Monitoring and Alerting
-monitoring:
-  enable_metrics: true
-  metrics_path: "data/metrics"
-  
-  # Performance thresholds
-  performance:
-    max_extraction_time_minutes: 30
-    max_transformation_time_minutes: 60
-    max_load_time_minutes: 30
-    
-  # Alert configuration
-  alerts:
-    enabled: false
-    email_recipients: []
-    slack_webhook: ""
-
-# Testing Configuration
-testing:
+  # Testing
   test_mode: false
-  sample_data_size: 100
-  enable_data_profiling: false
+  test_sample_size: 100
 
 # Logging Configuration
 logging:
-  version: 1
-  disable_existing_loggers: false
+  # Log level
+  level: "INFO"
   
-  formatters:
-    standard:
-      format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    detailed:
-      format: "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s"
-      
-  handlers:
-    console:
-      class: "logging.StreamHandler"
-      level: "INFO"
-      formatter: "standard"
-      stream: "ext://sys.stdout"
-      
-    file:
-      class: "logging.handlers.RotatingFileHandler"
-      level: "DEBUG"
-      formatter: "detailed"
-      filename: "logs/etl.log"
-      maxBytes: 10485760  # 10MB
-      backupCount: 5
-      
-  root:
-    level: "INFO"
-    handlers: ["console", "file"]
+  # Log output
+  console_output: true
+  file_output: true
+  log_file_path: "logs/etl_execution.log"
+  
+  # Log table configuration
+  log_table: "etl_log"
+  log_path: "data/logs/etl_log"
+  
+  # Log rotation
+  max_log_size_mb: 100
+  backup_count: 5
+  
+  # Metrics
+  enable_metrics: true
+  metrics_path: "data/metrics"
+
+# Status Codes (from gc_status)
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
+
+# Process Steps (from gc_step)
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
+
+# ID Prefixes (from gc_prefix_*)
+id_prefixes:
+  etl_run: "ETL"
+  log_id: "LOG"
+  analytics_id: "ANL"
+
+# Message Templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
+
+# Data Quality Rules
+data_quality:
+  enable_validation: true
+  fail_on_validation_error: false
+  max_error_percentage: 5.0
+  
+  # Record validation rules
+  required_fields:
+    - analytics_id
+    - customer_id
+    - product_id
+    - gross_amount
+    - currency
+    - category
