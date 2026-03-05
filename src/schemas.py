@@ -1,18 +1,25 @@
 """
-Schema definitions for ETL data structures.
+PySpark Schema Definitions
+Migrated from ZETL_TYPES
 """
+
 from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType,
-    DecimalType, DateType, TimestampType
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    DecimalType,
+    DateType,
+    TimestampType,
 )
 
 
 class ETLSchemas:
-    """Central schema definitions for ETL system."""
+    """Central schema definitions for ETL system"""
     
     @staticmethod
-    def raw_sales_schema():
-        """Schema for raw sales data."""
+    def raw_sales_schema() -> StructType:
+        """Schema for raw sales data (ZSALES_RAW table)"""
         return StructType([
             StructField("trans_id", StringType(), False),
             StructField("trans_date", DateType(), False),
@@ -25,12 +32,12 @@ class ETLSchemas:
             StructField("region", StringType(), True),
             StructField("status", StringType(), False),
             StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
+            StructField("created_by", StringType(), True),
         ])
     
     @staticmethod
-    def analytics_schema():
-        """Schema for analytics data."""
+    def analytics_schema() -> StructType:
+        """Schema for analytics data (ZSALES_ANALYTICS table)"""
         return StructType([
             StructField("analytics_id", StringType(), False),
             StructField("trans_date", DateType(), False),
@@ -44,16 +51,16 @@ class ETLSchemas:
             StructField("currency", StringType(), False),
             StructField("sales_rep", StringType(), True),
             StructField("region", StringType(), True),
-            StructField("profit_margin", DecimalType(5, 2), True),
+            StructField("profit_margin", DecimalType(5, 2), False),
             StructField("category", StringType(), False),
             StructField("etl_run_id", StringType(), False),
             StructField("loaded_at", TimestampType(), True),
-            StructField("loaded_by", StringType(), True)
+            StructField("loaded_by", StringType(), True),
         ])
     
     @staticmethod
-    def etl_log_schema():
-        """Schema for ETL log data."""
+    def etl_log_schema() -> StructType:
+        """Schema for ETL log data (ZETL_LOG table)"""
         return StructType([
             StructField("log_id", StringType(), False),
             StructField("etl_run_id", StringType(), False),
@@ -66,5 +73,5 @@ class ETLSchemas:
             StructField("records_error", IntegerType(), True),
             StructField("message", StringType(), True),
             StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
+            StructField("created_by", StringType(), True),
         ])
