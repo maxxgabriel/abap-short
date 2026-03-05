@@ -1,0 +1,61 @@
+# Deployment Configuration for Sales ETL Production
+
+environment: production
+deployment:
+  version: "1.0.0"
+  main_script: "src/orchestrator.py"
+  dependencies:
+    - "src/extract.py"
+    - "src/transform.py"
+    - "src/load.py"
+    - "src/monitor.py"
+  config_files:
+    - "config.yaml"
+    - "config/monitoring.json"
+  rollback_enabled: true
+  backup_retention_days: 30
+
+spark:
+  master: "yarn"
+  deploy_mode: "cluster"
+  app_name: "SalesETL_Production"
+  num_executors: 10
+  executor_memory: "4g"
+  executor_cores: 2
+  driver_memory: "2g"
+  
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+    spark.dynamicAllocation.enabled: "true"
+    spark.dynamicAllocation.minExecutors: "5"
+    spark.dynamicAllocation.maxExecutors: "20"
+    spark.speculation: "true"
+    spark.task.maxFailures: "4"
+    spark.stage.maxConsecutiveAttempts: "4"
+
+monitoring:
+  endpoint: "http://monitoring.company.com:8080"
+  alert_endpoint: "http://monitoring.company.com:8080/alerts"
+  dashboard_url: "http://monitoring.company.com:3000/dashboards/sales-etl"
+  metrics_push_interval_seconds: 30
+  health_check_interval_seconds: 60
+
+notifications:
+  email:
+    enabled: true
+    recipients:
+      - "etl-team@company.com"
+      - "data-ops@company.com"
+  slack:
+    enabled: true
+    webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    channel: "#etl-alerts"
+
+logging:
+  level: "INFO"
+  format: "json"
+  output_dir: "/var/log/spark/sales-etl"
+  rotation_days: 7
