@@ -1,0 +1,77 @@
+{
+  "etl_configuration": {
+    "version": "1.0.0",
+    "environment": "development",
+    "settings": {
+      "batch_processing": {
+        "batch_size": 1000,
+        "commit_interval": 500,
+        "parallel_jobs": 1
+      },
+      "error_handling": {
+        "retry_attempts": 3,
+        "retry_delay_seconds": 5,
+        "continue_on_error": true,
+        "error_threshold_percent": 10
+      },
+      "performance": {
+        "timeout_seconds": 3600,
+        "max_memory_mb": 512,
+        "enable_caching": true
+      },
+      "logging": {
+        "log_level": "INFO",
+        "log_to_database": true,
+        "log_to_console": true,
+        "log_retention_days": 30
+      },
+      "business_rules": {
+        "discounts": {
+          "tier1_quantity": 10,
+          "tier1_rate": 0.05,
+          "tier2_quantity": 15,
+          "tier2_rate": 0.10
+        },
+        "tax_rate": 0.08,
+        "cost_ratio": 0.60,
+        "categories": {
+          "high_threshold": 2000.00,
+          "medium_threshold": 500.00
+        }
+      },
+      "data_quality": {
+        "validate_before_load": true,
+        "reject_invalid_records": false,
+        "required_fields": [
+          "trans_id",
+          "customer_id",
+          "product_id",
+          "quantity",
+          "unit_price",
+          "currency"
+        ]
+      }
+    },
+    "source_tables": [
+      {
+        "name": "ZSALES_RAW",
+        "type": "transparent",
+        "description": "Raw sales transaction data"
+      }
+    ],
+    "target_tables": [
+      {
+        "name": "ZSALES_ANALYTICS",
+        "type": "transparent",
+        "description": "Transformed sales analytics data"
+      }
+    ],
+    "log_tables": [
+      {
+        "name": "ZETL_LOG",
+        "type": "transparent",
+        "description": "ETL execution log"
+      }
+    ]
+  }
+}

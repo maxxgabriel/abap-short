@@ -1,0 +1,92 @@
+# ABAP ETL System - Git Ignore File
+
+# SAP System Files
+*.SAP
+*.sap
+
+# Transport Files
+*.cofiles
+*.data
+K*.
+R*.
+
+# ABAP GUI Files
+*.gui
+sapgui.ini
+
+# Local Configuration
+*.local
+local_config.json
+.env
+
+# IDE Files
+.vscode/
+.idea/
+*.sublime-*
+.eclipse/
+
+# Logs
+logs/
+*.log
+*.trc
+
+# Temporary Files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build/Output
+output/
+build/
+dist/
+
+# Test Results
+test-results/
+coverage/
+
+# Database Dumps
+*.sql
+*.dump
+
+# Credentials
+credentials.json
+secrets.json
+*.key
+*.pem
+
+# Documentation Build
+docs/_build/
+docs/.doctrees/
+
+# Node modules (if using ABAP development tools)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python (if using scripts)
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.pytest_cache/
+
+# SAP Specific
+# Ignore generated ABAP code
+*.abap.bak
+*.abap.tmp
+
+# Ignore workbench exports
+abapworkbench/
+
+# Ignore local transport directory
+trans/
+
+# Keep directory structure
+!**/.gitkeep

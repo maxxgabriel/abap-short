@@ -1,0 +1,248 @@
+╔════════════════════════════════════════════════════════════════════╗
+║                    ETL SYSTEM DEPENDENCY GRAPH                     ║
+╚════════════════════════════════════════════════════════════════════╝
+
+LEGEND:
+  ═══>  Implements Interface
+  ───>  Uses/Depends On
+  ···>  References Type
+  [P]   Package
+  [T]   Database Table
+  [I]   Interface
+  [C]   Class
+  [E]   Exception
+  [X]   Executable Program
+  [#]   Include
+
+
+┌────────────────────────────────────────────────────────────────────┐
+│                         LAYER 0: PACKAGE                           │
+└────────────────────────────────────────────────────────────────────┘
+                         ┌──────────────┐
+                         │  $ZETL [P]   │
+                         └──────┬───────┘
+                                │
+                                │ contains all objects
+                                ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                    LAYER 1: FOUNDATION OBJECTS                     │
+└────────────────────────────────────────────────────────────────────┘
+
+        ┌──────────────┐         ┌──────────────┐
+        │ ZSALES_RAW   │         │  ZSALES_     │
+        │   [T]        │         │  ANALYTICS   │
+        │              │         │   [T]        │
+        └──────────────┘         └──────────────┘
+               ▲                        ▲
+               │                        │
+               │                        │
+        ┌──────────────┐         ┌──────────────┐
+        │  ZETL_LOG    │         │ ZETL_TYPES   │
+        │   [T]        │         │   [C]        │
+        └──────────────┘         └──────────────┘
+                                        │
+                                        │ provides types
+                                        ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                   LAYER 2: INTERFACE DEFINITIONS                   │
+└────────────────────────────────────────────────────────────────────┘
+
+        ┌──────────────────┐         ┌──────────────────┐
+        │ ZIF_ETL_LOGGER   │         │ ZIF_ETL_         │
+        │     [I]          │         │  COMPONENT [I]   │
+        │                  │         │                  │
+        │ Methods:         │         │ Methods:         │
+        │ - log_message    │         │ - execute        │
+        │ - get_run_id     │         │ - get_name       │
+        └──────────────────┘         │ - validate       │
+                                     └──────────────────┘
+                                            ▲
+                                            │
+                                            │ defines contract
+                                            │
+┌────────────────────────────────────────────────────────────────────┐
+│                    LAYER 3: EXCEPTION & CONSTANTS                  │
+└────────────────────────────────────────────────────────────────────┘
+
+        ┌──────────────────┐         ┌──────────────────┐
+        │  ZCX_ETL_ERROR   │         │ ZCL_ETL_         │
+        │     [E]          │         │  CONSTANTS [C]   │
+        │                  │         │                  │
+        │ - extract_error  │         │ - gc_status      │
+        │ - transform_error│         │ - gc_step        │
+        │ - load_error     │         │ - gc_category    │
+        │ - mv_error_text  │         │ - gc_tax_rate    │
+        └──────────────────┘         │ - gc_discount_*  │
+               ▲                     └──────────────────┘
+               │                            ▲
+               │                            │
+               │ can raise                  │ uses constants
+               │                            │
+┌────────────────────────────────────────────────────────────────────┐
+│                     LAYER 4: INCLUDE PROGRAMS                      │
+└────────────────────────────────────────────────────────────────────┘
+
+        ┌──────────────────┐         ┌──────────────────┐
+        │   ZETL_TOP [#]   │         │  ZETL_MACROS [#] │
+        │                  │         │                  │
+        │ - Global Data    │         │ - log_etl_*      │
+        │ - Type Includes  │         │ - validate_*     │
+        │ - Statistics     │         │ - generate_*     │
+        └──────────────────┘         └──────────────────┘
+               │                            │
+               │ included in                │ included in
+               │                            │
+               ▼                            ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                  LAYER 5: UTILITY & LOGGING CLASSES                │
+└────────────────────────────────────────────────────────────────────┘
+
+                         ┌──────────────────┐
+                         │ ZCL_ETL_LOGGER   │
+                         │     [C]          │
+                         │                  │
+                         │ Implements:      │
+                         │ ZIF_ETL_LOGGER ══╝
+                         │                  │
+                         │ Uses:            │
+                         │ - ZETL_TYPES ···>│
+                         │ - CONSTANTS  ───>│
+                         └────────┬─────────┘
+                                  │
+                                  │ injected into
+                                  ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                    LAYER 6: ETL COMPONENT CLASSES                  │
+└────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+    │ ZCL_ETL_         │  │ ZCL_ETL_         │  │ ZCL_ETL_         │
+    │  EXTRACTOR [C]   │  │  TRANSFORMER [C] │  │  LOADER [C]      │
+    │                  │  │                  │  │                  │
+    │ Depends on:      │  │ Depends on:      │  │ Depends on:      │
+    │ • ZCL_ETL_LOGGER │  │ • ZCL_ETL_LOGGER │  │ • ZCL_ETL_LOGGER │
+    │   ───────────────┤  │   ───────────────┤  │   ───────────────┤
+    │ • ZETL_TYPES ··· │  │ • ZETL_TYPES ··· │  │ • ZETL_TYPES ··· │
+    │ • ZSALES_RAW  ─┐ │  │ • CONSTANTS  ─── │  │ • ZSALES_        │
+    └────────────────┼─┘  └──────────────────┘  │   ANALYTICS ───┐ │
+                     │                           └────────────────┼─┘
+                     │                                            │
+                     │ reads from                    writes to    │
+                     ▼                                            ▼
+              ┌──────────────┐                        ┌──────────────┐
+              │ ZSALES_RAW   │                        │  ZSALES_     │
+              │   [T]        │                        │  ANALYTICS   │
+              └──────────────┘                        │   [T]        │
+                                                      └──────────────┘
+
+                                  │
+                                  │ all injected into
+                                  ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                  LAYER 7: ORCHESTRATION LAYER                      │
+└────────────────────────────────────────────────────────────────────┘
+
+                         ┌──────────────────────┐
+                         │ ZCL_ETL_             │
+                         │  ORCHESTRATOR [C]    │
+                         │                      │
+                         │ Creates & Manages:   │
+                         │ ┌────────────────────┤
+                         │ │ ZCL_ETL_LOGGER     │
+                         │ │ ZCL_ETL_EXTRACTOR  │
+                         │ │ ZCL_ETL_TRANSFORMER│
+                         │ │ ZCL_ETL_LOADER     │
+                         │ └────────────────────┤
+                         │                      │
+                         │ Coordinates:         │
+                         │ - ETL Flow           │
+                         │ - Error Handling     │
+                         │ - Logging            │
+                         │ - Statistics         │
+                         └──────────┬───────────┘
+                                    │
+                                    │ instantiated by
+                                    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                    LAYER 8: PRESENTATION LAYER                     │
+└────────────────────────────────────────────────────────────────────┘
+
+                         ┌──────────────────────┐
+                         │ Z_SALES_ETL_MAIN [X] │
+                         │                      │
+                         │ Components:          │
+                         │ - Selection Screen   │
+                         │ - Parameter Valid.   │
+                         │ - Display Output     │
+                         │                      │
+                         │ Uses:                │
+                         │ • ZCL_ETL_           │
+                         │   ORCHESTRATOR ──────┤
+                         │ • ZETL_TOP [#] ······│
+                         │ • ZETL_MACROS [#] ···│
+                         └──────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════
+                        DEPENDENCY SUMMARY
+═══════════════════════════════════════════════════════════════════════
+
+┌─────────────────────┬──────────────────────────────────────────────┐
+│ Component           │ Depends On                                   │
+├─────────────────────┼──────────────────────────────────────────────┤
+│ Z_SALES_ETL_MAIN    │ ZCL_ETL_ORCHESTRATOR, ZETL_TOP, ZETL_MACROS │
+│ ZCL_ETL_ORCHESTRATOR│ All ETL Components, ZCL_ETL_LOGGER          │
+│ ZCL_ETL_EXTRACTOR   │ ZCL_ETL_LOGGER, ZETL_TYPES, ZSALES_RAW     │
+│ ZCL_ETL_TRANSFORMER │ ZCL_ETL_LOGGER, ZETL_TYPES, ZCL_CONSTANTS  │
+│ ZCL_ETL_LOADER      │ ZCL_ETL_LOGGER, ZETL_TYPES, ZSALES_ANALYTICS│
+│ ZCL_ETL_LOGGER      │ ZIF_ETL_LOGGER, ZETL_TYPES, ZETL_LOG       │
+│ ZCL_ETL_CONSTANTS   │ (None - Foundation)                         │
+│ ZETL_TYPES          │ (None - Foundation)                         │
+│ ZIF_ETL_LOGGER      │ (None - Interface)                          │
+│ ZIF_ETL_COMPONENT   │ ZCX_ETL_ERROR                               │
+│ ZCX_ETL_ERROR       │ CX_STATIC_CHECK (SAP Base)                  │
+└─────────────────────┴──────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════
+                     INSTALLATION ORDER (Bottom-Up)
+═══════════════════════════════════════════════════════════════════════
+
+ 1. Package: $ZETL
+ 2. Tables: ZSALES_RAW, ZSALES_ANALYTICS, ZETL_LOG
+ 3. Types: ZETL_TYPES
+ 4. Interfaces: ZIF_ETL_LOGGER, ZIF_ETL_COMPONENT
+ 5. Exception: ZCX_ETL_ERROR
+ 6. Constants: ZCL_ETL_CONSTANTS
+ 7. Includes: ZETL_TOP, ZETL_MACROS
+ 8. Logger: ZCL_ETL_LOGGER
+ 9. Components: ZCL_ETL_EXTRACTOR, ZCL_ETL_TRANSFORMER, ZCL_ETL_LOADER
+10. Orchestrator: ZCL_ETL_ORCHESTRATOR
+11. Program: Z_SALES_ETL_MAIN
+
+
+═══════════════════════════════════════════════════════════════════════
+                          DATA FLOW
+═══════════════════════════════════════════════════════════════════════
+
+User Input → Z_SALES_ETL_MAIN
+                │
+                ▼
+         ZCL_ETL_ORCHESTRATOR
+                │
+    ┌───────────┼───────────┐
+    │           │           │
+    ▼           ▼           ▼
+EXTRACTOR  TRANSFORMER   LOADER
+    │           │           │
+    ▼           │           ▼
+ZSALES_RAW      │     ZSALES_ANALYTICS
+                │
+                ▼
+         (transforms data)
+                │
+                └──────> ZETL_LOG
+                        (all steps log here)
+
+
+═══════════════════════════════════════════════════════════════════════
