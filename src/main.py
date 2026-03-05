@@ -1,253 +1,326 @@
 """
-Sales ETL Main Program with CLI Arguments
+Sales ETL Main Program
 Migrated from ABAP Z_SALES_ETL_MAIN
+Implements CLI argument parsing, datetime handling, and logging framework
 """
 import argparse
 import sys
 from datetime import datetime, timedelta
-from typing import Optional
+from pathlib import Path
 
 from pyspark.sql import SparkSession
 
-from src.config import ETLConfig
 from src.orchestrator import ETLOrchestrator
+from src.config import load_config
 from src.utils.logger import setup_logger
 
-
-def parse_arguments() -> argparse.Namespace:
+def parse_arguments():
     """
-    Parse command line arguments.
-    Replaces ABAP SELECTION-SCREEN.
+    Parse command-line arguments
+    Replaces ABAP SELECTION-SCREEN
     """
     parser = argparse.ArgumentParser(
         description='Sales Data ETL Process',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run with default dates (last 7 days)
-  python src/main.py
-  
-  # Run with specific date range
   python src/main.py --from-date 2024-01-01 --to-date 2024-01-31
-  
-  # Run in production mode
-  python src/main.py --no-test-mode
-  
-  # Run with custom config
-  python src/main.py --config custom_config.yaml
+  python src/main.py --days-back 7 --test-mode
+  python src/main.py --config config/custom.yaml
         """
     )
     
-    # Date range parameters (replaces p_fdate, p_tdate)
-    today = datetime.now().date()
-    default_from = today - timedelta(days=7)
-    
-    parser.add_argument(
+    # Date range parameters
+    date_group = parser.add_mutually_exclusive_group()
+    date_group.add_argument(
         '--from-date',
         type=str,
-        default=default_from.strftime('%Y-%m-%d'),
-        help='From date (YYYY-MM-DD format). Default: 7 days ago'
+        help='Start date (YYYY-MM-DD format)',
+        metavar='DATE'
     )
     
     parser.add_argument(
         '--to-date',
         type=str,
-        default=today.strftime('%Y-%m-%d'),
-        help='To date (YYYY-MM-DD format). Default: today'
+        default=datetime.now().strftime('%Y-%m-%d'),
+        help='End date (YYYY-MM-DD format, default: today)',
+        metavar='DATE'
     )
     
-    # Test mode parameter (replaces p_test)
+    date_group.add_argument(
+        '--days-back',
+        type=int,
+        default=7,
+        help='Number of days to look back from today (default: 7)',
+        metavar='N'
+    )
+    
+    # Processing options
     parser.add_argument(
         '--test-mode',
         action='store_true',
         default=True,
-        help='Run in test mode (no data committed). Default: True'
+        help='Run in test mode (no data commit, default: True)'
     )
     
     parser.add_argument(
-        '--no-test-mode',
-        dest='test_mode',
-        action='store_false',
-        help='Run in production mode (data will be committed)'
+        '--production',
+        action='store_true',
+        help='Run in production mode (commits data)'
     )
     
-    # Configuration file
+    # Configuration
     parser.add_argument(
         '--config',
         type=str,
         default='config.yaml',
-        help='Path to configuration file. Default: config.yaml'
+        help='Path to configuration file (default: config.yaml)',
+        metavar='PATH'
     )
     
-    # Spark master
+    # Spark options
     parser.add_argument(
         '--master',
         type=str,
         default='local[*]',
-        help='Spark master URL. Default: local[*]'
+        help='Spark master URL (default: local[*])',
+        metavar='URL'
     )
     
-    return parser.parse_args()
+    parser.add_argument(
+        '--app-name',
+        type=str,
+        default='SalesETL',
+        help='Spark application name (default: SalesETL)',
+        metavar='NAME'
+    )
+    
+    # Logging
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        default='INFO',
+        help='Logging level (default: INFO)'
+    )
+    
+    parser.add_argument(
+        '--log-file',
+        type=str,
+        help='Log file path (optional)',
+        metavar='PATH'
+    )
+    
+    args = parser.parse_args()
+    
+    # Resolve test mode
+    if args.production:
+        args.test_mode = False
+    
+    # Calculate from_date if using days_back
+    if not args.from_date:
+        from_date = datetime.now() - timedelta(days=args.days_back)
+        args.from_date = from_date.strftime('%Y-%m-%d')
+    
+    return args
 
 
-def validate_dates(from_date: datetime, to_date: datetime) -> None:
+def validate_dates(from_date_str: str, to_date_str: str) -> tuple:
     """
-    Validate date parameters.
-    Replaces ABAP AT SELECTION-SCREEN validation.
+    Validate and parse date strings
+    Replaces ABAP AT SELECTION-SCREEN validation
     
     Args:
-        from_date: Start date
-        to_date: End date
+        from_date_str: Start date string
+        to_date_str: End date string
+        
+    Returns:
+        Tuple of (from_date, to_date) as datetime objects
         
     Raises:
-        ValueError: If validation fails
+        ValueError: If dates are invalid
     """
-    today = datetime.now().date()
+    try:
+        from_date = datetime.strptime(from_date_str, '%Y-%m-%d')
+        to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
+    except ValueError as e:
+        raise ValueError(f"Invalid date format. Use YYYY-MM-DD. Error: {e}")
     
-    # From date cannot be later than To date
-    if from_date.date() > to_date.date():
+    # Validation rules
+    if from_date > to_date:
         raise ValueError("From Date cannot be later than To Date")
     
-    # To date cannot be in the future
-    if to_date.date() > today:
+    if to_date > datetime.now():
         raise ValueError("To Date cannot be in the future")
-
-
-def parse_date(date_str: str) -> datetime:
-    """
-    Parse date string to datetime object.
-    Replaces ABAP date handling.
     
-    Args:
-        date_str: Date string in YYYY-MM-DD format
-        
-    Returns:
-        datetime object
-        
-    Raises:
-        ValueError: If date format is invalid
-    """
-    try:
-        return datetime.strptime(date_str, '%Y-%m-%d')
-    except ValueError:
-        raise ValueError(f"Invalid date format: {date_str}. Expected YYYY-MM-DD")
+    # Check reasonable date range (e.g., not more than 1 year)
+    date_diff = (to_date - from_date).days
+    if date_diff > 365:
+        raise ValueError("Date range cannot exceed 365 days")
+    
+    return from_date, to_date
 
 
-def display_header() -> None:
-    """
-    Display program header.
-    Replaces ABAP WRITE statements.
-    """
+def display_header(logger):
+    """Display ETL process header - replaces ABAP WRITE statements"""
     header = """
-    **********************************************************************
-    *                                                                    *
-    *                  Sales Data ETL Process                            *
-    *                                                                    *
-    **********************************************************************
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║                     Sales Data ETL Process                           ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
     """
-    print(header)
+    logger.info(header)
 
 
-def display_parameters(from_date: datetime, to_date: datetime, test_mode: bool) -> None:
-    """
-    Display processing parameters.
-    Replaces ABAP WRITE statements for parameters.
+def display_parameters(logger, args, from_date, to_date):
+    """Display processing parameters - replaces ABAP WRITE statements"""
+    logger.info("=" * 70)
+    logger.info("ETL PARAMETERS")
+    logger.info("=" * 70)
+    logger.info(f"Processing Date Range: {from_date.strftime('%Y-%m-%d')} to {to_date.strftime('%Y-%m-%d')}")
+    logger.info(f"Days in Range: {(to_date - from_date).days + 1}")
+    logger.info(f"Test Mode: {'Yes' if args.test_mode else 'No'}")
+    logger.info(f"Configuration File: {args.config}")
+    logger.info(f"Spark Master: {args.master}")
+    logger.info("=" * 70)
+
+
+def display_summary(logger, orchestrator, success: bool, start_time: datetime):
+    """Display ETL summary - replaces ABAP display_summary method"""
+    end_time = datetime.now()
+    duration = (end_time - start_time).total_seconds()
     
-    Args:
-        from_date: Start date
-        to_date: End date
-        test_mode: Whether running in test mode
-    """
-    print(f"\nProcessing Date Range: {from_date.strftime('%Y-%m-%d')} to {to_date.strftime('%Y-%m-%d')}")
-    print(f"Test Mode: {'Yes' if test_mode else 'No'}\n")
-
-
-def main() -> int:
-    """
-    Main program execution.
-    Replaces ABAP START-OF-SELECTION.
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("ETL PROCESS SUMMARY")
+    logger.info("=" * 70)
+    logger.info(f"ETL Run ID: {orchestrator.etl_run_id}")
+    logger.info(f"Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Duration: {duration:.2f} seconds ({duration/60:.2f} minutes)")
+    logger.info(f"Status: {'SUCCESS' if success else 'FAILED'}")
     
-    Returns:
-        Exit code (0 for success, 1 for failure)
+    # Display statistics if available
+    stats = orchestrator.get_statistics()
+    if stats:
+        logger.info("-" * 70)
+        logger.info("STATISTICS")
+        logger.info("-" * 70)
+        logger.info(f"Records Extracted: {stats.get('extracted', 0)}")
+        logger.info(f"Records Transformed: {stats.get('transformed', 0)}")
+        logger.info(f"Records Loaded: {stats.get('loaded', 0)}")
+        logger.info(f"Errors: {stats.get('errors', 0)}")
+        logger.info(f"Warnings: {stats.get('warnings', 0)}")
+    
+    logger.info("=" * 70)
+
+
+def create_spark_session(args) -> SparkSession:
+    """Create and configure Spark session"""
+    return (SparkSession.builder
+            .appName(args.app_name)
+            .master(args.master)
+            .config("spark.sql.adaptive.enabled", "true")
+            .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+            .config("spark.sql.session.timeZone", "UTC")
+            .getOrCreate())
+
+
+def main():
     """
-    # Parse command line arguments
+    Main ETL execution function
+    Replaces ABAP START-OF-SELECTION and END-OF-SELECTION
+    """
+    # Parse command-line arguments
     args = parse_arguments()
     
-    # Setup logger
-    logger = setup_logger('sales_etl_main')
+    # Setup logger - replaces ABAP WRITE statements
+    logger = setup_logger(
+        name='sales_etl_main',
+        level=args.log_level,
+        log_file=args.log_file
+    )
+    
+    # Display header
+    display_header(logger)
     
     try:
-        # Display header
-        display_header()
-        
-        # Parse dates
-        from_date = parse_date(args.from_date)
-        to_date = parse_date(args.to_date)
-        
         # Validate dates
-        validate_dates(from_date, to_date)
+        from_date, to_date = validate_dates(args.from_date, args.to_date)
         
         # Display parameters
-        display_parameters(from_date, to_date, args.test_mode)
+        display_parameters(logger, args, from_date, to_date)
         
         # Load configuration
-        config = ETLConfig.from_yaml(args.config)
+        config = load_config(args.config)
+        logger.info(f"Configuration loaded from: {args.config}")
         
-        # Initialize Spark session
-        spark = SparkSession.builder \
-            .appName("Sales ETL Process") \
-            .master(args.master) \
-            .config("spark.sql.session.timeZone", "UTC") \
-            .getOrCreate()
+        # Create Spark session
+        logger.info("Initializing Spark session...")
+        spark = create_spark_session(args)
+        logger.info(f"Spark session created: {spark.version}")
         
-        try:
-            # Create orchestrator instance
-            orchestrator = ETLOrchestrator(spark, config, logger)
+        # Record start time
+        start_time = datetime.now()
+        
+        # Create orchestrator instance
+        logger.info("Creating ETL orchestrator...")
+        orchestrator = ETLOrchestrator(
+            spark=spark,
+            config=config,
+            test_mode=args.test_mode
+        )
+        
+        logger.info(f"ETL Run ID: {orchestrator.etl_run_id}")
+        logger.info("")
+        
+        # Run ETL process
+        logger.info("Starting ETL process...")
+        success = orchestrator.run_etl(
+            from_date=from_date,
+            to_date=to_date
+        )
+        
+        # Display summary
+        logger.info("")
+        display_summary(logger, orchestrator, success, start_time)
+        
+        # Final status
+        logger.info("")
+        if success:
+            logger.info("*** ETL Process Completed Successfully ***")
             
-            # Display ETL run ID
-            print(f"ETL Run ID: {orchestrator.get_etl_run_id()}\n")
-            
-            # Run ETL process
-            success = orchestrator.run_etl(from_date, to_date)
-            
-            # Display results
-            print("\n" + "=" * 70 + "\n")
-            
-            if success:
-                print("*** ETL Process Completed Successfully ***\n")
-                
-                # Display summary
-                orchestrator.display_summary()
-                
-                # Handle test mode
-                if args.test_mode:
-                    print("\nTest mode - No data committed to database")
-                    logger.info("Test mode enabled - data not persisted")
-                else:
-                    print("\nData committed to database")
-                    logger.info("Production mode - data persisted successfully")
-                
-                return 0
+            if args.test_mode:
+                logger.info("Test mode - No data committed to database")
             else:
-                print("*** ETL Process Failed ***")
-                print("Please check the error logs for details.")
-                logger.error("ETL process failed")
-                return 1
-                
-        finally:
-            # Stop Spark session
-            spark.stop()
+                logger.info("Data committed to database")
             
-    except ValueError as ve:
-        logger.error(f"Validation error: {str(ve)}")
-        print(f"\n*** Validation Error ***\n{str(ve)}")
-        return 1
+            return_code = 0
+        else:
+            logger.error("*** ETL Process Failed ***")
+            logger.error("Please check the error logs for details.")
+            return_code = 1
         
-    except Exception as ex:
-        logger.error(f"Fatal error: {str(ex)}", exc_info=True)
-        print(f"\n*** Fatal Error ***\nError: {str(ex)}")
-        return 1
+        # Stop Spark session
+        spark.stop()
+        logger.info("Spark session stopped")
+        
+        sys.exit(return_code)
+        
+    except ValueError as ve:
+        logger.error(f"Validation Error: {ve}")
+        sys.exit(1)
+        
+    except FileNotFoundError as fe:
+        logger.error(f"Configuration Error: {fe}")
+        sys.exit(1)
+        
+    except Exception as e:
+        logger.error(f"*** Fatal Error ***")
+        logger.error(f"Error: {str(e)}", exc_info=True)
+        sys.exit(1)
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    main()
