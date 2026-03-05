@@ -1,165 +1,138 @@
 """
-ETL Extractor Module - Extracts raw sales data
-Converts ABAP ZCL_ETL_EXTRACTOR to PySpark operations
+Data extraction module for Sales ETL Pipeline.
+Extracts raw sales data from source systems.
 """
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType, TimestampType
-from pyspark.sql.functions import current_timestamp, lit
-from typing import Tuple, Optional
-from datetime import date
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType, 
+    DecimalType, DateType, TimestampType
+)
+from datetime import datetime
+from typing import Optional
+import logging
 
 from src.logger import ETLLogger
 
 
-class ETLExtractor:
-    """
-    Extracts raw sales data from source (ABAP ZCL_ETL_EXTRACTOR equivalent).
-    """
-
+class SalesExtractor:
+    """Extracts raw sales data from source tables."""
+    
     def __init__(self, spark: SparkSession, logger: ETLLogger):
         """
-        Initialize extractor.
-
+        Initialize the extractor.
+        
         Args:
             spark: Active SparkSession
             logger: ETL logger instance
         """
         self.spark = spark
         self.logger = logger
-
-    @staticmethod
-    def get_raw_sales_schema() -> StructType:
-        """
-        Define schema for raw sales data (ZSALES_RAW table mapping).
-
-        Returns:
-            StructType schema for raw sales
-        """
+        self.schema = self._define_schema()
+    
+    def _define_schema(self) -> StructType:
+        """Define schema for raw sales data."""
         return StructType([
-            StructField("trans_id", StringType(), nullable=False),
-            StructField("trans_date", DateType(), nullable=False),
-            StructField("customer_id", StringType(), nullable=False),
-            StructField("product_id", StringType(), nullable=False),
-            StructField("quantity", IntegerType(), nullable=False),
-            StructField("unit_price", DecimalType(16, 2), nullable=False),
-            StructField("currency", StringType(), nullable=False),
-            StructField("sales_rep", StringType(), nullable=True),
-            StructField("region", StringType(), nullable=True),
-            StructField("status", StringType(), nullable=False),
-            StructField("created_at", TimestampType(), nullable=True),
-            StructField("created_by", StringType(), nullable=True)
+            StructField("trans_id", StringType(), False),
+            StructField("trans_date", DateType(), False),
+            StructField("customer_id", StringType(), False),
+            StructField("product_id", StringType(), False),
+            StructField("quantity", IntegerType(), False),
+            StructField("unit_price", DecimalType(16, 2), False),
+            StructField("currency", StringType(), False),
+            StructField("sales_rep", StringType(), True),
+            StructField("region", StringType(), True),
+            StructField("status", StringType(), False),
+            StructField("created_at", TimestampType(), True),
+            StructField("created_by", StringType(), True)
         ])
-
+    
     def extract_data(
-        self,
-        from_date: date,
-        to_date: date,
-        source_path: Optional[str] = None
-    ) -> Tuple[bool, Optional[DataFrame]]:
+        self, 
+        source_path: str,
+        from_date: str,
+        to_date: str,
+        file_format: str = "parquet"
+    ) -> Optional[DataFrame]:
         """
         Extract raw sales data from source.
-
+        
         Args:
-            from_date: Start date for extraction
-            to_date: End date for extraction
-            source_path: Optional path to source data (Delta/Parquet/CSV)
-
+            source_path: Path to source data
+            from_date: Start date (YYYY-MM-DD)
+            to_date: End date (YYYY-MM-DD)
+            file_format: Source file format (parquet, csv, delta)
+        
         Returns:
-            Tuple of (success_flag, extracted_dataframe)
+            DataFrame containing raw sales data or None on failure
         """
         try:
             self.logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_SUCCESS,
+                step="EXTRACT",
+                status="S",
                 message=f"Starting extraction from {from_date} to {to_date}"
             )
-
-            # Read from source (Delta Lake, Parquet, etc.)
-            if source_path:
-                df = self._read_from_source(source_path, from_date, to_date)
+            
+            # Read data from source
+            if file_format == "parquet":
+                df = self.spark.read.schema(self.schema).parquet(source_path)
+            elif file_format == "csv":
+                df = self.spark.read.schema(self.schema).option("header", "true").csv(source_path)
+            elif file_format == "delta":
+                df = self.spark.read.format("delta").schema(self.schema).load(source_path)
             else:
-                # Generate sample data for demonstration
-                df = self._generate_sample_data()
-
+                raise ValueError(f"Unsupported file format: {file_format}")
+            
             # Filter by date range and status
-            df = df.filter(
-                (df.trans_date >= lit(from_date)) &
-                (df.trans_date <= lit(to_date)) &
-                (df.status == lit(ETLLogger.STATUS_NEW))
+            df_filtered = df.filter(
+                (df.trans_date >= from_date) & 
+                (df.trans_date <= to_date) &
+                (df.status == "N")
             )
-
-            record_count = df.count()
-
+            
+            record_count = df_filtered.count()
+            
             self.logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_SUCCESS,
+                step="EXTRACT",
+                status="S",
                 records_processed=record_count,
                 records_success=record_count,
                 message=f"Extracted {record_count} records successfully"
             )
-
-            return True, df
-
+            
+            return df_filtered
+            
         except Exception as e:
             self.logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_ERROR,
+                step="EXTRACT",
+                status="E",
                 message=f"Extraction failed: {str(e)}"
             )
-            return False, None
-
-    def _read_from_source(
-        self,
-        source_path: str,
-        from_date: date,
-        to_date: date
-    ) -> DataFrame:
+            logging.error(f"Extraction error: {str(e)}", exc_info=True)
+            return None
+    
+    def create_sample_data(self) -> DataFrame:
         """
-        Read data from actual source (Delta, Parquet, etc.).
-
-        Args:
-            source_path: Path to source data
-            from_date: Start date filter
-            to_date: End date filter
-
-        Returns:
-            DataFrame with extracted data
-        """
-        # Detect format from path
-        if source_path.endswith('.delta') or '/delta/' in source_path:
-            df = self.spark.read.format("delta").load(source_path)
-        elif source_path.endswith('.parquet'):
-            df = self.spark.read.parquet(source_path)
-        elif source_path.endswith('.csv'):
-            df = self.spark.read.csv(source_path, header=True, schema=self.get_raw_sales_schema())
-        else:
-            # Default to Delta
-            df = self.spark.read.format("delta").load(source_path)
-
-        return df
-
-    def _generate_sample_data(self) -> DataFrame:
-        """
-        Generate sample data for demonstration (matching ABAP sample data).
-
+        Create sample data for testing.
+        
         Returns:
             DataFrame with sample sales data
         """
-        from datetime import datetime
-        from decimal import Decimal
-
+        from datetime import date
+        
         sample_data = [
-            ("T000001", date.today(), "CUST001", "PROD001", 10, Decimal("99.99"),
-             "USD", "John Doe", "NORTH", "N", datetime.now(), "system"),
-            ("T000002", date.today(), "CUST002", "PROD002", 5, Decimal("149.99"),
-             "USD", "Jane Smith", "SOUTH", "N", datetime.now(), "system"),
-            ("T000003", date.today(), "CUST003", "PROD001", 20, Decimal("99.99"),
-             "USD", "John Doe", "EAST", "N", datetime.now(), "system"),
-            ("T000004", date.today(), "CUST001", "PROD003", 3, Decimal("299.99"),
-             "USD", "Bob Wilson", "WEST", "N", datetime.now(), "system"),
-            ("T000005", date.today(), "CUST004", "PROD002", 15, Decimal("149.99"),
-             "USD", "Jane Smith", "SOUTH", "N", datetime.now(), "system"),
+            ("T000001", date.today(), "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N", datetime.now(), "SYSTEM"),
+            ("T000002", date.today(), "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N", datetime.now(), "SYSTEM"),
+            ("T000003", date.today(), "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N", datetime.now(), "SYSTEM"),
+            ("T000004", date.today(), "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N", datetime.now(), "SYSTEM"),
+            ("T000005", date.today(), "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N", datetime.now(), "SYSTEM"),
         ]
-
-        return self.spark.createDataFrame(sample_data, schema=self.get_raw_sales_schema())
+        
+        df = self.spark.createDataFrame(sample_data, schema=self.schema)
+        
+        self.logger.log_message(
+            step="EXTRACT",
+            status="I",
+            message="Created sample data for testing"
+        )
+        
+        return df
