@@ -1,80 +1,123 @@
-# PySpark ETL Configuration for Sales Data Processing
-
-# Spark Configuration
-spark:
-  app_name: "SalesETLTransformer"
-  master: "local[*]"
-  log_level: "WARN"
-  
-# Business Rules - Discount Thresholds
-business_rules:
-  discount:
-    quantity_tier1: 10
-    quantity_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
-  
-  # Tax Rate
-  tax_rate: 0.08
-  
-  # Cost Ratio (for profit margin calculation)
-  cost_ratio: 0.60
-  
-  # Category Thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
 # ETL Configuration
+# Replaces ABAP ZCL_ETL_CONSTANTS and etl_config.json
+
 etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-
-# Status Codes
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
-
-# Process Steps
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# Categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-
-# ID Prefixes
-id_prefixes:
-  etl_run: "ETL"
-  log_id: "LOG"
-  analytics_id: "ANL"
-
-# Data Sources (example paths - adjust for your environment)
-data_sources:
-  raw_sales_path: "data/raw/sales"
-  analytics_output_path: "data/analytics/sales"
-  log_output_path: "data/logs/etl"
+  # Process configuration
+  process:
+    batch_size: 1000
+    commit_interval: 500
+    parallel_jobs: 4
+    timeout_seconds: 3600
   
-# File Formats
-file_formats:
-  input_format: "parquet"  # or "csv", "json"
-  output_format: "parquet"
+  # Retry configuration
+  retry:
+    max_attempts: 3
+    initial_delay_seconds: 1.0
+    backoff_factor: 2.0
+    retryable_errors:
+      - "ConnectionError"
+      - "TimeoutError"
+      - "TransientError"
   
-# Logging
+  # Business rules - Discount thresholds
+  business_rules:
+    discount:
+      tier1:
+        quantity_threshold: 10
+        discount_rate: 0.05  # 5%
+      tier2:
+        quantity_threshold: 15
+        discount_rate: 0.10  # 10%
+    
+    # Tax rate
+    tax:
+      rate: 0.08  # 8%
+    
+    # Cost ratio
+    cost:
+      ratio: 0.60  # 60%
+    
+    # Category thresholds
+    category:
+      high_threshold: 2000.00
+      medium_threshold: 500.00
+
+  # Status codes
+  status:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+    info: "I"
+
+  # Process steps
+  steps:
+    init: "INIT"
+    extract: "EXTRACT"
+    transform: "TRANSFORM"
+    load: "LOAD"
+    validate: "VALIDATE"
+    complete: "COMPLETE"
+    error: "ERROR"
+
+  # Categories
+  categories:
+    high: "HIGH"
+    medium: "MEDIUM"
+    low: "LOW"
+
+# Logging configuration
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    console:
+      enabled: true
+      level: "INFO"
+    file:
+      enabled: true
+      level: "DEBUG"
+      filename: "logs/etl_{date}.log"
+      max_bytes: 10485760  # 10MB
+      backup_count: 5
+
+# Database configuration (example)
+database:
+  source:
+    type: "spark"
+    format: "delta"
+    path: "data/raw/sales_raw"
+  
+  target:
+    type: "spark"
+    format: "delta"
+    path: "data/processed/sales_analytics"
+  
+  log:
+    type: "spark"
+    format: "delta"
+    path: "data/logs/etl_log"
+
+# Spark configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.executor.memory: "4g"
+    spark.driver.memory: "2g"
+
+# Message templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
