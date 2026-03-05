@@ -1,71 +1,65 @@
 # ETL Configuration File
-# This file contains all configurable parameters for the Sales ETL System
+# Sales Data ETL System Configuration
 
-# Processing Configuration
+# Core ETL Settings
 batch_size: 1000
 commit_interval: 500
 retry_attempts: 3
 timeout_seconds: 3600
-
-# Spark Configuration
-spark_app_name: "SalesETL"
-spark_master: "local[*]"
-
-spark_config:
-  spark.sql.shuffle.partitions: "200"
-  spark.sql.adaptive.enabled: "true"
-  spark.sql.adaptive.coalescePartitions.enabled: "true"
-  spark.sql.adaptive.advisoryPartitionSizeInBytes: "64MB"
-  spark.sql.files.maxPartitionBytes: "128MB"
-  spark.serializer: "org.apache.spark.serializer.KryoSerializer"
-  spark.sql.execution.arrow.pyspark.enabled: "true"
-
-# Data Paths
-input_path: "/data/input/sales_raw"
-output_path: "/data/output/sales_analytics"
-log_path: "/data/logs/etl"
-
-# Database Configuration (optional - for JDBC connections)
-# db_url: "jdbc:postgresql://localhost:5432/etldb"
-# db_user: "etl_user"
-# db_password: "etl_password"
-db_table_raw: "zsales_raw"
-db_table_analytics: "zsales_analytics"
-db_table_log: "zetl_log"
-
-# Business Rules Override (optional)
-rules_override:
-  # discount_qty_tier1: 10
-  # discount_qty_tier2: 15
-  # discount_rate_tier1: 0.05
-  # discount_rate_tier2: 0.10
-  # tax_rate: 0.08
-  # cost_ratio: 0.60
-  # category_high_threshold: 2000.00
-  # category_medium_threshold: 500.00
+parallel_jobs: 4
 
 # Logging Configuration
-log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+log_level: INFO
+log_file: logs/etl.log
 
-# File Format Configuration
-input_format: "parquet"  # parquet, csv, json
-output_format: "parquet"
+# Data Paths
+source_path: data/input
+target_path: data/output
 
-# CSV specific options (if using CSV format)
-csv_options:
-  header: true
-  delimiter: ","
-  quote: "\""
-  escape: "\\"
-  inferSchema: true
+# Business Rules Configuration
+business_rules:
+  # Discount thresholds and rates
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
+  
+  # Tax rate
+  tax_rate: 0.08
+  
+  # Cost calculation
+  cost_ratio: 0.60
+  
+  # Category thresholds
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
-# Performance Tuning
-enable_cache: true
-enable_checkpoint: false
-checkpoint_dir: "/data/checkpoint"
+# Spark Configuration (for PySpark ETL)
+spark:
+  app_name: SalesETL
+  master: local[*]
+  driver_memory: 4g
+  executor_memory: 4g
+  executor_cores: 2
+  
+  # Spark SQL settings
+  sql:
+    shuffle_partitions: 200
+    adaptive_enabled: true
+    
+  # Spark configurations
+  configs:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.serializer: org.apache.spark.serializer.KryoSerializer
 
-# Data Quality
-enable_validation: true
-validation_threshold: 0.95  # Minimum success rate
-fail_on_validation_error: false
+# Data Quality Checks
+data_quality:
+  enable_validation: true
+  max_error_percentage: 5.0
+  required_fields:
+    - trans_id
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
