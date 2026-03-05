@@ -1,50 +1,65 @@
 """
-Data Extraction Module
-Extracts raw sales data from source systems.
+ETL Extract Module - Sales Data Extraction from Source
+Extracts raw sales data from source database tables
 """
 
-from datetime import datetime
-from typing import Optional
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
+from datetime import datetime
+from typing import Tuple
+import logging
 
 from src.logger import ETLLogger
-from src.exceptions import ExtractError
+from src.config import Config
 
 
-class Extractor:
-    """
-    Handles extraction of raw sales data from source systems.
+class SalesExtractor:
+    """Extract raw sales data from source tables"""
     
-    Attributes:
-        spark: SparkSession instance
-        logger: ETL logger instance
-    """
-    
-    def __init__(self, spark: SparkSession, logger: ETLLogger):
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: Config):
         """
-        Initialize the extractor.
+        Initialize extractor
         
         Args:
-            spark: Active SparkSession
+            spark: SparkSession instance
             logger: ETL logger instance
+            config: Configuration object
         """
         self.spark = spark
         self.logger = logger
-    
-    def extract_data(self, from_date: str, to_date: str) -> DataFrame:
+        self.config = config
+        self.log = logging.getLogger(self.__class__.__name__)
+        
+    def get_raw_sales_schema(self) -> StructType:
         """
-        Extract sales data for the given date range.
+        Define schema for raw sales data
+        
+        Returns:
+            StructType schema for raw sales
+        """
+        return StructType([
+            StructField("trans_id", StringType(), False),
+            StructField("trans_date", DateType(), False),
+            StructField("customer_id", StringType(), False),
+            StructField("product_id", StringType(), False),
+            StructField("quantity", IntegerType(), False),
+            StructField("unit_price", DecimalType(16, 2), False),
+            StructField("currency", StringType(), False),
+            StructField("sales_rep", StringType(), True),
+            StructField("region", StringType(), True),
+            StructField("status", StringType(), False)
+        ])
+    
+    def extract_data(self, from_date: str, to_date: str) -> Tuple[DataFrame, bool]:
+        """
+        Extract raw sales data from source
         
         Args:
             from_date: Start date (YYYY-MM-DD)
             to_date: End date (YYYY-MM-DD)
             
         Returns:
-            DataFrame with raw sales data
-            
-        Raises:
-            ExtractError: If extraction fails
+            Tuple of (DataFrame with extracted data, success flag)
         """
         try:
             self.logger.log_message(
@@ -53,18 +68,22 @@ class Extractor:
                 message=f"Starting extraction from {from_date} to {to_date}"
             )
             
-            # Define schema for raw sales data
-            schema = self._get_raw_sales_schema()
+            # Read from source (adjust based on actual source)
+            if self.config.source_type == "jdbc":
+                df = self._extract_from_jdbc(from_date, to_date)
+            elif self.config.source_type == "parquet":
+                df = self._extract_from_parquet(from_date, to_date)
+            elif self.config.source_type == "csv":
+                df = self._extract_from_csv(from_date, to_date)
+            else:
+                # Demo mode - generate sample data
+                df = self._generate_sample_data()
             
-            # In production, this would query from a database or file system
-            # For demonstration, create sample data
-            sample_data = self._create_sample_data()
-            
-            df = self.spark.createDataFrame(sample_data, schema=schema)
-            
-            # Filter by date range
+            # Filter by date range and status
             df = df.filter(
-                (df.trans_date >= from_date) & (df.trans_date <= to_date)
+                (df.trans_date >= from_date) & 
+                (df.trans_date <= to_date) &
+                (df.status == 'N')
             )
             
             record_count = df.count()
@@ -77,55 +96,60 @@ class Extractor:
                 message=f"Extracted {record_count} records successfully"
             )
             
-            return df
+            return df, True
             
         except Exception as e:
+            self.log.error(f"Extraction failed: {str(e)}", exc_info=True)
             self.logger.log_message(
                 step="EXTRACT",
                 status="E",
                 message=f"Extraction failed: {str(e)}"
             )
-            raise ExtractError(
-                error_text=f"Failed to extract data: {str(e)}",
-                error_step="EXTRACT"
-            ) from e
+            return self.spark.createDataFrame([], self.get_raw_sales_schema()), False
     
-    def _get_raw_sales_schema(self) -> StructType:
+    def _extract_from_jdbc(self, from_date: str, to_date: str) -> DataFrame:
+        """Extract from JDBC source"""
+        query = f"""
+        (SELECT trans_id, trans_date, customer_id, product_id, quantity, 
+                unit_price, currency, sales_rep, region, status
+         FROM {self.config.source_table}
+         WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
+         AND status = 'N') as sales_data
         """
-        Get the schema for raw sales data.
         
-        Returns:
-            StructType schema definition
-        """
-        return StructType([
-            StructField("trans_id", StringType(), nullable=False),
-            StructField("trans_date", DateType(), nullable=False),
-            StructField("customer_id", StringType(), nullable=False),
-            StructField("product_id", StringType(), nullable=False),
-            StructField("quantity", IntegerType(), nullable=False),
-            StructField("unit_price", DecimalType(16, 2), nullable=False),
-            StructField("currency", StringType(), nullable=False),
-            StructField("sales_rep", StringType(), nullable=True),
-            StructField("region", StringType(), nullable=True),
-            StructField("status", StringType(), nullable=False)
-        ])
+        return self.spark.read \
+            .format("jdbc") \
+            .option("url", self.config.jdbc_url) \
+            .option("dbtable", query) \
+            .option("user", self.config.jdbc_user) \
+            .option("password", self.config.jdbc_password) \
+            .option("driver", self.config.jdbc_driver) \
+            .load()
     
-    def _create_sample_data(self) -> list:
-        """
-        Create sample raw sales data for demonstration.
+    def _extract_from_parquet(self, from_date: str, to_date: str) -> DataFrame:
+        """Extract from Parquet files"""
+        return self.spark.read \
+            .schema(self.get_raw_sales_schema()) \
+            .parquet(self.config.source_path)
+    
+    def _extract_from_csv(self, from_date: str, to_date: str) -> DataFrame:
+        """Extract from CSV files"""
+        return self.spark.read \
+            .schema(self.get_raw_sales_schema()) \
+            .option("header", "true") \
+            .csv(self.config.source_path)
+    
+    def _generate_sample_data(self) -> DataFrame:
+        """Generate sample data for demo/testing"""
+        from decimal import Decimal
+        from datetime import date
         
-        Returns:
-            List of tuples with sample data
-        """
-        today = datetime.now().date()
-        
-        return [
-            ("T000001", today, "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N"),
-            ("T000002", today, "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
-            ("T000003", today, "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N"),
-            ("T000004", today, "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N"),
-            ("T000005", today, "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
-            ("T000006", today, "CUST005", "PROD001", 8, 99.99, "USD", "John Doe", "NORTH", "N"),
-            ("T000007", today, "CUST002", "PROD003", 12, 299.99, "USD", "Bob Wilson", "WEST", "N"),
-            ("T000008", today, "CUST006", "PROD002", 25, 149.99, "USD", "Jane Smith", "EAST", "N"),
+        sample_data = [
+            ("T000001", date.today(), "CUST001", "PROD001", 10, Decimal("99.99"), "USD", "John Doe", "NORTH", "N"),
+            ("T000002", date.today(), "CUST002", "PROD002", 5, Decimal("149.99"), "USD", "Jane Smith", "SOUTH", "N"),
+            ("T000003", date.today(), "CUST003", "PROD001", 20, Decimal("99.99"), "USD", "John Doe", "EAST", "N"),
+            ("T000004", date.today(), "CUST001", "PROD003", 3, Decimal("299.99"), "USD", "Bob Wilson", "WEST", "N"),
+            ("T000005", date.today(), "CUST004", "PROD002", 15, Decimal("149.99"), "USD", "Jane Smith", "SOUTH", "N"),
         ]
+        
+        return self.spark.createDataFrame(sample_data, self.get_raw_sales_schema())
