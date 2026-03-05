@@ -1,39 +1,41 @@
 """
-ETL Constants
-PySpark implementation of ZCL_ETL_CONSTANTS
+Constants and configuration for the ETL system.
+
+This module defines all business constants, status codes, and configuration
+values used throughout the ETL process.
 """
-from typing import Dict
+
+from typing import Dict, Any
+import yaml
+from pathlib import Path
 
 
 class ETLConstants:
     """Constants and configuration for ETL system"""
     
     # Status codes
-    class Status:
-        NEW = "N"
-        PROCESSED = "P"
-        ERROR = "E"
-        WARNING = "W"
-        SUCCESS = "S"
-        INFO = "I"
+    STATUS_NEW = "N"
+    STATUS_PROCESSED = "P"
+    STATUS_ERROR = "E"
+    STATUS_WARNING = "W"
+    STATUS_SUCCESS = "S"
+    STATUS_INFO = "I"
     
     # ETL process steps
-    class Step:
-        INIT = "INIT"
-        EXTRACT = "EXTRACT"
-        TRANSFORM = "TRANSFORM"
-        LOAD = "LOAD"
-        VALIDATE = "VALIDATE"
-        COMPLETE = "COMPLETE"
-        ERROR = "ERROR"
+    STEP_INIT = "INIT"
+    STEP_EXTRACT = "EXTRACT"
+    STEP_TRANSFORM = "TRANSFORM"
+    STEP_LOAD = "LOAD"
+    STEP_VALIDATE = "VALIDATE"
+    STEP_COMPLETE = "COMPLETE"
+    STEP_ERROR = "ERROR"
     
     # Sale categories
-    class Category:
-        HIGH = "HIGH"
-        MEDIUM = "MEDIUM"
-        LOW = "LOW"
+    CATEGORY_HIGH = "HIGH"
+    CATEGORY_MEDIUM = "MEDIUM"
+    CATEGORY_LOW = "LOW"
     
-    # Business rules - Discount thresholds
+    # Business rules - Discount thresholds (defaults)
     DISCOUNT_QTY_TIER1 = 10
     DISCOUNT_QTY_TIER2 = 15
     DISCOUNT_RATE_TIER1 = 0.05
@@ -71,20 +73,51 @@ class ETLConstants:
     MSG_ETL_COMPLETE = "ETL process completed successfully"
     MSG_ETL_ERROR = "ETL process failed"
     
+    _config: Dict[str, Any] = None
+    
     @classmethod
-    def to_dict(cls) -> Dict[str, any]:
-        """Convert constants to dictionary for config export"""
-        return {
-            "discount_qty_tier1": cls.DISCOUNT_QTY_TIER1,
-            "discount_qty_tier2": cls.DISCOUNT_QTY_TIER2,
-            "discount_rate_tier1": cls.DISCOUNT_RATE_TIER1,
-            "discount_rate_tier2": cls.DISCOUNT_RATE_TIER2,
-            "tax_rate": cls.TAX_RATE,
-            "cost_ratio": cls.COST_RATIO,
-            "category_high_threshold": cls.CATEGORY_HIGH_THRESHOLD,
-            "category_medium_threshold": cls.CATEGORY_MEDIUM_THRESHOLD,
-            "default_batch_size": cls.DEFAULT_BATCH_SIZE,
-            "default_commit_interval": cls.DEFAULT_COMMIT_INTERVAL,
-            "default_retry_attempts": cls.DEFAULT_RETRY_ATTEMPTS,
-            "default_timeout_seconds": cls.DEFAULT_TIMEOUT_SECONDS,
-        }
+    def load_config(cls, config_path: str = "config.yaml") -> Dict[str, Any]:
+        """
+        Load configuration from YAML file.
+        
+        Args:
+            config_path: Path to configuration file
+            
+        Returns:
+            Configuration dictionary
+        """
+        if cls._config is None:
+            config_file = Path(config_path)
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    cls._config = yaml.safe_load(f)
+            else:
+                cls._config = {}
+        
+        return cls._config
+    
+    @classmethod
+    def get_config_value(cls, key_path: str, default: Any = None) -> Any:
+        """
+        Get configuration value by dot-separated path.
+        
+        Args:
+            key_path: Dot-separated configuration key path (e.g., "business_rules.tax_rate")
+            default: Default value if key not found
+            
+        Returns:
+            Configuration value
+        """
+        if cls._config is None:
+            cls.load_config()
+        
+        keys = key_path.split('.')
+        value = cls._config
+        
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+        
+        return value
