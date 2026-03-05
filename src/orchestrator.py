@@ -1,54 +1,67 @@
 """
-ETL Orchestrator Module
-Coordinates the sequential execution of Extract, Transform, and Load operations
-with comprehensive error propagation and timestamp tracking.
+ETL Orchestrator module.
+
+Coordinates the extraction, transformation, and loading phases
+of the sales data ETL pipeline.
 """
 
-from datetime import datetime
-from typing import Tuple, Optional
 import logging
+from datetime import datetime
+from typing import Optional
 
 from pyspark.sql import SparkSession, DataFrame
 
-from src.extract import SalesExtractor
-from src.transform import SalesTransformer
-from src.load import SalesLoader
+from src.extractor import ETLExtractor
+from src.transformer import ETLTransformer
+from src.loader import ETLLoader
 from src.logger import ETLLogger
-from src.exceptions import ETLError, ExtractError, TransformError, LoadError
+from src.constants import ETLConstants
 
 
 class ETLOrchestrator:
-    """
-    Main ETL orchestrator that coordinates the ETL process.
-    Manages sequential execution flow with proper error propagation.
-    """
+    """Main orchestrator for the ETL process."""
 
-    def __init__(self, spark: SparkSession, config: dict):
+    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger):
         """
         Initialize the ETL orchestrator.
 
         Args:
-            spark: Active SparkSession
+            spark: SparkSession instance
             config: Configuration dictionary
+            logger: Python logger instance
         """
         self.spark = spark
         self.config = config
+        self.logger = logger
+
+        # Generate unique ETL run ID
         self.etl_run_id = self._generate_etl_run_id()
+
+        # Initialize ETL logger
+        self.etl_logger = ETLLogger(self.etl_run_id, spark, config)
+
+        # Initialize ETL components
+        self.extractor = ETLExtractor(spark, config, self.etl_logger)
+        self.transformer = ETLTransformer(spark, config, self.etl_logger)
+        self.loader = ETLLoader(spark, config, self.etl_logger)
+
+        # Timing
         self.start_time: Optional[datetime] = None
         self.end_time: Optional[datetime] = None
 
-        # Initialize logger
-        self.logger = ETLLogger(self.etl_run_id)
-
-        # Initialize ETL components
-        self.extractor = SalesExtractor(spark, self.logger, config)
-        self.transformer = SalesTransformer(self.logger, config)
-        self.loader = SalesLoader(spark, self.logger, config)
+        # Statistics
+        self.statistics = {
+            'extracted': 0,
+            'transformed': 0,
+            'loaded': 0,
+            'errors': 0
+        }
 
         # Log initialization
-        self.logger.log_message(
-            step="INIT",
-            status="S",
+        self.logger.info("ETL orchestrator initialized")
+        self.etl_logger.log_message(
+            step=ETLConstants.STEP_INIT,
+            status=ETLConstants.STATUS_SUCCESS,
             message=f"ETL process initialized with run ID: {self.etl_run_id}"
         )
 
@@ -57,149 +70,98 @@ class ETLOrchestrator:
         Generate unique ETL run ID.
 
         Returns:
-            Unique ETL run ID string
+            Unique run ID string
         """
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[:14]
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         return f"ETL{timestamp}"
 
-    def run_etl(self, from_date: str, to_date: str) -> bool:
+    def run_etl(self, from_date: datetime, to_date: datetime,
+                test_mode: bool = False) -> bool:
         """
         Execute the complete ETL process.
 
         Args:
-            from_date: Start date for extraction (YYYY-MM-DD)
-            to_date: End date for extraction (YYYY-MM-DD)
+            from_date: Start date for extraction
+            to_date: End date for extraction
+            test_mode: Whether to run in test mode
 
         Returns:
-            True if ETL process completed successfully, False otherwise
-
-        Raises:
-            ETLError: If any ETL step fails and error propagation is enabled
+            True if successful, False otherwise
         """
         try:
             # Capture start time
             self.start_time = datetime.now()
-
-            self.logger.log_message(
-                step="START",
-                status="S",
-                message=f"ETL process started at {self.start_time.isoformat()}"
+            self.logger.info(f"ETL process started at {self.start_time}")
+            self.etl_logger.log_message(
+                step=ETLConstants.STEP_START,
+                status=ETLConstants.STATUS_SUCCESS,
+                message=f"ETL process started at {self.start_time}"
             )
 
-            # Step 1: Extract
-            print("\n=== EXTRACT Phase ===")
-            raw_data = self._execute_extract(from_date, to_date)
+            # Phase 1: Extract
+            self.logger.info("=" * 70)
+            self.logger.info("EXTRACT Phase")
+            self.logger.info("=" * 70)
 
-            # Step 2: Transform
-            print("\n=== TRANSFORM Phase ===")
-            analytics_data = self._execute_transform(raw_data)
+            raw_data = self.extractor.extract_data(from_date, to_date)
+            self.statistics['extracted'] = raw_data.count()
 
-            # Step 3: Load
-            print("\n=== LOAD Phase ===")
-            self._execute_load(analytics_data)
+            if self.statistics['extracted'] == 0:
+                self.logger.warning("No data extracted. ETL process completed with no records.")
+                self.etl_logger.log_message(
+                    step=ETLConstants.STEP_EXTRACT,
+                    status=ETLConstants.STATUS_WARNING,
+                    message="No data to process"
+                )
+                return True
+
+            # Phase 2: Transform
+            self.logger.info("")
+            self.logger.info("=" * 70)
+            self.logger.info("TRANSFORM Phase")
+            self.logger.info("=" * 70)
+
+            analytics_data = self.transformer.transform_data(raw_data, self.etl_run_id)
+            self.statistics['transformed'] = analytics_data.count()
+
+            # Phase 3: Load
+            self.logger.info("")
+            self.logger.info("=" * 70)
+            self.logger.info("LOAD Phase")
+            self.logger.info("=" * 70)
+
+            load_success, loaded_count = self.loader.load_data(
+                analytics_data,
+                test_mode=test_mode
+            )
+            self.statistics['loaded'] = loaded_count
+
+            if not load_success:
+                raise RuntimeError("Load phase failed")
 
             # Capture end time
             self.end_time = datetime.now()
 
-            self.logger.log_message(
-                step="COMPLETE",
-                status="S",
-                message=f"ETL process completed successfully at {self.end_time.isoformat()}"
+            self.logger.info(f"ETL process completed at {self.end_time}")
+            self.etl_logger.log_message(
+                step=ETLConstants.STEP_COMPLETE,
+                status=ETLConstants.STATUS_SUCCESS,
+                records_processed=self.statistics['extracted'],
+                records_success=self.statistics['loaded'],
+                message=f"ETL process completed successfully at {self.end_time}"
             )
 
             return True
 
-        except (ExtractError, TransformError, LoadError) as e:
+        except Exception as e:
             self.end_time = datetime.now()
-            self.logger.log_message(
-                step="ERROR",
-                status="E",
+            self.logger.exception(f"ETL process failed: {e}")
+            self.etl_logger.log_message(
+                step=ETLConstants.STEP_ERROR,
+                status=ETLConstants.STATUS_ERROR,
                 message=f"ETL process failed: {str(e)}"
             )
-            logging.error(f"ETL failed: {str(e)}", exc_info=True)
-
-            # Propagate error if configured
-            if self.config.get("error_propagation", {}).get("propagate_errors", True):
-                raise ETLError(f"ETL process failed: {str(e)}") from e
-
             return False
-
-        except Exception as e:
-            self.end_time = datetime.now()
-            self.logger.log_message(
-                step="ERROR",
-                status="E",
-                message=f"Unexpected error: {str(e)}"
-            )
-            logging.error(f"Unexpected ETL error: {str(e)}", exc_info=True)
-
-            # Always propagate unexpected errors
-            raise ETLError(f"Unexpected ETL error: {str(e)}") from e
-
-    def _execute_extract(self, from_date: str, to_date: str) -> DataFrame:
-        """
-        Execute extraction phase with error handling.
-
-        Args:
-            from_date: Start date
-            to_date: End date
-
-        Returns:
-            Extracted DataFrame
-
-        Raises:
-            ExtractError: If extraction fails
-        """
-        try:
-            raw_data = self.extractor.extract_data(from_date, to_date)
-
-            if raw_data.isEmpty():
-                raise ExtractError("No data extracted from source")
-
-            return raw_data
-
-        except Exception as e:
-            raise ExtractError(f"Extraction failed: {str(e)}") from e
-
-    def _execute_transform(self, raw_data: DataFrame) -> DataFrame:
-        """
-        Execute transformation phase with error handling.
-
-        Args:
-            raw_data: Raw data DataFrame
-
-        Returns:
-            Transformed DataFrame
-
-        Raises:
-            TransformError: If transformation fails
-        """
-        try:
-            analytics_data = self.transformer.transform_data(raw_data)
-
-            if analytics_data.isEmpty():
-                raise TransformError("Transformation produced no records")
-
-            return analytics_data
-
-        except Exception as e:
-            raise TransformError(f"Transformation failed: {str(e)}") from e
-
-    def _execute_load(self, analytics_data: DataFrame) -> None:
-        """
-        Execute load phase with error handling.
-
-        Args:
-            analytics_data: Analytics data to load
-
-        Raises:
-            LoadError: If load fails
-        """
-        try:
-            self.loader.load_data(analytics_data)
-
-        except Exception as e:
-            raise LoadError(f"Load failed: {str(e)}") from e
 
     def get_etl_run_id(self) -> str:
         """
@@ -210,49 +172,23 @@ class ETLOrchestrator:
         """
         return self.etl_run_id
 
-    def display_summary(self) -> dict:
-        """
-        Generate and display ETL process summary.
-
-        Returns:
-            Dictionary with summary statistics
-        """
-        summary = {
-            "etl_run_id": self.etl_run_id,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "end_time": self.end_time.isoformat() if self.end_time else None,
-            "duration_seconds": None,
-            "status": "completed" if self.end_time else "in_progress"
-        }
+    def display_summary(self):
+        """Display ETL process summary."""
+        self.logger.info("")
+        self.logger.info("ETL Process Summary")
+        self.logger.info("-" * 70)
+        self.logger.info(f"  ETL Run ID:    {self.etl_run_id}")
+        self.logger.info(f"  Start Time:    {self.start_time}")
+        self.logger.info(f"  End Time:      {self.end_time}")
 
         if self.start_time and self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
-            summary["duration_seconds"] = duration
+            self.logger.info(f"  Duration:      {duration:.2f} seconds")
 
-        print("\n" + "=" * 60)
-        print("ETL Process Summary")
-        print("=" * 60)
-        print(f"ETL Run ID:    {summary['etl_run_id']}")
-        print(f"Start Time:    {summary['start_time']}")
-        print(f"End Time:      {summary['end_time']}")
-        if summary['duration_seconds']:
-            print(f"Duration:      {summary['duration_seconds']:.2f} seconds")
-        print("=" * 60)
-
-        return summary
-
-    def get_execution_stats(self) -> dict:
-        """
-        Get detailed execution statistics.
-
-        Returns:
-            Dictionary with execution statistics
-        """
-        return {
-            "etl_run_id": self.etl_run_id,
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-            "extractor_stats": self.extractor.get_stats(),
-            "transformer_stats": self.transformer.get_stats(),
-            "loader_stats": self.loader.get_stats()
-        }
+        self.logger.info("")
+        self.logger.info("  Statistics:")
+        self.logger.info(f"    Records Extracted:   {self.statistics['extracted']}")
+        self.logger.info(f"    Records Transformed: {self.statistics['transformed']}")
+        self.logger.info(f"    Records Loaded:      {self.statistics['loaded']}")
+        self.logger.info(f"    Errors:              {self.statistics['errors']}")
+        self.logger.info("-" * 70)
