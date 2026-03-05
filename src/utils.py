@@ -1,79 +1,87 @@
 """
-Utility Functions
-Common utility functions for ETL processes.
+Utility functions for ETL Logger module.
 """
-
 from datetime import datetime
 from typing import Optional
 
 
-def generate_run_id(prefix: str = "ETL") -> str:
+def generate_etl_run_id(prefix: str = "ETL") -> str:
     """
-    Generate a unique run ID with timestamp.
+    Generate a unique ETL run ID.
 
     Args:
-        prefix: Prefix for the ID (ETL, LOG, ANL)
+        prefix: Prefix for the run ID
 
     Returns:
-        str: Unique run ID
+        Unique ETL run ID string
     """
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[:14]
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     return f"{prefix}{timestamp}"
 
 
-def calculate_duration(start_time: datetime, end_time: datetime) -> int:
+def format_execution_date(date_str: Optional[str] = None) -> str:
     """
-    Calculate duration between two timestamps in seconds.
+    Format date string for execution date field.
 
     Args:
-        start_time: Start timestamp
-        end_time: End timestamp
+        date_str: Optional date string in ISO format
 
     Returns:
-        int: Duration in seconds
+        Formatted date string (YYYY-MM-DD)
     """
-    if not start_time or not end_time:
-        return 0
-    
-    duration = (end_time - start_time).total_seconds()
-    return int(duration)
+    if date_str:
+        try:
+            dt = datetime.fromisoformat(date_str)
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
+    return datetime.now().strftime("%Y-%m-%d")
 
 
-def format_currency(amount: float, currency: str = "USD") -> str:
+def format_execution_time(time_str: Optional[str] = None) -> str:
     """
-    Format currency amount.
+    Format time string for execution time field.
 
     Args:
-        amount: Numeric amount
-        currency: Currency code
+        time_str: Optional time string in ISO format
 
     Returns:
-        str: Formatted currency string
+        Formatted time string (HH:MM:SS)
     """
-    return f"{currency} {amount:,.2f}"
+    if time_str:
+        try:
+            dt = datetime.fromisoformat(time_str)
+            return dt.strftime("%H:%M:%S")
+        except ValueError:
+            pass
+
+    return datetime.now().strftime("%H:%M:%S")
 
 
-def validate_date_range(from_date: str, to_date: str) -> bool:
+def validate_status_code(status: str, valid_codes: list) -> bool:
     """
-    Validate date range.
+    Validate status code against allowed values.
 
     Args:
-        from_date: Start date (YYYY-MM-DD)
-        to_date: End date (YYYY-MM-DD)
+        status: Status code to validate
+        valid_codes: List of valid status codes
 
     Returns:
-        bool: True if valid, False otherwise
+        True if valid, False otherwise
     """
-    try:
-        from_dt = datetime.strptime(from_date, "%Y-%m-%d")
-        to_dt = datetime.strptime(to_date, "%Y-%m-%d")
-        
-        if from_dt > to_dt:
-            return False
-        
-        if to_dt > datetime.now():
-            return False
-        
-        return True
-    except ValueError:
-        return False
+    return status in valid_codes
+
+
+def validate_process_step(step: str, valid_steps: list) -> bool:
+    """
+    Validate process step against allowed values.
+
+    Args:
+        step: Process step to validate
+        valid_steps: List of valid process steps
+
+    Returns:
+        True if valid, False otherwise
+    """
+    return step in valid_steps
