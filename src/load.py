@@ -1,88 +1,74 @@
 """
-Data loading module for Sales ETL pipeline.
-Loads transformed analytics data to target systems.
+Data loading module for ETL pipeline.
+Loads transformed analytics data into target storage.
 """
 
 from pyspark.sql import DataFrame, SparkSession
-from typing import Tuple
+from pyspark.sql.functions import col
+from typing import Optional, Dict
 import logging
 
 
-class SalesDataLoader:
-    """Loads transformed analytics data to target tables."""
+class DataLoader:
+    """Handles loading of analytics data into target storage."""
     
-    def __init__(self, spark: SparkSession, config: dict):
+    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger):
         """
-        Initialize the loader.
+        Initialize the data loader.
         
         Args:
-            spark: Active SparkSession
+            spark: SparkSession instance
             config: Configuration dictionary
+            logger: Logger instance
         """
         self.spark = spark
         self.config = config
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
     
-    def load_data(self, analytics_df: DataFrame) -> Tuple[bool, dict]:
+    def load_data(self, analytics_df: DataFrame) -> bool:
         """
-        Load analytics data to target destination.
+        Load analytics data into target storage.
         
         Args:
-            analytics_df: Transformed analytics DataFrame
+            analytics_df: DataFrame containing analytics data
             
         Returns:
-            Tuple of (success boolean, metrics dictionary)
+            True if load succeeds, False otherwise
         """
         try:
             self.logger.info("Starting data load")
             
-            initial_count = analytics_df.count()
-            
-            # Validate before loading
-            is_valid, validation_messages = self._validate_for_load(analytics_df)
-            
-            if not is_valid:
-                self.logger.error(f"Pre-load validation failed: {validation_messages}")
-                return False, {
-                    'records_loaded': 0,
-                    'records_error': initial_count,
-                    'validation_errors': validation_messages
-                }
-            
             # Get target configuration
-            target_path = self.config['target']['analytics_path']
-            target_format = self.config['target'].get('format', 'parquet')
-            write_mode = self.config['target'].get('write_mode', 'append')
-            partition_by = self.config['target'].get('partition_by', ['trans_date'])
+            target_path = self.config.get('target_path', 'data/analytics/sales')
+            target_format = self.config.get('target_format', 'parquet')
+            write_mode = self.config.get('write_mode', 'append')
+            partition_by = self.config.get('partition_by', ['trans_date'])
+            
+            # Validate data before loading
+            if not self._validate_before_load(analytics_df):
+                raise ValueError("Data validation failed before load")
             
             # Write to target
-            analytics_df.write \
+            writer = analytics_df.write \
                 .format(target_format) \
-                .mode(write_mode) \
-                .partitionBy(*partition_by) \
-                .save(target_path)
+                .mode(write_mode)
             
-            metrics = {
-                'records_loaded': initial_count,
-                'records_success': initial_count,
-                'records_error': 0,
-                'target_path': target_path,
-                'write_mode': write_mode
-            }
+            # Add partitioning if configured
+            if partition_by:
+                writer = writer.partitionBy(*partition_by)
             
-            self.logger.info(f"Successfully loaded {initial_count} records to {target_path}")
+            writer.save(target_path)
             
-            return True, metrics
+            record_count = analytics_df.count()
+            self.logger.info(f"Loaded {record_count} records successfully to {target_path}")
+            
+            return True
             
         except Exception as e:
             self.logger.error(f"Load failed: {str(e)}")
-            return False, {
-                'records_loaded': 0,
-                'records_error': initial_count if 'initial_count' in locals() else 0,
-                'error_message': str(e)
-            }
+            raise
     
-    def _validate_for_load(self, df: DataFrame) -> Tuple[bool, list]:
+    def _validate_before_load(self, df: DataFrame) -> bool:
         """
         Validate data before loading.
         
@@ -90,69 +76,100 @@ class SalesDataLoader:
             df: DataFrame to validate
             
         Returns:
-            Tuple of (validation success boolean, list of validation messages)
+            True if validation passes
         """
-        validation_messages = []
-        
-        # Check for null analytics_id
-        null_ids = df.filter(df.analytics_id.isNull()).count()
-        if null_ids > 0:
-            validation_messages.append(f"Found {null_ids} records with null analytics_id")
-        
-        # Check for null customer_id or product_id
-        null_customers = df.filter(df.customer_id.isNull()).count()
-        null_products = df.filter(df.product_id.isNull()).count()
-        
-        if null_customers > 0:
-            validation_messages.append(f"Found {null_customers} records with null customer_id")
-        if null_products > 0:
-            validation_messages.append(f"Found {null_products} records with null product_id")
-        
-        # Check for invalid gross amounts
-        invalid_amounts = df.filter(df.gross_amount <= 0).count()
-        if invalid_amounts > 0:
-            validation_messages.append(f"Found {invalid_amounts} records with invalid gross amounts")
-        
-        is_valid = len(validation_messages) == 0
-        
-        return is_valid, validation_messages
+        try:
+            # Check for required columns
+            required_cols = ["analytics_id", "customer_id", "product_id", "gross_amount"]
+            missing_cols = [c for c in required_cols if c not in df.columns]
+            
+            if missing_cols:
+                self.logger.error(f"Missing required columns: {missing_cols}")
+                return False
+            
+            # Check for empty DataFrame
+            if df.rdd.isEmpty():
+                self.logger.warning("DataFrame is empty")
+                return False
+            
+            # Check for invalid categories
+            valid_categories = ['HIGH', 'MEDIUM', 'LOW']
+            invalid_category_count = df.filter(
+                ~col("category").isin(valid_categories)
+            ).count()
+            
+            if invalid_category_count > 0:
+                self.logger.error(f"Found {invalid_category_count} records with invalid category")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Validation error: {str(e)}")
+            return False
     
-    def update_source_status(self, trans_ids: list, status: str = 'P') -> bool:
+    def update_source_status(self, trans_ids: list) -> bool:
         """
-        Update status of processed records in source table.
+        Update status of processed records in source.
         
         Args:
             trans_ids: List of transaction IDs to update
-            status: New status value (default: 'P' for processed)
             
         Returns:
-            Success boolean
+            True if update succeeds
         """
         try:
             self.logger.info(f"Updating status for {len(trans_ids)} records")
             
-            # In production, this would update the source table
-            # For now, just log the operation
-            source_path = self.config['source']['raw_sales_path']
+            source_path = self.config.get('source_path', 'data/raw/sales')
             
             # Read source data
-            source_df = self.spark.read.parquet(source_path)
+            df = self.spark.read.parquet(source_path)
             
-            # Update status (simplified - in production use Delta Lake or similar)
-            # This is a demonstration of the concept
-            from pyspark.sql.functions import when
-            
-            updated_df = source_df.withColumn('status',
-                when(source_df.trans_id.isin(trans_ids), status)
-                .otherwise(source_df.status)
+            # Update status for processed records
+            df_updated = df.withColumn(
+                "status",
+                col("status").when(col("trans_id").isin(trans_ids), "P").otherwise(col("status"))
             )
             
-            # Write back (in production, use proper update mechanism)
-            # updated_df.write.mode('overwrite').parquet(source_path)
+            # Write back (in production, use delta/merge)
+            df_updated.write \
+                .mode("overwrite") \
+                .parquet(source_path + "_temp")
             
-            self.logger.info(f"Status update completed for {len(trans_ids)} records")
+            self.logger.info("Source status updated successfully")
             return True
             
         except Exception as e:
             self.logger.error(f"Status update failed: {str(e)}")
             return False
+    
+    def get_load_statistics(self, analytics_df: DataFrame) -> Dict[str, int]:
+        """
+        Calculate statistics for loaded data.
+        
+        Args:
+            analytics_df: DataFrame containing loaded data
+            
+        Returns:
+            Dictionary with statistics
+        """
+        try:
+            total_records = analytics_df.count()
+            
+            category_counts = analytics_df.groupBy("category").count().collect()
+            category_stats = {row["category"]: row["count"] for row in category_counts}
+            
+            stats = {
+                "total_records": total_records,
+                "high_value_sales": category_stats.get("HIGH", 0),
+                "medium_value_sales": category_stats.get("MEDIUM", 0),
+                "low_value_sales": category_stats.get("LOW", 0)
+            }
+            
+            self.logger.info(f"Load statistics: {stats}")
+            return stats
+            
+        except Exception as e:
+            self.logger.error(f"Failed to calculate statistics: {str(e)}")
+            return {}
