@@ -1,98 +1,113 @@
-# ETL Configuration for Sales Analytics Pipeline
-# Migrated from ABAP ETL System
+# ETL Configuration File
+# Environment-specific settings for Sales Data ETL
 
-application:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  component: "FI-AA"
+common:
+  # Logging configuration
+  logging:
+    directory: "logs"
+    level: "INFO"
+    
+  # Business rules (shared across environments)
+  business_rules:
+    discount_qty_tier1: 10
+    discount_qty_tier2: 15
+    discount_rate_tier1: 0.05
+    discount_rate_tier2: 0.10
+    tax_rate: 0.08
+    cost_ratio: 0.60
+    category_high_threshold: 2000.00
+    category_medium_threshold: 500.00
+  
+  # ETL processing defaults
+  processing:
+    batch_size: 1000
+    commit_interval: 500
+    retry_attempts: 3
+    timeout_seconds: 3600
 
-# Status codes
-status:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
+development:
+  # Spark configuration for development
+  spark:
+    app_name: "SalesETL-Dev"
+    master: "local[*]"
+    executor_memory: "2g"
+    driver_memory: "2g"
+    log_level: "INFO"
+    
+  # Source configuration
+  source:
+    table: "dev_zsales_raw"
+    status_filter: "N"
+    
+  # Target configuration
+  target:
+    table: "dev_zsales_analytics"
+    write_mode: "overwrite"  # Use overwrite in dev
+    
+  # Feature flags
+  features:
+    test_mode: true
+    enable_profiling: true
 
-# ETL process steps
-steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+qa:
+  # Spark configuration for QA
+  spark:
+    app_name: "SalesETL-QA"
+    master: "yarn"
+    executor_memory: "4g"
+    driver_memory: "4g"
+    executor_cores: 2
+    num_executors: 4
+    log_level: "INFO"
+    
+  # Source configuration
+  source:
+    table: "qa_zsales_raw"
+    status_filter: "N"
+    
+  # Target configuration
+  target:
+    table: "qa_zsales_analytics"
+    write_mode: "append"
+    
+  # Feature flags
+  features:
+    test_mode: false
+    enable_profiling: true
 
-# Sale categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-
-# Business rules - Discount thresholds
-discount:
-  quantity_tier1: 10
-  quantity_tier2: 15
-  rate_tier1: 0.05
-  rate_tier2: 0.10
-
-# Business rules - Tax rate
-tax:
-  rate: 0.08
-
-# Business rules - Cost ratio
-cost:
-  ratio: 0.60
-
-# Business rules - Category thresholds
-category_thresholds:
-  high: 2000.00
-  medium: 500.00
-
-# ETL configuration defaults
-etl_config:
-  default_batch_size: 1000
-  default_commit_interval: 500
-  default_retry_attempts: 3
-  default_timeout_seconds: 3600
-  parallel_jobs: 4
-
-# ID prefixes
-prefixes:
-  etl_run: "ETL"
-  log_id: "LOG"
-  analytics_id: "ANL"
-
-# Message texts
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Database configuration
-database:
-  source_table: "zsales_raw"
-  target_table: "zsales_analytics"
-  log_table: "zetl_log"
-
-# Spark configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  executor_memory: "4g"
-  driver_memory: "2g"
-  sql_shuffle_partitions: 200
-
-# Logging configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
+production:
+  # Spark configuration for production
+  spark:
+    app_name: "SalesETL-Prod"
+    master: "yarn"
+    executor_memory: "8g"
+    driver_memory: "8g"
+    executor_cores: 4
+    num_executors: 10
+    log_level: "WARN"
+    dynamic_allocation: true
+    shuffle_partitions: 200
+    
+  # Source configuration
+  source:
+    table: "zsales_raw"
+    status_filter: "N"
+    
+  # Target configuration
+  target:
+    table: "zsales_analytics"
+    write_mode: "append"
+    partition_columns:
+      - "trans_date"
+    
+  # Feature flags
+  features:
+    test_mode: false
+    enable_profiling: false
+    
+  # Production-specific settings
+  processing:
+    batch_size: 5000
+    commit_interval: 2500
+    retry_attempts: 5
+    timeout_seconds: 7200
