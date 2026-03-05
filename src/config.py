@@ -1,11 +1,14 @@
 """
 Configuration module for Sales ETL System.
-Migrated from ABAP ZETL_TOP include and ZCL_ETL_CONSTANTS class.
+Migrated from ABAP ZETL_TOP and ZCL_ETL_CONSTANTS.
 """
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any
 from decimal import Decimal
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType, 
+    DecimalType, DateType, TimestampType
+)
 
 
 @dataclass
@@ -41,17 +44,15 @@ class SaleCategories:
 
 @dataclass
 class BusinessRules:
-    """Business rules and thresholds for ETL transformations."""
+    """Business rule constants for ETL transformations."""
     # Discount thresholds
     DISCOUNT_QTY_TIER1: int = 10
     DISCOUNT_QTY_TIER2: int = 15
     DISCOUNT_RATE_TIER1: Decimal = Decimal('0.05')
     DISCOUNT_RATE_TIER2: Decimal = Decimal('0.10')
     
-    # Tax rate
+    # Tax and cost ratios
     TAX_RATE: Decimal = Decimal('0.08')
-    
-    # Cost ratio for profit calculation
     COST_RATIO: Decimal = Decimal('0.60')
     
     # Category thresholds
@@ -60,29 +61,26 @@ class BusinessRules:
 
 
 @dataclass
-class ETLConfig:
-    """ETL runtime configuration parameters."""
-    DEFAULT_BATCH_SIZE: int = 1000
-    DEFAULT_COMMIT_INTERVAL: int = 500
-    DEFAULT_RETRY_ATTEMPTS: int = 3
-    DEFAULT_TIMEOUT_SECONDS: int = 3600
-    
-    # ID prefixes
-    PREFIX_ETL_RUN: str = 'ETL'
-    PREFIX_LOG_ID: str = 'LOG'
-    PREFIX_ANALYTICS_ID: str = 'ANL'
-    
-    # Operational parameters
-    batch_size: int = 1000
-    commit_interval: int = 500
-    retry_attempts: int = 3
-    timeout_seconds: int = 3600
-    test_mode: bool = False
+class ETLDefaults:
+    """Default configuration values for ETL processing."""
+    BATCH_SIZE: int = 1000
+    COMMIT_INTERVAL: int = 500
+    RETRY_ATTEMPTS: int = 3
+    TIMEOUT_SECONDS: int = 3600
+    PARALLEL_JOBS: int = 4
 
 
 @dataclass
-class MessageTemplates:
-    """Standard message templates for ETL logging."""
+class IDPrefixes:
+    """Prefixes for generated identifiers."""
+    ETL_RUN: str = 'ETL'
+    LOG_ID: str = 'LOG'
+    ANALYTICS_ID: str = 'ANL'
+
+
+@dataclass
+class Messages:
+    """Standard message templates."""
     INIT_SUCCESS: str = 'ETL process initialized successfully'
     EXTRACT_START: str = 'Starting data extraction'
     EXTRACT_COMPLETE: str = 'Data extraction completed'
@@ -94,95 +92,130 @@ class MessageTemplates:
     ETL_ERROR: str = 'ETL process failed'
 
 
-class ETLConstants:
-    """
-    Main configuration class containing all ETL constants and configurations.
-    Migrated from ABAP ZCL_ETL_CONSTANTS and ZETL_TOP.
-    """
+class Schemas:
+    """PySpark DataFrame schemas for ETL data structures."""
     
-    status = StatusCodes()
-    steps = ProcessSteps()
-    categories = SaleCategories()
-    rules = BusinessRules()
-    config = ETLConfig()
-    messages = MessageTemplates()
+    @staticmethod
+    def raw_sales_schema() -> StructType:
+        """Schema for raw sales data (source table)."""
+        return StructType([
+            StructField("trans_id", StringType(), nullable=False),
+            StructField("trans_date", DateType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("product_id", StringType(), nullable=False),
+            StructField("quantity", IntegerType(), nullable=False),
+            StructField("unit_price", DecimalType(16, 2), nullable=False),
+            StructField("currency", StringType(), nullable=False),
+            StructField("sales_rep", StringType(), nullable=True),
+            StructField("region", StringType(), nullable=True),
+            StructField("status", StringType(), nullable=False),
+            StructField("created_at", TimestampType(), nullable=True),
+            StructField("created_by", StringType(), nullable=True),
+        ])
     
-    @classmethod
-    def get_config_dict(cls) -> Dict[str, Any]:
-        """Return configuration as dictionary for serialization."""
-        return {
-            'batch_size': cls.config.batch_size,
-            'commit_interval': cls.config.commit_interval,
-            'retry_attempts': cls.config.retry_attempts,
-            'timeout_seconds': cls.config.timeout_seconds,
-            'test_mode': cls.config.test_mode,
-            'discount_qty_tier1': int(cls.rules.DISCOUNT_QTY_TIER1),
-            'discount_qty_tier2': int(cls.rules.DISCOUNT_QTY_TIER2),
-            'discount_rate_tier1': float(cls.rules.DISCOUNT_RATE_TIER1),
-            'discount_rate_tier2': float(cls.rules.DISCOUNT_RATE_TIER2),
-            'tax_rate': float(cls.rules.TAX_RATE),
-            'cost_ratio': float(cls.rules.COST_RATIO),
-            'category_high_threshold': float(cls.rules.CATEGORY_HIGH_THRESHOLD),
-            'category_medium_threshold': float(cls.rules.CATEGORY_MEDIUM_THRESHOLD),
-        }
+    @staticmethod
+    def analytics_schema() -> StructType:
+        """Schema for transformed analytics data (target table)."""
+        return StructType([
+            StructField("analytics_id", StringType(), nullable=False),
+            StructField("trans_date", DateType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("product_id", StringType(), nullable=False),
+            StructField("total_quantity", IntegerType(), nullable=False),
+            StructField("gross_amount", DecimalType(16, 2), nullable=False),
+            StructField("net_amount", DecimalType(16, 2), nullable=False),
+            StructField("discount_amount", DecimalType(16, 2), nullable=False),
+            StructField("tax_amount", DecimalType(16, 2), nullable=False),
+            StructField("currency", StringType(), nullable=False),
+            StructField("sales_rep", StringType(), nullable=True),
+            StructField("region", StringType(), nullable=True),
+            StructField("profit_margin", DecimalType(5, 2), nullable=False),
+            StructField("category", StringType(), nullable=False),
+            StructField("etl_run_id", StringType(), nullable=False),
+            StructField("loaded_at", TimestampType(), nullable=True),
+            StructField("loaded_by", StringType(), nullable=True),
+        ])
     
-    @classmethod
-    def update_from_dict(cls, config_dict: Dict[str, Any]) -> None:
-        """Update configuration from dictionary (e.g., loaded from YAML)."""
-        if 'batch_size' in config_dict:
-            cls.config.batch_size = config_dict['batch_size']
-        if 'commit_interval' in config_dict:
-            cls.config.commit_interval = config_dict['commit_interval']
-        if 'retry_attempts' in config_dict:
-            cls.config.retry_attempts = config_dict['retry_attempts']
-        if 'timeout_seconds' in config_dict:
-            cls.config.timeout_seconds = config_dict['timeout_seconds']
-        if 'test_mode' in config_dict:
-            cls.config.test_mode = config_dict['test_mode']
-        
-        # Update business rules if provided
-        if 'discount_qty_tier1' in config_dict:
-            cls.rules.DISCOUNT_QTY_TIER1 = config_dict['discount_qty_tier1']
-        if 'discount_qty_tier2' in config_dict:
-            cls.rules.DISCOUNT_QTY_TIER2 = config_dict['discount_qty_tier2']
-        if 'discount_rate_tier1' in config_dict:
-            cls.rules.DISCOUNT_RATE_TIER1 = Decimal(str(config_dict['discount_rate_tier1']))
-        if 'discount_rate_tier2' in config_dict:
-            cls.rules.DISCOUNT_RATE_TIER2 = Decimal(str(config_dict['discount_rate_tier2']))
-        if 'tax_rate' in config_dict:
-            cls.rules.TAX_RATE = Decimal(str(config_dict['tax_rate']))
-        if 'cost_ratio' in config_dict:
-            cls.rules.COST_RATIO = Decimal(str(config_dict['cost_ratio']))
-        if 'category_high_threshold' in config_dict:
-            cls.rules.CATEGORY_HIGH_THRESHOLD = Decimal(str(config_dict['category_high_threshold']))
-        if 'category_medium_threshold' in config_dict:
-            cls.rules.CATEGORY_MEDIUM_THRESHOLD = Decimal(str(config_dict['category_medium_threshold']))
+    @staticmethod
+    def etl_log_schema() -> StructType:
+        """Schema for ETL execution logs."""
+        return StructType([
+            StructField("log_id", StringType(), nullable=False),
+            StructField("etl_run_id", StringType(), nullable=False),
+            StructField("execution_date", DateType(), nullable=False),
+            StructField("execution_time", StringType(), nullable=False),
+            StructField("process_step", StringType(), nullable=False),
+            StructField("status", StringType(), nullable=False),
+            StructField("records_processed", IntegerType(), nullable=False),
+            StructField("records_success", IntegerType(), nullable=False),
+            StructField("records_error", IntegerType(), nullable=False),
+            StructField("message", StringType(), nullable=True),
+            StructField("created_at", TimestampType(), nullable=True),
+            StructField("created_by", StringType(), nullable=True),
+        ])
 
 
-# Global statistics tracking (migrated from ZETL_TOP)
 @dataclass
-class ETLStatistics:
-    """Global statistics for ETL execution."""
-    total_extracted: int = 0
-    total_transformed: int = 0
-    total_loaded: int = 0
-    errors_count: int = 0
-    warnings_count: int = 0
+class ETLConfig:
+    """Main ETL configuration class combining all constants."""
+    status: StatusCodes = field(default_factory=StatusCodes)
+    steps: ProcessSteps = field(default_factory=ProcessSteps)
+    categories: SaleCategories = field(default_factory=SaleCategories)
+    business_rules: BusinessRules = field(default_factory=BusinessRules)
+    defaults: ETLDefaults = field(default_factory=ETLDefaults)
+    prefixes: IDPrefixes = field(default_factory=IDPrefixes)
+    messages: Messages = field(default_factory=Messages)
+    schemas: Schemas = field(default_factory=Schemas)
     
-    def reset(self) -> None:
-        """Reset all statistics to zero."""
-        self.total_extracted = 0
-        self.total_transformed = 0
-        self.total_loaded = 0
-        self.errors_count = 0
-        self.warnings_count = 0
-    
-    def to_dict(self) -> Dict[str, int]:
-        """Convert statistics to dictionary."""
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary format."""
         return {
-            'total_extracted': self.total_extracted,
-            'total_transformed': self.total_transformed,
-            'total_loaded': self.total_loaded,
-            'errors_count': self.errors_count,
-            'warnings_count': self.warnings_count,
+            'status_codes': {
+                'new': self.status.NEW,
+                'processed': self.status.PROCESSED,
+                'error': self.status.ERROR,
+                'warning': self.status.WARNING,
+                'success': self.status.SUCCESS,
+                'info': self.status.INFO,
+            },
+            'process_steps': {
+                'init': self.steps.INIT,
+                'extract': self.steps.EXTRACT,
+                'transform': self.steps.TRANSFORM,
+                'load': self.steps.LOAD,
+                'validate': self.steps.VALIDATE,
+                'complete': self.steps.COMPLETE,
+                'error': self.steps.ERROR,
+            },
+            'categories': {
+                'high': self.categories.HIGH,
+                'medium': self.categories.MEDIUM,
+                'low': self.categories.LOW,
+            },
+            'business_rules': {
+                'discount_qty_tier1': self.business_rules.DISCOUNT_QTY_TIER1,
+                'discount_qty_tier2': self.business_rules.DISCOUNT_QTY_TIER2,
+                'discount_rate_tier1': str(self.business_rules.DISCOUNT_RATE_TIER1),
+                'discount_rate_tier2': str(self.business_rules.DISCOUNT_RATE_TIER2),
+                'tax_rate': str(self.business_rules.TAX_RATE),
+                'cost_ratio': str(self.business_rules.COST_RATIO),
+                'category_high_threshold': str(self.business_rules.CATEGORY_HIGH_THRESHOLD),
+                'category_medium_threshold': str(self.business_rules.CATEGORY_MEDIUM_THRESHOLD),
+            },
+            'etl_defaults': {
+                'batch_size': self.defaults.BATCH_SIZE,
+                'commit_interval': self.defaults.COMMIT_INTERVAL,
+                'retry_attempts': self.defaults.RETRY_ATTEMPTS,
+                'timeout_seconds': self.defaults.TIMEOUT_SECONDS,
+                'parallel_jobs': self.defaults.PARALLEL_JOBS,
+            },
+            'id_prefixes': {
+                'etl_run': self.prefixes.ETL_RUN,
+                'log_id': self.prefixes.LOG_ID,
+                'analytics_id': self.prefixes.ANALYTICS_ID,
+            },
         }
+
+
+# Global configuration instance
+config = ETLConfig()
