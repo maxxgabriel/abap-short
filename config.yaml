@@ -1,120 +1,104 @@
-# ETL Logger Configuration
-# Corresponds to ABAP ZCL_ETL_CONSTANTS and system configuration
+# ETL Configuration File
 
-# Delta Lake Configuration
-delta_lake:
-  audit_log_path: "/mnt/delta/etl_audit_logs"
-  checkpoint_location: "/mnt/delta/checkpoints/etl_logs"
-  
-  # Delta table properties
-  properties:
-    delta.autoOptimize.optimizeWrite: "true"
-    delta.autoOptimize.autoCompact: "true"
-    delta.logRetentionDuration: "interval 30 days"
-    delta.deletedFileRetentionDuration: "interval 7 days"
+# Spark Configuration
+spark:
+  app_name: "sales_etl_loader"
+  master: "local[*]"
+  config:
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
 
-# Logging Configuration
-logging:
-  # ETL run ID prefix (corresponds to ABAP gc_prefix_etl_run)
-  etl_run_prefix: "ETL"
-  
-  # Log ID prefix (corresponds to ABAP gc_prefix_log_id)
-  log_id_prefix: "LOG"
-  
-  # Console output settings
-  console_output: true
-  verbose: true
-  
-  # Log retention
-  retention_days: 90
+# Extract Configuration
+extract:
+  source_path: "/data/raw/sales"
+  source_format: "parquet"
+  date_column: "trans_date"
+  status_column: "status"
+  filter_status: "N"  # New records only
 
-# Status Codes (corresponds to ABAP gc_status)
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
-
-# Process Steps (corresponds to ABAP gc_step)
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# ETL Configuration Defaults (corresponds to ABAP constants)
-etl_defaults:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
-
-# Business Rules (from ABAP ZCL_ETL_CONSTANTS)
-business_rules:
-  # Discount thresholds
+# Transform Configuration
+transform:
   discount_qty_tier1: 10
   discount_qty_tier2: 15
   discount_rate_tier1: 0.05
   discount_rate_tier2: 0.10
-  
-  # Tax rate
   tax_rate: 0.08
-  
-  # Cost ratio
   cost_ratio: 0.60
-  
-  # Category thresholds
   category_high_threshold: 2000.00
   category_medium_threshold: 500.00
 
-# Message Templates (corresponds to ABAP gc_msg_* constants)
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+# Load Configuration
+load:
+  target_path: "/data/analytics/sales"
+  target_format: "parquet"
+  write_mode: "append"  # append, overwrite, errorifexists
+  partition_columns:
+    - "trans_date"
+    - "region"
+  write_options:
+    compression: "snappy"
+    maxRecordsPerFile: 100000
+  expected_columns:
+    - analytics_id
+    - trans_date
+    - customer_id
+    - product_id
+    - total_quantity
+    - gross_amount
+    - net_amount
+    - discount_amount
+    - tax_amount
+    - currency
+    - sales_rep
+    - region
+    - profit_margin
+    - category
+    - etl_run_id
+    - loaded_at
+    - loaded_by
 
-# Spark Configuration
-spark:
-  app_name: "Sales_ETL_Logger"
-  
-  # Delta Lake extensions
-  extensions:
-    - "io.delta.sql.DeltaSparkSessionExtension"
-  
-  # Catalog configuration
-  catalog_implementation: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
-  
-  # Memory settings
-  driver_memory: "4g"
-  executor_memory: "4g"
-  executor_cores: 2
-  
-  # Serialization
-  serializer: "org.apache.spark.serializer.KryoSerializer"
+# Logging Configuration
+logging:
+  log_path: "/data/logs/etl"
+  persist_logs: true
+  log_level: "INFO"
 
-# Monitoring and Alerts
-monitoring:
-  enable_metrics: true
-  metrics_path: "/mnt/metrics/etl_logger"
-  
-  # Alert thresholds
-  alert_on_error_count: 10
-  alert_on_duration_seconds: 7200
+# Error Handling
+error_handling:
+  error_path: "/data/errors/sales"
+  max_error_threshold: 0.05  # 5% error threshold
+  continue_on_error: true
 
-# Testing Configuration
-testing:
-  test_mode: false
-  sample_size: 100
-  mock_data_enabled: false
+# Business Rules
+business_rules:
+  status_codes:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+  
+  categories:
+    high: "HIGH"
+    medium: "MEDIUM"
+    low: "LOW"
+  
+  steps:
+    init: "INIT"
+    extract: "EXTRACT"
+    transform: "TRANSFORM"
+    load: "LOAD"
+    validate: "VALIDATE"
+    complete: "COMPLETE"
+    error: "ERROR"
+
+# Performance Tuning
+performance:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  enable_caching: true
+  repartition_before_write: true
+  target_partition_size: 128  # MB
