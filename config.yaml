@@ -1,15 +1,107 @@
-# ETL Logger Configuration
-# Migrated from ABAP ZCL_ETL_CONSTANTS
+# ETL Configuration File
+# Sales Data ETL Process Configuration
+
+# Source Configuration
+source:
+  # Source table/database name
+  table_name: "sales_raw"
+  
+  # Date range for extraction (days back from today)
+  default_days_back: 7
+  
+  # Maximum records to extract per batch
+  max_records_per_batch: 10000
+  
+  # Filter criteria
+  filters:
+    status: "N"  # New records only
+
+# Target Configuration
+target:
+  # Target table/database name
+  table_name: "sales_analytics"
+  
+  # Write mode: overwrite, append, upsert
+  write_mode: "append"
+  
+  # Partition columns
+  partition_by:
+    - "trans_date"
+
+# Business Rules
+business_rules:
+  # Discount tiers
+  discount:
+    tier1:
+      quantity_threshold: 10
+      discount_rate: 0.05
+    tier2:
+      quantity_threshold: 15
+      discount_rate: 0.10
+  
+  # Tax configuration
+  tax:
+    rate: 0.08
+  
+  # Cost calculation
+  cost:
+    ratio: 0.60  # Cost is 60% of unit price
+  
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+
+# ETL Processing Configuration
+processing:
+  # Batch size for processing
+  batch_size: 1000
+  
+  # Commit interval (records)
+  commit_interval: 500
+  
+  # Number of parallel workers
+  parallel_workers: 4
+  
+  # Retry configuration
+  retry:
+    max_attempts: 3
+    backoff_seconds: 5
+  
+  # Timeout configuration (seconds)
+  timeout:
+    extract: 3600
+    transform: 1800
+    load: 3600
+    total: 7200
 
 # Logging Configuration
 logging:
-  level: INFO  # DEBUG, INFO, WARNING, ERROR
-  console_output: true
-  persist_logs: true
-  log_format: "%(asctime)s - %(name)s - [%(levelname)s] - %(message)s"
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Log output
+  console:
+    enabled: true
+    level: "INFO"
+  
+  file:
+    enabled: true
+    path: "logs/etl_{run_id}.log"
+    level: "DEBUG"
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+  
+  # Database logging
+  database:
+    enabled: true
+    table: "etl_log"
 
-# Status Codes (from ABAP gc_status)
-status_codes:
+# Status Codes
+status:
   new: "N"
   processed: "P"
   error: "E"
@@ -17,51 +109,93 @@ status_codes:
   success: "S"
   info: "I"
 
-# Process Steps (from ABAP gc_step)
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# ETL Configuration
-etl:
-  default_batch_size: 1000
-  default_commit_interval: 500
-  default_retry_attempts: 3
-  default_timeout_seconds: 3600
-  run_id_prefix: "ETL"
-  log_id_prefix: "LOG"
-
-# Storage Configuration
-storage:
-  log_path: "s3://etl-bucket/logs"  # Change to your storage path
-  log_format: "parquet"  # parquet, delta, csv
-  log_write_mode: "append"  # append, overwrite
-  partition_by:
-    - "execution_date"
-
-# Message Templates (from ABAP gc_msg_*)
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+# ID Prefixes
+id_prefixes:
+  etl_run: "ETL"
+  log: "LOG"
+  analytics: "ANL"
 
 # Spark Configuration
 spark:
-  app_name: "ETL_Logger"
-  master: "local[*]"  # Change for cluster deployment
+  app_name: "SalesETL"
+  
+  # Spark configuration properties
   config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.sql.shuffle.partitions": "200"
+    "spark.serializer": "org.apache.spark.serializer.KryoSerializer"
+    "spark.sql.sources.partitionOverwriteMode": "dynamic"
+  
+  # Resource allocation
+  resources:
+    executor_memory: "4g"
+    executor_cores: 2
+    driver_memory: "2g"
+
+# Data Quality Rules
+data_quality:
+  # Required fields
+  required_fields:
+    extract:
+      - "trans_id"
+      - "trans_date"
+      - "customer_id"
+      - "product_id"
+      - "quantity"
+      - "unit_price"
+    
+    load:
+      - "analytics_id"
+      - "customer_id"
+      - "product_id"
+      - "gross_amount"
+      - "net_amount"
+  
+  # Value ranges
+  ranges:
+    quantity:
+      min: 0
+      max: 1000000
+    unit_price:
+      min: 0.01
+      max: 1000000.00
+    profit_margin:
+      min: -100.00
+      max: 100.00
+  
+  # Valid categories
+  valid_categories:
+    - "HIGH"
+    - "MEDIUM"
+    - "LOW"
+
+# Error Handling
+error_handling:
+  # Continue processing on errors
+  continue_on_error: true
+  
+  # Maximum error percentage before aborting
+  max_error_percentage: 5.0
+  
+  # Save failed records
+  save_failed_records: true
+  failed_records_path: "errors/failed_records_{run_id}.csv"
+
+# Monitoring and Alerting
+monitoring:
+  # Enable monitoring
+  enabled: true
+  
+  # Metrics to track
+  metrics:
+    - "records_processed"
+    - "records_success"
+    - "records_error"
+    - "processing_time"
+    - "throughput"
+  
+  # Alert thresholds
+  alerts:
+    error_rate_threshold: 0.05
+    processing_time_threshold: 7200
