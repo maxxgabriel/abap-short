@@ -1,46 +1,61 @@
 """
-Unit tests for ETL Logger module.
+Unit tests for ETL Logger module
+Tests dataclass functionality and DataFrame persistence
 """
 import pytest
 from datetime import datetime
 from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+import tempfile
+import shutil
+import os
+
 from src.logger import ETLLogger, LogEntry, create_logger
-from src.utils import generate_etl_run_id
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def spark():
-    """Create a Spark session for testing."""
-    return (SparkSession.builder
-            .appName("ETLLoggerTest")
-            .master("local[2]")
-            .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse")
-            .getOrCreate())
+    """Create SparkSession for testing"""
+    spark = SparkSession.builder \
+        .appName("ETL_Logger_Test") \
+        .master("local[2]") \
+        .config("spark.sql.shuffle.partitions", "2") \
+        .getOrCreate()
+    
+    spark.sparkContext.setLogLevel("ERROR")
+    yield spark
+    spark.stop()
 
 
 @pytest.fixture
-def etl_run_id():
-    """Generate a test ETL run ID."""
-    return generate_etl_run_id()
+def test_config():
+    """Create test configuration"""
+    return {
+        'log_level': 'INFO',
+        'log_format': '%(asctime)s - %(levelname)s - %(message)s',
+        'log_output_path': '/tmp/test_etl_logs',
+        'log_write_mode': 'overwrite'
+    }
 
 
 @pytest.fixture
-def logger(spark, etl_run_id, tmp_path):
-    """Create a logger instance for testing."""
-    log_path = str(tmp_path / "test_logs")
-    return ETLLogger(etl_run_id, spark, log_path)
+def temp_dir():
+    """Create temporary directory for test outputs"""
+    temp_path = tempfile.mkdtemp()
+    yield temp_path
+    shutil.rmtree(temp_path)
 
 
 class TestLogEntry:
-    """Tests for LogEntry dataclass."""
-
+    """Test LogEntry dataclass"""
+    
     def test_log_entry_creation(self):
-        """Test creating a log entry with all fields."""
+        """Test creating a log entry"""
         entry = LogEntry(
             log_id="LOG001",
             etl_run_id="ETL001",
-            execution_date="2024-01-15",
-            execution_time="10:30:00",
+            execution_date=datetime.now(),
+            execution_time=datetime.now(),
             process_step="EXTRACT",
             status="S",
             records_processed=100,
@@ -48,252 +63,274 @@ class TestLogEntry:
             records_error=5,
             message="Test message"
         )
-
+        
         assert entry.log_id == "LOG001"
         assert entry.etl_run_id == "ETL001"
+        assert entry.process_step == "EXTRACT"
         assert entry.status == "S"
         assert entry.records_processed == 100
-        assert entry.created_at is not None
-        assert entry.created_by == "etl_system"
-
+        assert entry.records_success == 95
+        assert entry.records_error == 5
+        assert entry.message == "Test message"
+    
     def test_log_entry_defaults(self):
-        """Test log entry with default values."""
+        """Test default values in log entry"""
         entry = LogEntry(
-            log_id="LOG002",
-            etl_run_id="ETL002",
-            execution_date="2024-01-15",
-            execution_time="10:30:00",
-            process_step="TRANSFORM",
+            log_id="LOG001",
+            etl_run_id="ETL001",
+            execution_date=datetime.now(),
+            execution_time=datetime.now(),
+            process_step="EXTRACT",
             status="S"
         )
-
+        
         assert entry.records_processed == 0
         assert entry.records_success == 0
         assert entry.records_error == 0
         assert entry.message == ""
-        assert entry.created_at is not None
+        assert entry.created_by == "etl_system"
+    
+    def test_log_entry_to_dict(self):
+        """Test converting log entry to dictionary"""
+        now = datetime.now()
+        entry = LogEntry(
+            log_id="LOG001",
+            etl_run_id="ETL001",
+            execution_date=now,
+            execution_time=now,
+            process_step="EXTRACT",
+            status="S",
+            message="Test"
+        )
+        
+        entry_dict = entry.to_dict()
+        
+        assert isinstance(entry_dict, dict)
+        assert entry_dict['log_id'] == "LOG001"
+        assert entry_dict['process_step'] == "EXTRACT"
+        assert 'execution_date' in entry_dict
+        assert 'created_at' in entry_dict
 
 
 class TestETLLogger:
-    """Tests for ETLLogger class."""
-
-    def test_logger_initialization(self, logger, etl_run_id):
-        """Test logger initialization."""
-        assert logger.etl_run_id == etl_run_id
-        assert logger.spark is not None
-        assert len(logger.get_log_entries()) == 1  # Init log
-
-    def test_log_message(self, logger):
-        """Test logging a message."""
+    """Test ETLLogger class"""
+    
+    def test_logger_initialization(self, spark, test_config):
+        """Test logger initialization"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        
+        assert logger.etl_run_id == "ETL001"
+        assert logger.spark == spark
+        assert logger.config == test_config
+        assert len(logger.log_entries) == 0
+    
+    def test_generate_log_id(self, spark, test_config):
+        """Test unique log ID generation"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        
+        log_id1 = logger._generate_log_id()
+        log_id2 = logger._generate_log_id()
+        
+        assert log_id1.startswith("LOG")
+        assert log_id2.startswith("LOG")
+        assert log_id1 != log_id2
+    
+    def test_log_message(self, spark, test_config):
+        """Test logging a message"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        
         logger.log_message(
             step=ETLLogger.STEP_EXTRACT,
             status=ETLLogger.STATUS_SUCCESS,
-            message="Test extraction",
+            message="Extraction completed",
             records_processed=100,
-            records_success=100
+            records_success=98,
+            records_error=2
         )
-
-        entries = logger.get_log_entries()
-        assert len(entries) >= 2  # Init + extract log
         
-        # Find the extract log entry
-        extract_log = next(e for e in entries if e.process_step == ETLLogger.STEP_EXTRACT)
-        assert extract_log.status == ETLLogger.STATUS_SUCCESS
-        assert extract_log.records_processed == 100
-
-    def test_multiple_log_messages(self, logger):
-        """Test logging multiple messages."""
-        steps = [
-            ETLLogger.STEP_EXTRACT,
-            ETLLogger.STEP_TRANSFORM,
-            ETLLogger.STEP_LOAD
-        ]
-
-        for step in steps:
-            logger.log_message(
-                step=step,
-                status=ETLLogger.STATUS_SUCCESS,
-                message=f"Processing {step}"
-            )
-
-        entries = logger.get_log_entries()
-        assert len(entries) >= len(steps) + 1  # Init + all steps
-
-        # Verify all steps are logged
-        logged_steps = [e.process_step for e in entries]
-        for step in steps:
-            assert step in logged_steps
-
-    def test_log_with_errors(self, logger):
-        """Test logging error messages."""
+        assert len(logger.log_entries) == 1
+        entry = logger.log_entries[0]
+        
+        assert entry.process_step == ETLLogger.STEP_EXTRACT
+        assert entry.status == ETLLogger.STATUS_SUCCESS
+        assert entry.records_processed == 100
+        assert entry.records_success == 98
+        assert entry.records_error == 2
+        assert "Extraction completed" in entry.message
+    
+    def test_multiple_log_messages(self, spark, test_config):
+        """Test logging multiple messages"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        
         logger.log_message(
-            step=ETLLogger.STEP_LOAD,
-            status=ETLLogger.STATUS_ERROR,
-            message="Load failed",
-            records_processed=100,
-            records_success=90,
-            records_error=10
+            step=ETLLogger.STEP_INIT,
+            status=ETLLogger.STATUS_INFO,
+            message="Starting ETL"
         )
-
-        entries = logger.get_log_entries()
-        error_log = next(e for e in entries 
-                        if e.process_step == ETLLogger.STEP_LOAD 
-                        and e.status == ETLLogger.STATUS_ERROR)
         
-        assert error_log.records_error == 10
-        assert "failed" in error_log.message.lower()
-
-    def test_to_dataframe(self, logger):
-        """Test converting logs to DataFrame."""
         logger.log_message(
             step=ETLLogger.STEP_EXTRACT,
             status=ETLLogger.STATUS_SUCCESS,
-            message="Test",
-            records_processed=50
+            message="Data extracted",
+            records_processed=100
         )
-
-        df = logger.to_dataframe()
-        assert df is not None
-        assert df.count() >= 2  # Init + extract log
-        assert "log_id" in df.columns
-        assert "etl_run_id" in df.columns
-        assert "process_step" in df.columns
-
-    def test_to_dataframe_empty(self, spark, etl_run_id):
-        """Test DataFrame creation with no logs."""
-        logger = ETLLogger(etl_run_id, spark, None)
-        logger._log_entries = []  # Clear init log
         
-        df = logger.to_dataframe()
-        assert df is not None
-        assert df.count() == 0
-
-    def test_persist_logs(self, logger, tmp_path):
-        """Test persisting logs to storage."""
-        # Log some messages
-        for i in range(5):
-            logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_SUCCESS,
-                message=f"Test message {i}",
-                records_processed=10 * (i + 1)
-            )
-
-        # Persist logs
-        success = logger.persist_logs()
-        assert success is True
-
-        # Verify logs were written
-        df = logger.spark.read.format("delta").load(logger.log_table_path)
-        assert df.count() >= 5
-
-    def test_persist_logs_no_path(self, spark, etl_run_id):
-        """Test persist logs when no path is configured."""
-        logger = ETLLogger(etl_run_id, spark, None)
-        success = logger.persist_logs()
-        assert success is False
-
-    def test_get_summary_statistics(self, logger):
-        """Test summary statistics calculation."""
-        # Log various messages
-        logger.log_message(
-            step=ETLLogger.STEP_EXTRACT,
-            status=ETLLogger.STATUS_SUCCESS,
-            message="Extract",
-            records_processed=100,
-            records_success=100
-        )
         logger.log_message(
             step=ETLLogger.STEP_TRANSFORM,
-            status=ETLLogger.STATUS_WARNING,
-            message="Transform warning",
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Data transformed",
+            records_processed=100
+        )
+        
+        assert len(logger.log_entries) == 3
+        assert logger.log_entries[0].process_step == ETLLogger.STEP_INIT
+        assert logger.log_entries[1].process_step == ETLLogger.STEP_EXTRACT
+        assert logger.log_entries[2].process_step == ETLLogger.STEP_TRANSFORM
+    
+    def test_get_etl_run_id(self, spark, test_config):
+        """Test getting ETL run ID"""
+        logger = ETLLogger("ETL123", spark, test_config)
+        assert logger.get_etl_run_id() == "ETL123"
+    
+    def test_get_log_entries_as_dataframe_empty(self, spark, test_config):
+        """Test getting empty DataFrame"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        df = logger.get_log_entries_as_dataframe()
+        
+        assert df.count() == 0
+        assert 'log_id' in df.columns
+        assert 'etl_run_id' in df.columns
+        assert 'process_step' in df.columns
+    
+    def test_get_log_entries_as_dataframe_with_data(self, spark, test_config):
+        """Test getting DataFrame with data"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        
+        # Add some log entries
+        logger.log_message(
+            step=ETLLogger.STEP_EXTRACT,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Test 1",
+            records_processed=50
+        )
+        
+        logger.log_message(
+            step=ETLLogger.STEP_TRANSFORM,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Test 2",
+            records_processed=50
+        )
+        
+        df = logger.get_log_entries_as_dataframe()
+        
+        assert df.count() == 2
+        assert df.filter("process_step = 'EXTRACT'").count() == 1
+        assert df.filter("process_step = 'TRANSFORM'").count() == 1
+        
+        # Verify data types
+        assert dict(df.dtypes)['records_processed'] == 'int'
+        assert dict(df.dtypes)['log_id'] == 'string'
+    
+    def test_persist_logs(self, spark, test_config, temp_dir):
+        """Test persisting logs to storage"""
+        test_config['log_output_path'] = temp_dir
+        logger = ETLLogger("ETL001", spark, test_config)
+        
+        # Add log entries
+        logger.log_message(
+            step=ETLLogger.STEP_EXTRACT,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Test message"
+        )
+        
+        # Persist logs
+        logger.persist_logs()
+        
+        # Verify files were created
+        assert os.path.exists(temp_dir)
+        
+        # Read back and verify
+        df_read = spark.read.parquet(temp_dir)
+        assert df_read.count() == 1
+    
+    def test_get_summary_statistics_empty(self, spark, test_config):
+        """Test summary statistics with no logs"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        stats = logger.get_summary_statistics()
+        
+        assert stats['total_entries'] == 0
+        assert stats['success_count'] == 0
+        assert stats['error_count'] == 0
+        assert stats['warning_count'] == 0
+    
+    def test_get_summary_statistics_with_data(self, spark, test_config):
+        """Test summary statistics with log data"""
+        logger = ETLLogger("ETL001", spark, test_config)
+        
+        logger.log_message(
+            step=ETLLogger.STEP_EXTRACT,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Success",
             records_processed=100,
             records_success=95,
             records_error=5
         )
+        
+        logger.log_message(
+            step=ETLLogger.STEP_TRANSFORM,
+            status=ETLLogger.STATUS_ERROR,
+            message="Error",
+            records_processed=50,
+            records_error=50
+        )
+        
         logger.log_message(
             step=ETLLogger.STEP_LOAD,
-            status=ETLLogger.STATUS_ERROR,
-            message="Load error",
-            records_processed=95,
-            records_success=90,
+            status=ETLLogger.STATUS_WARNING,
+            message="Warning",
+            records_processed=30,
+            records_success=25,
             records_error=5
         )
-
+        
         stats = logger.get_summary_statistics()
         
-        assert stats["total_logs"] >= 4  # Init + 3 logs
-        assert stats["success_count"] >= 1
-        assert stats["error_count"] >= 1
-        assert stats["warning_count"] >= 1
-        assert stats["total_records_processed"] == 295
-        assert stats["total_records_success"] == 285
-        assert stats["total_records_error"] == 10
-
-    def test_unique_log_ids(self, logger):
-        """Test that log IDs are unique."""
-        for i in range(10):
-            logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_SUCCESS,
-                message=f"Message {i}"
-            )
-
-        entries = logger.get_log_entries()
-        log_ids = [e.log_id for e in entries]
+        assert stats['total_entries'] == 3
+        assert stats['success_count'] == 1
+        assert stats['error_count'] == 1
+        assert stats['warning_count'] == 1
+        assert stats['total_records_processed'] == 180
+        assert stats['total_records_success'] == 120
+        assert stats['total_records_error'] == 60
+    
+    def test_clear_logs(self, spark, test_config):
+        """Test clearing log entries"""
+        logger = ETLLogger("ETL001", spark, test_config)
         
-        # All log IDs should be unique
-        assert len(log_ids) == len(set(log_ids))
-
-    def test_get_etl_run_id(self, logger, etl_run_id):
-        """Test getting ETL run ID."""
-        assert logger.get_etl_run_id() == etl_run_id
-
-    def test_close_logger(self, logger):
-        """Test closing the logger."""
-        initial_count = len(logger.get_log_entries())
-        logger.close()
+        logger.log_message(
+            step=ETLLogger.STEP_EXTRACT,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Test"
+        )
         
-        # Should have one more log entry for close
-        assert len(logger.get_log_entries()) == initial_count + 1
-
-
-class TestCreateLogger:
-    """Tests for logger factory function."""
-
-    def test_create_logger(self, spark, etl_run_id, tmp_path):
-        """Test creating logger with factory function."""
-        config = {
-            'log_table_path': str(tmp_path / "test_logs")
-        }
+        assert len(logger.log_entries) == 1
         
-        logger = create_logger(etl_run_id, spark, config)
+        logger.clear_logs()
         
-        assert logger is not None
-        assert logger.etl_run_id == etl_run_id
-        assert logger.log_table_path == config['log_table_path']
-
-    def test_create_logger_no_path(self, spark, etl_run_id):
-        """Test creating logger without log path."""
-        config = {}
-        logger = create_logger(etl_run_id, spark, config)
-        
-        assert logger is not None
-        assert logger.log_table_path is None
-
-
-class TestLoggerConstants:
-    """Tests for logger constants."""
-
+        assert len(logger.log_entries) == 0
+        assert logger._log_counter == 0
+    
     def test_status_constants(self):
-        """Test status constants are defined."""
+        """Test status constants match ABAP"""
         assert ETLLogger.STATUS_SUCCESS == 'S'
         assert ETLLogger.STATUS_ERROR == 'E'
         assert ETLLogger.STATUS_WARNING == 'W'
         assert ETLLogger.STATUS_INFO == 'I'
-
+        assert ETLLogger.STATUS_NEW == 'N'
+        assert ETLLogger.STATUS_PROCESSED == 'P'
+    
     def test_step_constants(self):
-        """Test step constants are defined."""
+        """Test step constants match ABAP"""
         assert ETLLogger.STEP_INIT == 'INIT'
         assert ETLLogger.STEP_EXTRACT == 'EXTRACT'
         assert ETLLogger.STEP_TRANSFORM == 'TRANSFORM'
@@ -303,32 +340,87 @@ class TestLoggerConstants:
         assert ETLLogger.STEP_ERROR == 'ERROR'
 
 
-class TestLoggerSchema:
-    """Tests for log schema."""
+class TestFactoryFunction:
+    """Test factory function"""
+    
+    def test_create_logger(self, spark, test_config):
+        """Test creating logger via factory function"""
+        logger = create_logger("ETL999", spark, test_config)
+        
+        assert isinstance(logger, ETLLogger)
+        assert logger.get_etl_run_id() == "ETL999"
+        assert logger.spark == spark
+        assert logger.config == test_config
 
-    def test_log_schema_structure(self):
-        """Test log schema has required fields."""
-        schema = ETLLogger.LOG_SCHEMA
-        field_names = [field.name for field in schema.fields]
-        
-        required_fields = [
-            "log_id", "etl_run_id", "execution_date", 
-            "execution_time", "process_step", "status",
-            "records_processed", "records_success", "records_error",
-            "message", "created_at", "created_by"
-        ]
-        
-        for field in required_fields:
-            assert field in field_names
 
-    def test_log_schema_types(self):
-        """Test log schema field types."""
-        from pyspark.sql.types import StringType, IntegerType
+class TestIntegration:
+    """Integration tests"""
+    
+    def test_full_logging_workflow(self, spark, test_config, temp_dir):
+        """Test complete logging workflow"""
+        test_config['log_output_path'] = temp_dir
         
-        schema = ETLLogger.LOG_SCHEMA
-        field_types = {field.name: type(field.dataType) for field in schema.fields}
+        # Create logger
+        logger = create_logger("ETL_INTEGRATION_001", spark, test_config)
         
-        assert field_types["log_id"] == StringType
-        assert field_types["records_processed"] == IntegerType
-        assert field_types["records_success"] == IntegerType
-        assert field_types["records_error"] == IntegerType
+        # Simulate ETL process logging
+        logger.log_message(
+            step=ETLLogger.STEP_INIT,
+            status=ETLLogger.STATUS_INFO,
+            message="ETL process initialized"
+        )
+        
+        logger.log_message(
+            step=ETLLogger.STEP_EXTRACT,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Extracted data from source",
+            records_processed=1000,
+            records_success=1000
+        )
+        
+        logger.log_message(
+            step=ETLLogger.STEP_TRANSFORM,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Transformed data",
+            records_processed=1000,
+            records_success=980,
+            records_error=20
+        )
+        
+        logger.log_message(
+            step=ETLLogger.STEP_LOAD,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="Loaded data to target",
+            records_processed=980,
+            records_success=980
+        )
+        
+        logger.log_message(
+            step=ETLLogger.STEP_COMPLETE,
+            status=ETLLogger.STATUS_SUCCESS,
+            message="ETL process completed successfully"
+        )
+        
+        # Get statistics
+        stats = logger.get_summary_statistics()
+        assert stats['total_entries'] == 5
+        assert stats['success_count'] == 4
+        
+        # Get DataFrame
+        df = logger.get_log_entries_as_dataframe()
+        assert df.count() == 5
+        
+        # Persist logs
+        logger.persist_logs()
+        
+        # Verify persistence
+        df_read = spark.read.parquet(temp_dir)
+        assert df_read.count() == 5
+        
+        # Verify all steps are present
+        steps = [row.process_step for row in df_read.collect()]
+        assert ETLLogger.STEP_INIT in steps
+        assert ETLLogger.STEP_EXTRACT in steps
+        assert ETLLogger.STEP_TRANSFORM in steps
+        assert ETLLogger.STEP_LOAD in steps
+        assert ETLLogger.STEP_COMPLETE in steps
