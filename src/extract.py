@@ -1,37 +1,37 @@
 """
-Data Extraction Module
-Extracts raw sales data from source database
+Data extraction module for Sales ETL system.
+Extracts raw sales data from source systems.
 """
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
-from typing import Optional
+from pyspark.sql.types import (
+    StructType, StructField, StringType, DateType, 
+    IntegerType, DecimalType, TimestampType
+)
 from datetime import datetime
+from typing import Tuple
 import logging
 
 from src.logger import ETLLogger
-from src.exceptions import ETLExtractError
 
 
-class SalesDataExtractor:
-    """Extracts raw sales data from source systems"""
+class DataExtractor:
+    """Extracts raw sales data from source tables."""
     
-    def __init__(self, spark: SparkSession, config: dict, logger: ETLLogger):
+    def __init__(self, spark: SparkSession, logger: ETLLogger):
         """
-        Initialize the extractor
+        Initialize the data extractor.
         
         Args:
-            spark: Active SparkSession
-            config: Configuration dictionary
+            spark: SparkSession instance
             logger: ETL logger instance
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
-        self._setup_schema()
+        self._raw_sales_schema = self._get_raw_sales_schema()
     
-    def _setup_schema(self) -> None:
-        """Define schema for raw sales data"""
-        self.raw_sales_schema = StructType([
+    def _get_raw_sales_schema(self) -> StructType:
+        """Define schema for raw sales data."""
+        return StructType([
             StructField("trans_id", StringType(), False),
             StructField("trans_date", DateType(), False),
             StructField("customer_id", StringType(), False),
@@ -41,28 +41,27 @@ class SalesDataExtractor:
             StructField("currency", StringType(), False),
             StructField("sales_rep", StringType(), True),
             StructField("region", StringType(), True),
-            StructField("status", StringType(), False)
+            StructField("status", StringType(), False),
+            StructField("created_at", TimestampType(), True),
+            StructField("created_by", StringType(), True)
         ])
     
     def extract_data(
-        self,
-        from_date: str,
+        self, 
+        from_date: str, 
         to_date: str,
-        test_mode: bool = False
-    ) -> DataFrame:
+        source_table: str = "zsales_raw"
+    ) -> Tuple[DataFrame, bool]:
         """
-        Extract raw sales data from source
+        Extract raw sales data for the given date range.
         
         Args:
             from_date: Start date (YYYY-MM-DD)
             to_date: End date (YYYY-MM-DD)
-            test_mode: If True, return sample data
+            source_table: Source table name
             
         Returns:
-            DataFrame containing raw sales data
-            
-        Raises:
-            ETLExtractError: If extraction fails
+            Tuple of (DataFrame with extracted data, success flag)
         """
         try:
             self.logger.log_message(
@@ -71,10 +70,13 @@ class SalesDataExtractor:
                 message=f"Starting extraction from {from_date} to {to_date}"
             )
             
-            if test_mode:
-                df = self._generate_sample_data(from_date, to_date)
-            else:
-                df = self._extract_from_database(from_date, to_date)
+            # Read from source table
+            # In production, this would read from actual database
+            df = self.spark.read \
+                .format("delta") \
+                .table(source_table) \
+                .filter(f"trans_date >= '{from_date}' AND trans_date <= '{to_date}'") \
+                .filter("status = 'N'")
             
             record_count = df.count()
             
@@ -86,7 +88,7 @@ class SalesDataExtractor:
                 message=f"Extracted {record_count} records successfully"
             )
             
-            return df
+            return df, True
             
         except Exception as e:
             self.logger.log_message(
@@ -94,92 +96,28 @@ class SalesDataExtractor:
                 status="E",
                 message=f"Extraction failed: {str(e)}"
             )
-            raise ETLExtractError(f"Failed to extract data: {str(e)}") from e
+            return self.spark.createDataFrame([], self._raw_sales_schema), False
     
-    def _extract_from_database(self, from_date: str, to_date: str) -> DataFrame:
+    def create_sample_data(self) -> DataFrame:
         """
-        Extract data from source database
+        Create sample raw sales data for testing.
         
-        Args:
-            from_date: Start date
-            to_date: End date
-            
-        Returns:
-            DataFrame with extracted data
-        """
-        db_config = self.config['database']['source']
-        
-        query = f"""
-        (SELECT trans_id, trans_date, customer_id, product_id, 
-                quantity, unit_price, currency, sales_rep, region, status
-         FROM {db_config['table']}
-         WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
-         AND status = '{self.config['status_codes']['new']}') AS sales_data
-        """
-        
-        df = self.spark.read \
-            .format(db_config['format']) \
-            .option("url", db_config['url']) \
-            .option("dbtable", query) \
-            .option("driver", db_config['driver']) \
-            .option("user", db_config['user']) \
-            .option("password", db_config['password']) \
-            .option("fetchsize", db_config['fetch_size']) \
-            .schema(self.raw_sales_schema) \
-            .load()
-        
-        return df
-    
-    def _generate_sample_data(self, from_date: str, to_date: str) -> DataFrame:
-        """
-        Generate sample data for testing
-        
-        Args:
-            from_date: Start date (unused in sample)
-            to_date: End date (unused in sample)
-            
         Returns:
             DataFrame with sample data
         """
+        from datetime import date
+        
         sample_data = [
-            ("T000001", datetime.now().date(), "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N"),
-            ("T000002", datetime.now().date(), "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
-            ("T000003", datetime.now().date(), "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N"),
-            ("T000004", datetime.now().date(), "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N"),
-            ("T000005", datetime.now().date(), "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N")
+            ("T000001", date.today(), "CUST001", "PROD001", 10, 99.99, 
+             "USD", "John Doe", "NORTH", "N", datetime.now(), "SYSTEM"),
+            ("T000002", date.today(), "CUST002", "PROD002", 5, 149.99,
+             "USD", "Jane Smith", "SOUTH", "N", datetime.now(), "SYSTEM"),
+            ("T000003", date.today(), "CUST003", "PROD001", 20, 99.99,
+             "USD", "John Doe", "EAST", "N", datetime.now(), "SYSTEM"),
+            ("T000004", date.today(), "CUST001", "PROD003", 3, 299.99,
+             "USD", "Bob Wilson", "WEST", "N", datetime.now(), "SYSTEM"),
+            ("T000005", date.today(), "CUST004", "PROD002", 15, 149.99,
+             "USD", "Jane Smith", "SOUTH", "N", datetime.now(), "SYSTEM")
         ]
         
-        df = self.spark.createDataFrame(sample_data, schema=self.raw_sales_schema)
-        return df
-    
-    def validate_extracted_data(self, df: DataFrame) -> bool:
-        """
-        Validate extracted data
-        
-        Args:
-            df: DataFrame to validate
-            
-        Returns:
-            True if valid, False otherwise
-        """
-        if df is None or df.count() == 0:
-            self.logger.log_message(
-                step="EXTRACT",
-                status="W",
-                message="No data extracted"
-            )
-            return False
-        
-        # Check for required columns
-        required_columns = [field.name for field in self.raw_sales_schema.fields]
-        missing_columns = set(required_columns) - set(df.columns)
-        
-        if missing_columns:
-            self.logger.log_message(
-                step="EXTRACT",
-                status="E",
-                message=f"Missing required columns: {missing_columns}"
-            )
-            return False
-        
-        return True
+        return self.spark.createDataFrame(sample_data, self._raw_sales_schema)
