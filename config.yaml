@@ -1,112 +1,44 @@
-# ETL System Configuration
-# Converted from ABAP package $ZETL configuration
-
-application:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  environment: "production"
-
-# Spark Configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"  # Change for cluster deployment
-  log_level: "WARN"
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-
-# Business Rules Configuration
-business_rules:
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
-  
-  tax:
-    rate: 0.08
-  
-  cost:
-    ratio: 0.60
-  
-  categorization:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+# ETL Configuration File
+# Override default constants with environment-specific values
 
 # ETL Processing Configuration
-etl_config:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
+batch_size: 1000
+commit_interval: 500
+retry_attempts: 3
+timeout_seconds: 3600
+parallel_jobs: 4
 
-# Database Configuration (parameterized)
-database:
-  raw_sales_table: "zsales_raw"
-  analytics_table: "zsales_analytics"
-  log_table: "zetl_log"
-  
-  # Connection parameters (override via environment variables)
-  jdbc_url: "${DB_JDBC_URL}"
-  jdbc_driver: "${DB_JDBC_DRIVER}"
-  jdbc_user: "${DB_USER}"
-  jdbc_password: "${DB_PASSWORD}"
+# Business Rules Configuration
+# Discount thresholds
+discount_qty_tier1: 10
+discount_qty_tier2: 15
 
-# File Paths
-paths:
-  input_data: "data/input"
-  output_data: "data/output"
-  logs: "logs"
-  checkpoints: "checkpoints"
+# Discount rates (as decimal strings for precision)
+discount_rate_tier1: "0.05"
+discount_rate_tier2: "0.10"
+
+# Tax rate
+tax_rate: "0.08"
+
+# Cost ratio for profit calculation
+cost_ratio: "0.60"
+
+# Category thresholds
+category_high_threshold: "2000.00"
+category_medium_threshold: "500.00"
+
+# Spark Configuration
+spark_app_name: "SalesETL"
+spark_master: "local[*]"
+spark_shuffle_partitions: 200
+
+# Data Paths
+raw_data_path: "data/raw/sales"
+analytics_data_path: "data/analytics/sales"
+log_path: "data/logs"
+checkpoint_path: "data/checkpoints"
 
 # Logging Configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
-  console_output: true
-
-# ID Generation Configuration
-id_generation:
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
-
-# Message Templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Status Codes
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
-
-# Process Steps
-process_steps:
-  - "INIT"
-  - "EXTRACT"
-  - "TRANSFORM"
-  - "LOAD"
-  - "VALIDATE"
-  - "COMPLETE"
-
-# Sale Categories
-sale_categories:
-  - "HIGH"
-  - "MEDIUM"
-  - "LOW"
+log_level: "INFO"
+enable_console_logging: true
+enable_file_logging: true
