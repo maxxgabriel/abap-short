@@ -1,159 +1,86 @@
-# ETL Configuration File
-# Sales Data ETL System
+# ETL Logger Configuration
+# Configuration for logging and ETL process parameters
 
-# Application Settings
-application:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  environment: "production"
+logging:
+  # Python logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: INFO
+  
+  # Whether to persist logs to storage (Delta Lake)
+  persist_to_storage: true
+  
+  # Log storage location
+  log_storage_path: /mnt/etl/logs
+  
+  # Log retention period (days)
+  retention_days: 90
+  
+  # Console logging format
+  console_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # File logging (optional)
+  file_logging:
+    enabled: false
+    path: /var/log/etl
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
 
-# Spark Configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-    spark.driver.memory: "4g"
-    spark.executor.memory: "4g"
-
-# Database Configuration
-database:
-  raw_table: "zsales_raw"
-  analytics_table: "zsales_analytics"
-  log_table: "zetl_log"
-  jdbc_url: "jdbc:postgresql://localhost:5432/etl_db"
-  driver: "org.postgresql.Driver"
-  connection_properties:
-    user: "etl_user"
-    password: "${DB_PASSWORD}"
-
-# ETL Process Configuration
 etl:
-  batch_size: 1000
+  # ETL run ID prefix
+  run_id_prefix: ETL
+  
+  # Default batch size for processing
+  default_batch_size: 1000
+  
+  # Commit interval for database operations
   commit_interval: 500
+  
+  # Number of retry attempts for failed operations
   retry_attempts: 3
+  
+  # Timeout in seconds
   timeout_seconds: 3600
-  parallel_jobs: 4
   
-  # Date range defaults
-  default_lookback_days: 7
-  
-  # Status codes
-  status:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
+  # Enable test mode (no actual data commits)
+  test_mode: false
 
-# Business Rules
 business_rules:
-  # Discount configuration
+  # Discount thresholds
   discount:
-    tier1:
-      quantity_threshold: 10
-      rate: 0.05
-    tier2:
-      quantity_threshold: 15
-      rate: 0.10
+    tier1_quantity: 10
+    tier1_rate: 0.05
+    tier2_quantity: 15
+    tier2_rate: 0.10
   
-  # Tax configuration
-  tax:
-    rate: 0.08
+  # Tax rate
+  tax_rate: 0.08
   
-  # Cost calculation
-  cost:
-    ratio: 0.60
+  # Cost ratio for profit calculation
+  cost_ratio: 0.60
   
   # Category thresholds
   category:
     high_threshold: 2000.00
     medium_threshold: 500.00
-    categories:
-      - "HIGH"
-      - "MEDIUM"
-      - "LOW"
 
-# Validation Rules
-validation:
-  required_fields:
-    raw_sales:
-      - trans_id
-      - trans_date
-      - customer_id
-      - product_id
-      - quantity
-      - unit_price
-      - currency
-    
-    analytics:
-      - analytics_id
-      - customer_id
-      - product_id
-      - gross_amount
-      - currency
-      - category
-  
-  currency_codes:
-    - "USD"
-    - "EUR"
-    - "GBP"
-    - "JPY"
-  
-  numeric_ranges:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: 0.01
-      max: 1000000.00
+status_codes:
+  new: 'N'
+  processed: 'P'
+  error: 'E'
+  warning: 'W'
+  success: 'S'
+  info: 'I'
 
-# Logging Configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+spark:
+  # Spark configuration
+  app_name: SalesETL
+  master: local[*]  # Change to yarn for cluster mode
   
-  # Log file configuration
-  file:
-    enabled: true
-    path: "logs/etl_{date}.log"
-    max_size_mb: 100
-    backup_count: 10
+  # Spark SQL settings
+  sql:
+    shuffle_partitions: 200
+    adaptive_enabled: true
   
-  # Database logging
-  database_logging:
-    enabled: true
-    batch_size: 100
-
-# ID Generation
-id_generation:
-  prefixes:
-    etl_run: "ETL"
-    log: "LOG"
-    analytics: "ANL"
-  
-  format: "{prefix}{timestamp}"
-
-# Error Handling
-error_handling:
-  continue_on_error: false
-  error_threshold_percent: 5
-  send_alerts: true
-  alert_email: "etl-admin@example.com"
-
-# Performance Monitoring
-monitoring:
-  enabled: true
-  metrics:
-    - records_processed
-    - records_success
-    - records_error
-    - execution_time
-    - memory_usage
-  
-  thresholds:
-    max_execution_minutes: 60
-    min_success_rate_percent: 95
+  # Delta Lake settings
+  delta:
+    enable_change_data_feed: true
+    log_retention_duration: "interval 30 days"
