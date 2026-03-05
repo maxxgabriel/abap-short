@@ -1,194 +1,230 @@
 """
-Configuration module for Sales ETL System.
-Migrated from ABAP ZETL_TOP and ZCL_ETL_CONSTANTS.
+Configuration Management Module
+Handles loading and managing ETL configuration from YAML files
 """
-from typing import Dict, Any
-from decimal import Decimal
-from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    IntegerType,
-    DecimalType,
-    DateType,
-    TimestampType
-)
+import os
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+import yaml
 
 
+@dataclass
+class BusinessRules:
+    """Business rules configuration"""
+    discount_qty_tier1: int = 10
+    discount_qty_tier2: int = 15
+    discount_rate_tier1: float = 0.05
+    discount_rate_tier2: float = 0.10
+    tax_rate: float = 0.08
+    cost_ratio: float = 0.60
+    category_high_threshold: float = 2000.00
+    category_medium_threshold: float = 500.00
+
+
+@dataclass
 class ETLConfig:
-    """Central configuration class for ETL system."""
-    
-    # Status codes
-    class Status:
-        NEW = 'N'
-        PROCESSED = 'P'
-        ERROR = 'E'
-        WARNING = 'W'
-        SUCCESS = 'S'
-        INFO = 'I'
-    
-    # ETL process steps
-    class Step:
-        INIT = 'INIT'
-        EXTRACT = 'EXTRACT'
-        TRANSFORM = 'TRANSFORM'
-        LOAD = 'LOAD'
-        VALIDATE = 'VALIDATE'
-        COMPLETE = 'COMPLETE'
-        ERROR = 'ERROR'
-    
-    # Sale categories
-    class Category:
-        HIGH = 'HIGH'
-        MEDIUM = 'MEDIUM'
-        LOW = 'LOW'
-    
-    # Business rules - Discount thresholds
-    DISCOUNT_QTY_TIER1 = 10
-    DISCOUNT_QTY_TIER2 = 15
-    DISCOUNT_RATE_TIER1 = Decimal('0.05')
-    DISCOUNT_RATE_TIER2 = Decimal('0.10')
-    
-    # Business rules - Tax rate
-    TAX_RATE = Decimal('0.08')
-    
-    # Business rules - Cost ratio
-    COST_RATIO = Decimal('0.60')
-    
-    # Business rules - Category thresholds
-    CATEGORY_HIGH_THRESHOLD = Decimal('2000.00')
-    CATEGORY_MEDIUM_THRESHOLD = Decimal('500.00')
-    
-    # ETL configuration defaults
-    DEFAULT_BATCH_SIZE = 1000
-    DEFAULT_COMMIT_INTERVAL = 500
-    DEFAULT_RETRY_ATTEMPTS = 3
-    DEFAULT_TIMEOUT_SECONDS = 3600
-    
-    # ID prefixes
-    PREFIX_ETL_RUN = 'ETL'
-    PREFIX_LOG_ID = 'LOG'
-    PREFIX_ANALYTICS_ID = 'ANL'
-    
-    # Message texts
-    MSG_INIT_SUCCESS = 'ETL process initialized successfully'
-    MSG_EXTRACT_START = 'Starting data extraction'
-    MSG_EXTRACT_COMPLETE = 'Data extraction completed'
-    MSG_TRANSFORM_START = 'Starting data transformation'
-    MSG_TRANSFORM_COMPLETE = 'Data transformation completed'
-    MSG_LOAD_START = 'Starting data load'
-    MSG_LOAD_COMPLETE = 'Data load completed'
-    MSG_ETL_COMPLETE = 'ETL process completed successfully'
-    MSG_ETL_ERROR = 'ETL process failed'
+    """ETL process configuration"""
+    batch_size: int = 1000
+    commit_interval: int = 500
+    retry_attempts: int = 3
+    timeout_seconds: int = 3600
+    parallel_jobs: int = 4
 
 
-class SchemaDefinitions:
-    """DataFrame schema definitions for ETL system."""
-    
-    @staticmethod
-    def raw_sales_schema() -> StructType:
-        """Schema for raw sales data (ZSALES_RAW table)."""
-        return StructType([
-            StructField("trans_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("quantity", IntegerType(), False),
-            StructField("unit_price", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("status", StringType(), False),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
-        ])
-    
-    @staticmethod
-    def analytics_schema() -> StructType:
-        """Schema for analytics data (ZSALES_ANALYTICS table)."""
-        return StructType([
-            StructField("analytics_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("total_quantity", IntegerType(), False),
-            StructField("gross_amount", DecimalType(16, 2), False),
-            StructField("net_amount", DecimalType(16, 2), False),
-            StructField("discount_amount", DecimalType(16, 2), False),
-            StructField("tax_amount", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("profit_margin", DecimalType(5, 2), True),
-            StructField("category", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("loaded_at", TimestampType(), True),
-            StructField("loaded_by", StringType(), True)
-        ])
-    
-    @staticmethod
-    def etl_log_schema() -> StructType:
-        """Schema for ETL log data (ZETL_LOG table)."""
-        return StructType([
-            StructField("log_id", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("execution_date", DateType(), False),
-            StructField("execution_time", StringType(), False),
-            StructField("process_step", StringType(), False),
-            StructField("status", StringType(), False),
-            StructField("records_processed", IntegerType(), True),
-            StructField("records_success", IntegerType(), True),
-            StructField("records_error", IntegerType(), True),
-            StructField("message", StringType(), True),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
-        ])
+@dataclass
+class SparkConfig:
+    """Spark session configuration"""
+    app_name: str = "SalesETL"
+    master: str = "local[*]"
+    executor_memory: str = "2g"
+    driver_memory: str = "1g"
+    shuffle_partitions: int = 200
+    dynamic_allocation_enabled: bool = True
+    log_level: str = "WARN"
 
 
-class TypeMappings:
-    """Type mappings from ABAP to Python/PySpark."""
+@dataclass
+class DatabaseConfig:
+    """Database connection configuration"""
+    jdbc_url: str = ""
+    driver: str = "org.postgresql.Driver"
+    user: str = ""
+    password: str = ""
+    source_table: str = "zsales_raw"
+    target_table: str = "zsales_analytics"
+    log_table: str = "zetl_log"
+
+
+@dataclass
+class LoggingConfig:
+    """Logging configuration"""
+    level: str = "INFO"
+    format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file_path: str = "logs/etl.log"
+    max_bytes: int = 10485760  # 10MB
+    backup_count: int = 5
+    console_output: bool = True
+
+
+@dataclass
+class Configuration:
+    """Master configuration container"""
+    business_rules: BusinessRules = field(default_factory=BusinessRules)
+    etl: ETLConfig = field(default_factory=ETLConfig)
+    spark: SparkConfig = field(default_factory=SparkConfig)
+    database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+
+class ConfigurationManager:
+    """Centralized configuration management"""
     
-    ABAP_TO_PYSPARK = {
-        'CHAR': StringType(),
-        'NUMC': StringType(),
-        'DATS': DateType(),
-        'TIMS': StringType(),
-        'DEC': DecimalType(16, 2),
-        'INT4': IntegerType(),
-        'CURR': DecimalType(16, 2),
-        'QUAN': DecimalType(16, 3),
-        'TIMESTAMPL': TimestampType(),
-        'WAERS': StringType(),
-        'SYUNAME': StringType()
-    }
+    _instance: Optional['ConfigurationManager'] = None
+    _config: Optional[Configuration] = None
     
-    @staticmethod
-    def get_spark_type(abap_type: str, length: int = None, decimals: int = None):
-        """Convert ABAP type to Spark type with parameters."""
-        base_type = TypeMappings.ABAP_TO_PYSPARK.get(abap_type)
+    def __new__(cls):
+        """Singleton pattern implementation"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        """Initialize configuration manager"""
+        if self._config is None:
+            self._config = Configuration()
+    
+    @classmethod
+    def load_from_file(cls, config_path: str) -> 'ConfigurationManager':
+        """
+        Load configuration from YAML file
         
-        if abap_type == 'DEC' and length and decimals:
-            return DecimalType(length, decimals)
-        elif abap_type == 'CHAR' and length:
-            return StringType()
+        Args:
+            config_path: Path to YAML configuration file
+            
+        Returns:
+            ConfigurationManager instance
+        """
+        instance = cls()
         
-        return base_type or StringType()
-
-
-def load_config_from_yaml(config_path: str = 'config.yaml') -> Dict[str, Any]:
-    """Load additional configuration from YAML file."""
-    import yaml
-    from pathlib import Path
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(config_file, 'r') as f:
+            config_data = yaml.safe_load(f)
+        
+        instance._load_config_data(config_data)
+        return instance
     
-    config_file = Path(config_path)
-    if not config_file.exists():
-        return {}
+    def _load_config_data(self, config_data: Dict[str, Any]) -> None:
+        """Load configuration data into dataclass structures"""
+        if 'business_rules' in config_data:
+            self._config.business_rules = BusinessRules(**config_data['business_rules'])
+        
+        if 'etl' in config_data:
+            self._config.etl = ETLConfig(**config_data['etl'])
+        
+        if 'spark' in config_data:
+            self._config.spark = SparkConfig(**config_data['spark'])
+        
+        if 'database' in config_data:
+            self._config.database = DatabaseConfig(**config_data['database'])
+        
+        if 'logging' in config_data:
+            self._config.logging = LoggingConfig(**config_data['logging'])
     
-    with open(config_file, 'r') as f:
-        return yaml.safe_load(f)
-
-
-# Global configuration instance
-config = ETLConfig()
-schemas = SchemaDefinitions()
-type_mappings = TypeMappings()
+    @classmethod
+    def load_from_env(cls) -> 'ConfigurationManager':
+        """
+        Load configuration from environment variables
+        
+        Returns:
+            ConfigurationManager instance
+        """
+        instance = cls()
+        
+        # Database configuration from environment
+        if os.getenv('DB_JDBC_URL'):
+            instance._config.database.jdbc_url = os.getenv('DB_JDBC_URL')
+        if os.getenv('DB_USER'):
+            instance._config.database.user = os.getenv('DB_USER')
+        if os.getenv('DB_PASSWORD'):
+            instance._config.database.password = os.getenv('DB_PASSWORD')
+        
+        # Spark configuration from environment
+        if os.getenv('SPARK_MASTER'):
+            instance._config.spark.master = os.getenv('SPARK_MASTER')
+        if os.getenv('SPARK_EXECUTOR_MEMORY'):
+            instance._config.spark.executor_memory = os.getenv('SPARK_EXECUTOR_MEMORY')
+        
+        # ETL configuration from environment
+        if os.getenv('ETL_BATCH_SIZE'):
+            instance._config.etl.batch_size = int(os.getenv('ETL_BATCH_SIZE'))
+        
+        return instance
+    
+    def get_config(self) -> Configuration:
+        """Get configuration object"""
+        return self._config
+    
+    def get_business_rules(self) -> BusinessRules:
+        """Get business rules configuration"""
+        return self._config.business_rules
+    
+    def get_etl_config(self) -> ETLConfig:
+        """Get ETL configuration"""
+        return self._config.etl
+    
+    def get_spark_config(self) -> SparkConfig:
+        """Get Spark configuration"""
+        return self._config.spark
+    
+    def get_database_config(self) -> DatabaseConfig:
+        """Get database configuration"""
+        return self._config.database
+    
+    def get_logging_config(self) -> LoggingConfig:
+        """Get logging configuration"""
+        return self._config.logging
+    
+    def update_config(self, section: str, **kwargs) -> None:
+        """
+        Update specific configuration section
+        
+        Args:
+            section: Configuration section name (business_rules, etl, spark, database, logging)
+            **kwargs: Configuration parameters to update
+        """
+        if section == 'business_rules':
+            for key, value in kwargs.items():
+                if hasattr(self._config.business_rules, key):
+                    setattr(self._config.business_rules, key, value)
+        elif section == 'etl':
+            for key, value in kwargs.items():
+                if hasattr(self._config.etl, key):
+                    setattr(self._config.etl, key, value)
+        elif section == 'spark':
+            for key, value in kwargs.items():
+                if hasattr(self._config.spark, key):
+                    setattr(self._config.spark, key, value)
+        elif section == 'database':
+            for key, value in kwargs.items():
+                if hasattr(self._config.database, key):
+                    setattr(self._config.database, key, value)
+        elif section == 'logging':
+            for key, value in kwargs.items():
+                if hasattr(self._config.logging, key):
+                    setattr(self._config.logging, key, value)
+        else:
+            raise ValueError(f"Unknown configuration section: {section}")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary"""
+        return {
+            'business_rules': self._config.business_rules.__dict__,
+            'etl': self._config.etl.__dict__,
+            'spark': self._config.spark.__dict__,
+            'database': self._config.database.__dict__,
+            'logging': self._config.logging.__dict__
+        }
