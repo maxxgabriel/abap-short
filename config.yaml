@@ -1,105 +1,126 @@
 # Sales ETL System Configuration
-# Migrated from ABAP $ZETL Package
 
 etl:
-  # ETL process configuration
+  app_name: "SalesETLSystem"
+  run_id_prefix: "ETL"
+  
+  # Processing parameters
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
-  parallel_jobs: 4
   
-  # Date range defaults (days)
+  # Date range (can be overridden by command line)
   default_lookback_days: 7
 
+# Spark Configuration
+spark:
+  master: "local[*]"  # Override in production
+  app_name: "Sales ETL Pipeline"
+  
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.default.parallelism: "200"
+    spark.driver.memory: "4g"
+    spark.executor.memory: "4g"
+    spark.executor.cores: "2"
+    
+# Business Rules
 business_rules:
-  # Discount rules
+  # Discount thresholds
   discount:
-    quantity_tier1: 10
-    quantity_tier2: 15
-    rate_tier1: "0.05"  # 5%
-    rate_tier2: "0.10"  # 10%
+    tier1_quantity: 10
+    tier1_rate: 0.05
+    tier2_quantity: 15
+    tier2_rate: 0.10
   
   # Tax configuration
   tax:
-    rate: "0.08"  # 8%
+    rate: 0.08
   
-  # Cost and profit
+  # Cost calculation
   cost:
-    ratio: "0.60"  # 60% of unit price
+    ratio: 0.60  # Cost is 60% of unit price
   
   # Category thresholds
   category:
-    high_threshold: "2000.00"
-    medium_threshold: "500.00"
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-database:
-  # Source table
-  source_table: "zsales_raw"
+# Data sources
+data_sources:
+  raw_sales:
+    format: "parquet"  # parquet, csv, jdbc, delta
+    path: "data/raw/sales"
+    options:
+      header: "true"
+      inferSchema: "false"
   
-  # Target table
-  target_table: "zsales_analytics"
-  
-  # Log table
-  log_table: "zetl_log"
+  # For JDBC sources (commented out - configure as needed)
+  # raw_sales_jdbc:
+  #   format: "jdbc"
+  #   url: "jdbc:postgresql://localhost:5432/sales_db"
+  #   table: "zsales_raw"
+  #   properties:
+  #     user: "etl_user"
+  #     password: "${DB_PASSWORD}"
+  #     driver: "org.postgresql.Driver"
 
+# Data targets
+data_targets:
+  analytics:
+    format: "parquet"
+    path: "data/analytics/sales"
+    mode: "append"  # overwrite, append, ignore, error
+    partition_by:
+      - "trans_date"
+      - "region"
+  
+  etl_log:
+    format: "parquet"
+    path: "data/logs/etl"
+    mode: "append"
+
+# Logging
 logging:
-  # Logging configuration
-  level: "INFO"
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   
-  # Log file settings
-  file:
-    enabled: true
-    path: "logs/etl.log"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
+  handlers:
+    console:
+      enabled: true
+      level: "INFO"
+    
+    file:
+      enabled: true
+      level: "DEBUG"
+      path: "logs/etl.log"
+      max_bytes: 10485760  # 10MB
+      backup_count: 5
 
-spark:
-  # Spark configuration
-  app_name: "SalesETL"
-  master: "local[*]"
-  
-  # Memory settings
-  driver_memory: "2g"
-  executor_memory: "4g"
-  
-  # Shuffle partitions
-  sql_shuffle_partitions: 200
-  
-  # Checkpoint directory
-  checkpoint_dir: "/tmp/spark-checkpoint"
+# Status codes
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
 
-validation:
-  # Data validation rules
-  required_fields:
-    - trans_id
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-  
-  # Field constraints
-  constraints:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: "0.01"
-      max: "999999.99"
+# Process steps
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
 
-error_handling:
-  # Error handling configuration
-  fail_on_validation_error: false
-  max_error_percentage: 5.0
-  
-  # Error notification
-  notification:
-    enabled: false
-    email_to: []
-
-test_mode:
-  # Test mode settings
-  enabled: false
-  sample_size: 100
-  skip_commit: true
+# Categories
+categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
