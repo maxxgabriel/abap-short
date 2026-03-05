@@ -1,153 +1,121 @@
 """
-ETL Constants Module
-Migrated from ZCL_ETL_CONSTANTS ABAP class
-Provides centralized configuration and constants for the ETL system
+ETL Constants and Configuration Module
+
+This module provides centralized constants and configuration values
+for the ETL system, migrated from ABAP ZCL_ETL_CONSTANTS.
 """
+
 from dataclasses import dataclass
-from typing import Dict
-import yaml
-from pathlib import Path
+from typing import Final
 
 
 @dataclass(frozen=True)
 class StatusCodes:
-    """Status codes for ETL processes"""
-    NEW: str = 'N'
-    PROCESSED: str = 'P'
-    ERROR: str = 'E'
-    WARNING: str = 'W'
-    SUCCESS: str = 'S'
-    INFO: str = 'I'
+    """ETL process status codes"""
+    NEW: Final[str] = 'N'
+    PROCESSED: Final[str] = 'P'
+    ERROR: Final[str] = 'E'
+    WARNING: Final[str] = 'W'
+    SUCCESS: Final[str] = 'S'
+    INFO: Final[str] = 'I'
 
 
 @dataclass(frozen=True)
 class ProcessSteps:
-    """ETL process steps"""
-    INIT: str = 'INIT'
-    EXTRACT: str = 'EXTRACT'
-    TRANSFORM: str = 'TRANSFORM'
-    LOAD: str = 'LOAD'
-    VALIDATE: str = 'VALIDATE'
-    COMPLETE: str = 'COMPLETE'
-    ERROR: str = 'ERROR'
+    """ETL process step identifiers"""
+    INIT: Final[str] = 'INIT'
+    EXTRACT: Final[str] = 'EXTRACT'
+    TRANSFORM: Final[str] = 'TRANSFORM'
+    LOAD: Final[str] = 'LOAD'
+    VALIDATE: Final[str] = 'VALIDATE'
+    COMPLETE: Final[str] = 'COMPLETE'
+    ERROR: Final[str] = 'ERROR'
 
 
 @dataclass(frozen=True)
-class Categories:
-    """Sale categories"""
-    HIGH: str = 'HIGH'
-    MEDIUM: str = 'MEDIUM'
-    LOW: str = 'LOW'
+class SaleCategories:
+    """Sale categorization values"""
+    HIGH: Final[str] = 'HIGH'
+    MEDIUM: Final[str] = 'MEDIUM'
+    LOW: Final[str] = 'LOW'
 
 
 @dataclass(frozen=True)
 class BusinessRules:
-    """Business rules for transformations"""
+    """Business rule constants for calculations"""
     # Discount thresholds
-    DISCOUNT_QTY_TIER1: int = 10
-    DISCOUNT_QTY_TIER2: int = 15
-    DISCOUNT_RATE_TIER1: float = 0.05
-    DISCOUNT_RATE_TIER2: float = 0.10
+    DISCOUNT_QTY_TIER1: Final[int] = 10
+    DISCOUNT_QTY_TIER2: Final[int] = 15
+    DISCOUNT_RATE_TIER1: Final[float] = 0.05
+    DISCOUNT_RATE_TIER2: Final[float] = 0.10
     
-    # Tax rate
-    TAX_RATE: float = 0.08
-    
-    # Cost ratio
-    COST_RATIO: float = 0.60
+    # Tax and cost ratios
+    TAX_RATE: Final[float] = 0.08
+    COST_RATIO: Final[float] = 0.60
     
     # Category thresholds
-    CATEGORY_HIGH_THRESHOLD: float = 2000.00
-    CATEGORY_MEDIUM_THRESHOLD: float = 500.00
+    CATEGORY_HIGH_THRESHOLD: Final[float] = 2000.00
+    CATEGORY_MEDIUM_THRESHOLD: Final[float] = 500.00
 
 
 @dataclass(frozen=True)
-class ETLConfig:
-    """ETL configuration defaults"""
-    DEFAULT_BATCH_SIZE: int = 1000
-    DEFAULT_COMMIT_INTERVAL: int = 500
-    DEFAULT_RETRY_ATTEMPTS: int = 3
-    DEFAULT_TIMEOUT_SECONDS: int = 3600
+class ETLDefaults:
+    """Default ETL configuration values"""
+    BATCH_SIZE: Final[int] = 1000
+    COMMIT_INTERVAL: Final[int] = 500
+    RETRY_ATTEMPTS: Final[int] = 3
+    TIMEOUT_SECONDS: Final[int] = 3600
 
 
 @dataclass(frozen=True)
-class Prefixes:
-    """ID prefixes"""
-    ETL_RUN: str = 'ETL'
-    LOG_ID: str = 'LOG'
-    ANALYTICS_ID: str = 'ANL'
+class IDPrefixes:
+    """Prefix constants for ID generation"""
+    ETL_RUN: Final[str] = 'ETL'
+    LOG_ID: Final[str] = 'LOG'
+    ANALYTICS_ID: Final[str] = 'ANL'
+
+
+@dataclass(frozen=True)
+class Messages:
+    """Standard message templates"""
+    INIT_SUCCESS: Final[str] = 'ETL process initialized successfully'
+    EXTRACT_START: Final[str] = 'Starting data extraction'
+    EXTRACT_COMPLETE: Final[str] = 'Data extraction completed'
+    TRANSFORM_START: Final[str] = 'Starting data transformation'
+    TRANSFORM_COMPLETE: Final[str] = 'Data transformation completed'
+    LOAD_START: Final[str] = 'Starting data load'
+    LOAD_COMPLETE: Final[str] = 'Data load completed'
+    ETL_COMPLETE: Final[str] = 'ETL process completed successfully'
+    ETL_ERROR: Final[str] = 'ETL process failed'
 
 
 class ETLConstants:
     """
-    Main constants class for ETL system
-    Provides static access to all configuration values
+    Main constants class providing centralized access to all ETL constants.
+    Migrated from ABAP ZCL_ETL_CONSTANTS.
     """
     
-    _config: Dict = None
-    
-    # Static instances
     STATUS = StatusCodes()
-    STEPS = ProcessSteps()
-    CATEGORIES = Categories()
+    STEP = ProcessSteps()
+    CATEGORY = SaleCategories()
     RULES = BusinessRules()
-    CONFIG = ETLConfig()
-    PREFIXES = Prefixes()
-    
-    # Message texts
-    MESSAGES = {
-        'init_success': 'ETL process initialized successfully',
-        'extract_start': 'Starting data extraction',
-        'extract_complete': 'Data extraction completed',
-        'transform_start': 'Starting data transformation',
-        'transform_complete': 'Data transformation completed',
-        'load_start': 'Starting data load',
-        'load_complete': 'Data load completed',
-        'etl_complete': 'ETL process completed successfully',
-        'etl_error': 'ETL process failed'
-    }
+    DEFAULTS = ETLDefaults()
+    PREFIX = IDPrefixes()
+    MSG = Messages()
     
     @classmethod
-    def load_config(cls, config_path: str = "config.yaml") -> Dict:
-        """
-        Load configuration from YAML file
-        
-        Args:
-            config_path: Path to configuration file
-            
-        Returns:
-            Configuration dictionary
-        """
-        if cls._config is None:
-            config_file = Path(config_path)
-            if config_file.exists():
-                with open(config_file, 'r') as f:
-                    cls._config = yaml.safe_load(f)
-            else:
-                cls._config = {}
-        return cls._config
-    
-    @classmethod
-    def get_config_value(cls, key_path: str, default=None):
-        """
-        Get configuration value by dot-notation path
-        
-        Args:
-            key_path: Dot-separated path (e.g., 'discount.rate_tier1')
-            default: Default value if key not found
-            
-        Returns:
-            Configuration value
-        """
-        if cls._config is None:
-            cls.load_config()
-        
-        keys = key_path.split('.')
-        value = cls._config
-        
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
-            else:
-                return default
-        
-        return value
+    def get_all_constants(cls) -> dict:
+        """Returns dictionary of all constant groups"""
+        return {
+            'status': cls.STATUS,
+            'step': cls.STEP,
+            'category': cls.CATEGORY,
+            'rules': cls.RULES,
+            'defaults': cls.DEFAULTS,
+            'prefix': cls.PREFIX,
+            'messages': cls.MSG
+        }
+
+
+# Module-level constants instance for convenience
+CONSTANTS = ETLConstants()
