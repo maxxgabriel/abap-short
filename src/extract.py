@@ -1,16 +1,14 @@
 """
-Data extraction module for Sales ETL pipeline.
-Extracts raw sales data from source systems.
+Data extraction module for Sales ETL Pipeline.
+Reads raw sales data from source and prepares for transformation.
 """
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import (
-    StructType, StructField, StringType, DateType, 
-    IntegerType, DecimalType, TimestampType
-)
-from typing import Optional
-import logging
+from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
 from datetime import datetime
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class SalesDataExtractor:
@@ -21,19 +19,20 @@ class SalesDataExtractor:
         Initialize the extractor.
         
         Args:
-            spark: SparkSession instance
-            config: Configuration dictionary
+            spark: Active SparkSession
+            config: Configuration dictionary with source settings
         """
         self.spark = spark
         self.config = config
-        self.logger = logging.getLogger(__name__)
-    
-    def get_raw_sales_schema(self) -> StructType:
+        self.source_path = config.get('source_path')
+        self.source_format = config.get('source_format', 'parquet')
+        
+    def get_schema(self) -> StructType:
         """
         Define schema for raw sales data.
         
         Returns:
-            StructType schema definition
+            StructType schema matching ABAP ZSALES_RAW table structure
         """
         return StructType([
             StructField("trans_id", StringType(), False),
@@ -45,144 +44,115 @@ class SalesDataExtractor:
             StructField("currency", StringType(), False),
             StructField("sales_rep", StringType(), True),
             StructField("region", StringType(), True),
-            StructField("status", StringType(), False),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
+            StructField("status", StringType(), False)
         ])
     
-    def extract_data(
-        self, 
-        from_date: str, 
-        to_date: str,
-        source_path: Optional[str] = None
-    ) -> DataFrame:
+    def extract(self, from_date: str, to_date: str) -> Optional[DataFrame]:
         """
         Extract raw sales data for the specified date range.
         
         Args:
-            from_date: Start date (YYYY-MM-DD)
-            to_date: End date (YYYY-MM-DD)
-            source_path: Optional override for source data path
+            from_date: Start date in YYYY-MM-DD format
+            to_date: End date in YYYY-MM-DD format
             
         Returns:
-            DataFrame containing raw sales data
+            DataFrame containing raw sales data or None on error
         """
-        self.logger.info(
-            f"Starting extraction from {from_date} to {to_date}"
-        )
-        
         try:
-            # Get source path from config or parameter
-            path = source_path or self.config.get("source_data_path")
+            logger.info(f"Starting extraction from {from_date} to {to_date}")
+            logger.info(f"Reading from source: {self.source_path}")
             
-            if not path:
-                # Create sample data if no path specified
-                self.logger.warning(
-                    "No source path specified, generating sample data"
-                )
-                return self._generate_sample_data()
-            
-            # Read data with schema
-            schema = self.get_raw_sales_schema()
-            df = self.spark.read.schema(schema).parquet(path)
+            # Read data with schema enforcement
+            df = self.spark.read \
+                .format(self.source_format) \
+                .schema(self.get_schema()) \
+                .load(self.source_path)
             
             # Filter by date range and status
-            filtered_df = df.filter(
-                (df.trans_date >= from_date) &
+            df_filtered = df.filter(
+                (df.trans_date >= from_date) & 
                 (df.trans_date <= to_date) &
                 (df.status == 'N')
             )
             
-            record_count = filtered_df.count()
-            self.logger.info(
-                f"Extracted {record_count} records successfully"
-            )
+            record_count = df_filtered.count()
+            logger.info(f"Extracted {record_count} records successfully")
             
-            return filtered_df
+            return df_filtered
             
         except Exception as e:
-            self.logger.error(f"Extraction failed: {str(e)}")
-            raise
+            logger.error(f"Extraction failed: {str(e)}", exc_info=True)
+            return None
     
-    def _generate_sample_data(self) -> DataFrame:
-        """
-        Generate sample data for demonstration purposes.
-        
-        Returns:
-            DataFrame with sample sales data
-        """
-        from datetime import date
-        
-        sample_data = [
-            (
-                "T000001", date.today(), "CUST001", "PROD001", 
-                10, 99.99, "USD", "John Doe", "NORTH", "N",
-                datetime.now(), "SYSTEM"
-            ),
-            (
-                "T000002", date.today(), "CUST002", "PROD002",
-                5, 149.99, "USD", "Jane Smith", "SOUTH", "N",
-                datetime.now(), "SYSTEM"
-            ),
-            (
-                "T000003", date.today(), "CUST003", "PROD001",
-                20, 99.99, "USD", "John Doe", "EAST", "N",
-                datetime.now(), "SYSTEM"
-            ),
-            (
-                "T000004", date.today(), "CUST001", "PROD003",
-                3, 299.99, "USD", "Bob Wilson", "WEST", "N",
-                datetime.now(), "SYSTEM"
-            ),
-            (
-                "T000005", date.today(), "CUST004", "PROD002",
-                15, 149.99, "USD", "Jane Smith", "SOUTH", "N",
-                datetime.now(), "SYSTEM"
-            )
-        ]
-        
-        schema = self.get_raw_sales_schema()
-        df = self.spark.createDataFrame(sample_data, schema)
-        
-        self.logger.info(f"Generated {len(sample_data)} sample records")
-        
-        return df
-    
-    def validate_extracted_data(self, df: DataFrame) -> bool:
+    def validate_data(self, df: DataFrame) -> bool:
         """
         Validate extracted data quality.
         
         Args:
-            df: Extracted DataFrame
+            df: DataFrame to validate
             
         Returns:
-            True if validation passes
+            True if validation passes, False otherwise
         """
-        # Check for null values in required fields
-        null_counts = df.select([
-            df[col].isNull().cast("int").alias(col)
-            for col in ["trans_id", "customer_id", "product_id", "quantity"]
-        ]).groupBy().sum()
-        
-        has_nulls = any(
-            null_counts.first()[col] > 0 
-            for col in null_counts.columns
-        )
-        
-        if has_nulls:
-            self.logger.warning("Extracted data contains null values")
+        try:
+            # Check for null values in required fields
+            null_counts = df.select([
+                df[col].isNull().cast("int").alias(col)
+                for col in ["trans_id", "trans_date", "customer_id", "product_id", "quantity", "unit_price"]
+            ]).agg(*[sum(col).alias(col) for col in ["trans_id", "trans_date", "customer_id", "product_id", "quantity", "unit_price"]]).collect()[0]
+            
+            has_nulls = any(count > 0 for count in null_counts.asDict().values())
+            
+            if has_nulls:
+                logger.warning(f"Null values found in required fields: {null_counts.asDict()}")
+                return False
+            
+            # Check for negative quantities or prices
+            invalid_values = df.filter(
+                (df.quantity <= 0) | (df.unit_price <= 0)
+            ).count()
+            
+            if invalid_values > 0:
+                logger.warning(f"Found {invalid_values} records with invalid quantities or prices")
+                return False
+            
+            logger.info("Data validation passed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Validation error: {str(e)}", exc_info=True)
             return False
-        
-        # Check for negative quantities or prices
-        invalid_count = df.filter(
-            (df.quantity <= 0) | (df.unit_price <= 0)
-        ).count()
-        
-        if invalid_count > 0:
-            self.logger.warning(
-                f"Found {invalid_count} records with invalid quantities/prices"
-            )
-            return False
-        
-        self.logger.info("Data validation passed")
-        return True
+
+
+def create_sample_data(spark: SparkSession, output_path: str):
+    """
+    Generate sample raw sales data for testing.
+    
+    Args:
+        spark: Active SparkSession
+        output_path: Path to write sample data
+    """
+    from pyspark.sql import Row
+    from datetime import date
+    
+    sample_data = [
+        Row(trans_id="T000001", trans_date=date.today(), customer_id="CUST001",
+            product_id="PROD001", quantity=10, unit_price=99.99,
+            currency="USD", sales_rep="John Doe", region="NORTH", status="N"),
+        Row(trans_id="T000002", trans_date=date.today(), customer_id="CUST002",
+            product_id="PROD002", quantity=5, unit_price=149.99,
+            currency="USD", sales_rep="Jane Smith", region="SOUTH", status="N"),
+        Row(trans_id="T000003", trans_date=date.today(), customer_id="CUST003",
+            product_id="PROD001", quantity=20, unit_price=99.99,
+            currency="USD", sales_rep="John Doe", region="EAST", status="N"),
+        Row(trans_id="T000004", trans_date=date.today(), customer_id="CUST001",
+            product_id="PROD003", quantity=3, unit_price=299.99,
+            currency="USD", sales_rep="Bob Wilson", region="WEST", status="N"),
+        Row(trans_id="T000005", trans_date=date.today(), customer_id="CUST004",
+            product_id="PROD002", quantity=15, unit_price=149.99,
+            currency="USD", sales_rep="Jane Smith", region="SOUTH", status="N")
+    ]
+    
+    df = spark.createDataFrame(sample_data)
+    df.write.mode("overwrite").parquet(output_path)
+    logger.info(f"Sample data written to {output_path}")
