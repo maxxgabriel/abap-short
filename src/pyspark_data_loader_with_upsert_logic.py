@@ -1,50 +1,49 @@
 ===FILE: src/load.py===
 """
 PySpark Data Loader Module
-Implements upsert logic for loading transformed analytics data into target tables.
-Migrated from ABAP ZCL_ETL_LOADER class.
+Loads transformed analytics data with INSERT and UPDATE operations (upsert logic)
+Migrated from ZCL_ETL_LOADER ABAP class
 """
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType, TimestampType
 from typing import Dict, Tuple
-import logging
+import yaml
 from datetime import datetime
 
 from src.logger import ETLLogger
-from src.exceptions import ETLLoadError
 
 
 class DataLoader:
     """
-    Loads transformed analytics data into target table with upsert capability.
+    Loads transformed analytics data into target table with upsert logic.
     Supports both INSERT (new records) and UPDATE (existing records) operations.
     """
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: Dict):
+    def __init__(self, spark: SparkSession, config: Dict, logger: ETLLogger):
         """
         Initialize DataLoader with Spark session and configuration.
         
         Args:
-            spark: Active SparkSession instance
-            logger: ETL logger instance for tracking operations
-            config: Configuration dictionary with load settings
+            spark: Active SparkSession
+            config: Configuration dictionary
+            logger: ETL logger instance
         """
         self.spark = spark
-        self.logger = logger
         self.config = config
-        self.target_table = config.get('target_table', 'sales_analytics')
-        self.staging_table = f"{self.target_table}_staging"
-        self.batch_size = config.get('batch_size', 1000)
-        self.enable_validation = config.get('enable_validation', True)
+        self.logger = logger
+        self.target_table = config['load']['target_table']
+        self.source_status_table = config['load']['source_status_table']
+        self.batch_size = config['load'].get('batch_size', 1000)
+        self.upsert_mode = config['load'].get('upsert_mode', 'merge')  # 'merge' or 'overwrite'
         
     def get_target_schema(self) -> StructType:
         """
-        Define the target analytics table schema.
+        Define schema for analytics target table.
         
         Returns:
-            StructType schema matching analytics data structure
+            StructType: Schema definition
         """
         return StructType([
             StructField("analytics_id", StringType(), False),
@@ -68,218 +67,342 @@ class DataLoader:
             StructField("updated_by", StringType(), True)
         ])
     
-    def validate_record(self, df: DataFrame) -> DataFrame:
+    def validate_record(self, row: Dict) -> Tuple[bool, str]:
         """
-        Validate records before loading using DataFrame transformations.
-        Implements validation rules from ABAP validate_record method.
+        Validate individual analytics record.
+        Migrated from validate_record method in ABAP.
         
         Args:
-            df: DataFrame with analytics records to validate
+            row: Dictionary representing a record
             
         Returns:
-            DataFrame with validation status column
+            Tuple of (is_valid, error_message)
         """
-        if not self.enable_validation:
-            return df.withColumn("is_valid", F.lit(True))
+        # Validate required fields
+        if not row.get('analytics_id'):
+            return False, "Missing analytics_id"
         
-        # Apply validation rules using map transformation pattern
-        validation_conditions = [
-            F.col("analytics_id").isNotNull(),
-            F.col("customer_id").isNotNull(),
-            F.col("product_id").isNotNull(),
-            F.col("gross_amount") > 0,
-            F.col("currency").isNotNull(),
-            F.col("category").isin("HIGH", "MEDIUM", "LOW")
-        ]
+        if not row.get('customer_id'):
+            return False, "Missing customer_id"
         
-        # Combine all validation conditions
-        df_validated = df.withColumn(
+        if not row.get('product_id'):
+            return False, "Missing product_id"
+        
+        # Validate gross amount
+        gross_amount = row.get('gross_amount', 0)
+        if gross_amount <= 0:
+            return False, f"Invalid gross_amount: {gross_amount}"
+        
+        # Validate currency
+        if not row.get('currency'):
+            return False, "Missing currency"
+        
+        # Validate category
+        category = row.get('category', '')
+        if category not in ['HIGH', 'MEDIUM', 'LOW']:
+            return False, f"Invalid category: {category}"
+        
+        return True, ""
+    
+    def validate_dataframe(self, df: DataFrame) -> DataFrame:
+        """
+        Validate entire DataFrame and filter valid records.
+        
+        Args:
+            df: Input DataFrame to validate
+            
+        Returns:
+            DataFrame with only valid records and validation status
+        """
+        # Add validation columns
+        df_with_validation = df.withColumn(
             "is_valid",
             F.when(
-                F.expr(" AND ".join([str(cond) for cond in validation_conditions])),
-                True
-            ).otherwise(False)
+                (F.col("analytics_id").isNotNull()) &
+                (F.col("customer_id").isNotNull()) &
+                (F.col("product_id").isNotNull()) &
+                (F.col("gross_amount") > 0) &
+                (F.col("currency").isNotNull()) &
+                (F.col("category").isin(['HIGH', 'MEDIUM', 'LOW'])),
+                F.lit(True)
+            ).otherwise(F.lit(False))
         )
         
-        # Add validation message for failed records
-        df_validated = df_validated.withColumn(
-            "validation_message",
-            F.when(
-                ~F.col("is_valid"),
-                F.concat_ws("; ",
-                    F.when(F.col("analytics_id").isNull(), F.lit("Missing analytics_id")),
-                    F.when(F.col("customer_id").isNull(), F.lit("Missing customer_id")),
-                    F.when(F.col("product_id").isNull(), F.lit("Missing product_id")),
-                    F.when(F.col("gross_amount") <= 0, F.lit("Invalid gross_amount")),
-                    F.when(F.col("currency").isNull(), F.lit("Missing currency")),
-                    F.when(~F.col("category").isin("HIGH", "MEDIUM", "LOW"), F.lit("Invalid category"))
-                )
-            ).otherwise(F.lit("Valid"))
-        )
+        # Log validation results
+        total_count = df_with_validation.count()
+        valid_count = df_with_validation.filter(F.col("is_valid") == True).count()
+        invalid_count = total_count - valid_count
         
-        return df_validated
+        if invalid_count > 0:
+            self.logger.log_message(
+                step='LOAD',
+                status='W',
+                message=f"Found {invalid_count} invalid records out of {total_count}"
+            )
+        
+        return df_with_validation
     
-    def prepare_upsert_data(self, df: DataFrame) -> Tuple[DataFrame, DataFrame]:
+    def prepare_for_insert(self, df: DataFrame) -> DataFrame:
         """
-        Separate data into INSERT and UPDATE operations based on existing records.
+        Prepare DataFrame for INSERT operation.
+        Add metadata fields for new records.
         
         Args:
-            df: Input DataFrame with analytics data
+            df: Input DataFrame
             
         Returns:
-            Tuple of (insert_df, update_df) DataFrames
+            DataFrame with INSERT metadata
         """
-        # Add metadata columns for new records
-        df_prepared = df.withColumn("loaded_at", F.current_timestamp()) \
-                       .withColumn("loaded_by", F.lit(self.config.get('user', 'spark_etl'))) \
-                       .withColumn("updated_at", F.lit(None).cast(TimestampType())) \
-                       .withColumn("updated_by", F.lit(None).cast(StringType()))
+        current_timestamp = F.current_timestamp()
+        current_user = F.lit(self.config.get('runtime', {}).get('user', 'etl_system'))
         
-        # Check if target table exists
-        try:
-            existing_df = self.spark.read.table(self.target_table)
-            existing_keys = existing_df.select("analytics_id")
+        return df.withColumn("loaded_at", current_timestamp) \
+                 .withColumn("loaded_by", current_user) \
+                 .withColumn("updated_at", F.lit(None).cast(TimestampType())) \
+                 .withColumn("updated_by", F.lit(None).cast(StringType()))
+    
+    def prepare_for_update(self, df: DataFrame) -> DataFrame:
+        """
+        Prepare DataFrame for UPDATE operation.
+        Add metadata fields for updated records.
+        
+        Args:
+            df: Input DataFrame
             
-            # Split into inserts (new) and updates (existing)
-            insert_df = df_prepared.join(
-                existing_keys,
+        Returns:
+            DataFrame with UPDATE metadata
+        """
+        current_timestamp = F.current_timestamp()
+        current_user = F.lit(self.config.get('runtime', {}).get('user', 'etl_system'))
+        
+        return df.withColumn("updated_at", current_timestamp) \
+                 .withColumn("updated_by", current_user)
+    
+    def identify_insert_update_records(self, df: DataFrame) -> Tuple[DataFrame, DataFrame]:
+        """
+        Identify which records need INSERT vs UPDATE operations.
+        Uses analytics_id as primary key to check existing records.
+        
+        Args:
+            df: Input DataFrame with new/updated records
+            
+        Returns:
+            Tuple of (insert_df, update_df)
+        """
+        try:
+            # Read existing target table
+            existing_df = self.spark.read.format(self.config['load']['format']) \
+                                   .load(self.target_table) \
+                                   .select("analytics_id", "loaded_at")
+            
+            # Left anti join to find records that don't exist (INSERT)
+            insert_df = df.join(
+                existing_df,
                 on="analytics_id",
                 how="left_anti"
             )
             
-            update_df = df_prepared.join(
-                existing_keys,
+            # Inner join to find records that exist (UPDATE)
+            update_df = df.join(
+                existing_df,
                 on="analytics_id",
                 how="inner"
-            ).withColumn("updated_at", F.current_timestamp()) \
-             .withColumn("updated_by", F.lit(self.config.get('user', 'spark_etl')))
+            ).drop(existing_df["loaded_at"])
+            
+            insert_count = insert_df.count()
+            update_count = update_df.count()
+            
+            self.logger.log_message(
+                step='LOAD',
+                status='I',
+                message=f"Identified {insert_count} records for INSERT, {update_count} for UPDATE"
+            )
             
             return insert_df, update_df
             
-        except Exception:
-            # If table doesn't exist, all records are inserts
+        except Exception as e:
+            # If table doesn't exist, all records are for INSERT
             self.logger.log_message(
-                step="LOAD",
-                status="W",
-                message=f"Target table {self.target_table} not found. All records will be inserted."
+                step='LOAD',
+                status='W',
+                message=f"Target table not found, treating all records as INSERT: {str(e)}"
             )
-            return df_prepared, self.spark.createDataFrame([], self.get_target_schema())
+            return df, self.spark.createDataFrame([], df.schema)
     
-    def perform_upsert(self, insert_df: DataFrame, update_df: DataFrame) -> Dict[str, int]:
+    def perform_upsert_merge(self, df: DataFrame) -> bool:
         """
-        Execute upsert operation: INSERT new records and UPDATE existing ones.
+        Perform upsert using Delta Lake MERGE operation.
+        Most efficient approach for Delta tables.
         
         Args:
-            insert_df: DataFrame with records to insert
-            update_df: DataFrame with records to update
+            df: DataFrame to upsert
             
         Returns:
-            Dictionary with operation statistics
+            Success status
         """
-        stats = {
-            'inserted': 0,
-            'updated': 0,
-            'failed': 0
-        }
-        
         try:
-            # Write inserts to staging table first
+            from delta.tables import DeltaTable
+            
+            # Check if target table exists
+            if DeltaTable.isDeltaTable(self.spark, self.target_table):
+                delta_table = DeltaTable.forPath(self.spark, self.target_table)
+                
+                # Prepare source with update metadata
+                source_df = self.prepare_for_update(df)
+                
+                # Perform MERGE operation
+                delta_table.alias("target").merge(
+                    source_df.alias("source"),
+                    "target.analytics_id = source.analytics_id"
+                ).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+                
+                self.logger.log_message(
+                    step='LOAD',
+                    status='S',
+                    message=f"MERGE operation completed successfully"
+                )
+                return True
+            else:
+                # Table doesn't exist, perform initial INSERT
+                prepared_df = self.prepare_for_insert(df)
+                prepared_df.write.format("delta") \
+                          .mode("overwrite") \
+                          .save(self.target_table)
+                
+                self.logger.log_message(
+                    step='LOAD',
+                    status='S',
+                    message=f"Initial load completed (table created)"
+                )
+                return True
+                
+        except Exception as e:
+            self.logger.log_message(
+                step='LOAD',
+                status='E',
+                message=f"MERGE operation failed: {str(e)}"
+            )
+            return False
+    
+    def perform_upsert_separate(self, df: DataFrame) -> bool:
+        """
+        Perform upsert using separate INSERT and UPDATE operations.
+        Works with non-Delta formats.
+        
+        Args:
+            df: DataFrame to upsert
+            
+        Returns:
+            Success status
+        """
+        try:
+            # Identify INSERT vs UPDATE records
+            insert_df, update_df = self.identify_insert_update_records(df)
+            
+            insert_count = 0
+            update_count = 0
+            
+            # Handle INSERT records
             if insert_df.count() > 0:
-                insert_df.write \
-                    .format(self.config.get('format', 'parquet')) \
-                    .mode('append') \
-                    .option("mergeSchema", "true") \
-                    .saveAsTable(self.target_table)
-                
-                stats['inserted'] = insert_df.count()
+                prepared_insert = self.prepare_for_insert(insert_df)
+                prepared_insert.write.format(self.config['load']['format']) \
+                              .mode("append") \
+                              .save(self.target_table)
+                insert_count = prepared_insert.count()
                 
                 self.logger.log_message(
-                    step="LOAD",
-                    status="S",
-                    records_processed=stats['inserted'],
-                    records_success=stats['inserted'],
-                    message=f"Inserted {stats['inserted']} new records"
+                    step='LOAD',
+                    status='S',
+                    records_success=insert_count,
+                    message=f"Inserted {insert_count} new records"
                 )
             
-            # Handle updates using merge logic
+            # Handle UPDATE records
             if update_df.count() > 0:
-                # Create temporary view for merge operation
-                update_df.createOrReplaceTempView("updates_temp")
+                prepared_update = self.prepare_for_update(update_df)
                 
-                # Execute merge using SQL
-                merge_sql = f"""
-                MERGE INTO {self.target_table} target
-                USING updates_temp source
-                ON target.analytics_id = source.analytics_id
-                WHEN MATCHED THEN UPDATE SET
-                    target.trans_date = source.trans_date,
-                    target.customer_id = source.customer_id,
-                    target.product_id = source.product_id,
-                    target.total_quantity = source.total_quantity,
-                    target.gross_amount = source.gross_amount,
-                    target.net_amount = source.net_amount,
-                    target.discount_amount = source.discount_amount,
-                    target.tax_amount = source.tax_amount,
-                    target.currency = source.currency,
-                    target.sales_rep = source.sales_rep,
-                    target.region = source.region,
-                    target.profit_margin = source.profit_margin,
-                    target.category = source.category,
-                    target.etl_run_id = source.etl_run_id,
-                    target.updated_at = source.updated_at,
-                    target.updated_by = source.updated_by
-                """
+                # Read full table, update matching records, write back
+                existing_full = self.spark.read.format(self.config['load']['format']) \
+                                         .load(self.target_table)
                 
-                self.spark.sql(merge_sql)
-                stats['updated'] = update_df.count()
+                # Drop old versions of updated records
+                non_updated = existing_full.join(
+                    prepared_update.select("analytics_id"),
+                    on="analytics_id",
+                    how="left_anti"
+                )
+                
+                # Combine non-updated records with updated records
+                final_df = non_updated.union(prepared_update)
+                
+                # Write back with overwrite
+                final_df.write.format(self.config['load']['format']) \
+                       .mode("overwrite") \
+                       .save(self.target_table)
+                
+                update_count = prepared_update.count()
                 
                 self.logger.log_message(
-                    step="LOAD",
-                    status="S",
-                    records_processed=stats['updated'],
-                    records_success=stats['updated'],
-                    message=f"Updated {stats['updated']} existing records"
+                    step='LOAD',
+                    status='S',
+                    records_success=update_count,
+                    message=f"Updated {update_count} existing records"
                 )
             
-            return stats
+            self.logger.log_message(
+                step='LOAD',
+                status='S',
+                records_processed=insert_count + update_count,
+                records_success=insert_count + update_count,
+                message=f"Upsert completed: {insert_count} inserts, {update_count} updates"
+            )
+            
+            return True
             
         except Exception as e:
-            raise ETLLoadError(f"Upsert operation failed: {str(e)}")
+            self.logger.log_message(
+                step='LOAD',
+                status='E',
+                message=f"Upsert operation failed: {str(e)}"
+            )
+            return False
     
     def update_source_status(self, processed_ids: list) -> bool:
         """
-        Update status of processed records in source table.
-        Implements status update from ABAP load_data method.
+        Update status in source raw table after successful load.
+        Migrated from source status update logic in ABAP.
         
         Args:
             processed_ids: List of transaction IDs that were processed
             
         Returns:
-            True if update successful, False otherwise
+            Success status
         """
         try:
-            source_table = self.config.get('source_table', 'sales_raw')
+            if not processed_ids:
+                return True
             
-            # Create DataFrame with processed IDs
-            ids_df = self.spark.createDataFrame(
-                [(id_val,) for id_val in processed_ids],
-                ["trans_id"]
+            # Read source table
+            source_df = self.spark.read.format(self.config['extract']['format']) \
+                                  .load(self.source_status_table)
+            
+            # Update status to 'P' (Processed) for loaded records
+            updated_df = source_df.withColumn(
+                "status",
+                F.when(
+                    F.col("trans_id").isin(processed_ids),
+                    F.lit('P')
+                ).otherwise(F.col("status"))
             )
             
-            # Update status using SQL
-            ids_df.createOrReplaceTempView("processed_ids")
-            
-            update_sql = f"""
-            UPDATE {source_table}
-            SET status = 'P', processed_at = current_timestamp()
-            WHERE trans_id IN (SELECT trans_id FROM processed_ids)
-            """
-            
-            self.spark.sql(update_sql)
+            # Write back
+            updated_df.write.format(self.config['extract']['format']) \
+                     .mode("overwrite") \
+                     .save(self.source_status_table)
             
             self.logger.log_message(
-                step="LOAD",
-                status="S",
+                step='LOAD',
+                status='S',
                 message=f"Updated status for {len(processed_ids)} source records"
             )
             
@@ -287,130 +410,172 @@ class DataLoader:
             
         except Exception as e:
             self.logger.log_message(
-                step="LOAD",
-                status="W",
+                step='LOAD',
+                status='W',
                 message=f"Failed to update source status: {str(e)}"
             )
             return False
     
     def load_data(self, analytics_df: DataFrame) -> bool:
         """
-        Main load method implementing complete upsert logic.
-        Migrated from ABAP ZCL_ETL_LOADER->load_data method.
+        Main load method - orchestrates validation and upsert operations.
+        Migrated from load_data method in ABAP ZCL_ETL_LOADER.
         
         Args:
-            analytics_df: DataFrame with transformed analytics data
+            analytics_df: Transformed analytics DataFrame to load
             
         Returns:
-            True if load successful, False otherwise
+            Success status
         """
         try:
             self.logger.log_message(
-                step="LOAD",
-                status="S",
-                message="Starting data load with upsert logic"
+                step='LOAD',
+                status='S',
+                message='Starting data load'
             )
             
             total_count = analytics_df.count()
             
-            # Step 1: Validate records
-            validated_df = self.validate_record(analytics_df)
+            if total_count == 0:
+                self.logger.log_message(
+                    step='LOAD',
+                    status='W',
+                    message='No records to load'
+                )
+                return True
             
-            # Separate valid and invalid records
-            valid_df = validated_df.filter(F.col("is_valid") == True) \
-                                   .drop("is_valid", "validation_message")
+            # Validate records
+            validated_df = self.validate_dataframe(analytics_df)
+            valid_df = validated_df.filter(F.col("is_valid") == True).drop("is_valid")
             invalid_df = validated_df.filter(F.col("is_valid") == False)
             
+            valid_count = valid_df.count()
             invalid_count = invalid_df.count()
+            
             if invalid_count > 0:
                 self.logger.log_message(
-                    step="LOAD",
-                    status="W",
+                    step='LOAD',
+                    status='W',
                     records_error=invalid_count,
-                    message=f"Skipped {invalid_count} invalid records"
+                    message=f'Skipping {invalid_count} invalid records'
                 )
-                
-                # Log sample invalid records for debugging
-                invalid_sample = invalid_df.select("analytics_id", "validation_message") \
-                                          .limit(10) \
-                                          .collect()
-                for row in invalid_sample:
-                    self.logger.log_message(
-                        step="LOAD",
-                        status="W",
-                        message=f"Invalid record {row.analytics_id}: {row.validation_message}"
-                    )
             
-            # Step 2: Prepare upsert data
-            insert_df, update_df = self.prepare_upsert_data(valid_df)
+            if valid_count == 0:
+                self.logger.log_message(
+                    step='LOAD',
+                    status='E',
+                    message='No valid records to load'
+                )
+                return False
             
-            # Step 3: Perform upsert
-            stats = self.perform_upsert(insert_df, update_df)
+            # Perform upsert based on configuration
+            if self.upsert_mode == 'merge' and self.config['load']['format'] == 'delta':
+                success = self.perform_upsert_merge(valid_df)
+            else:
+                success = self.perform_upsert_separate(valid_df)
             
-            # Step 4: Update source table status
-            processed_ids = valid_df.select("analytics_id").rdd.flatMap(lambda x: x).collect()
-            self.update_source_status(processed_ids)
+            if not success:
+                return False
+            
+            # Update source table status
+            trans_ids = [row['trans_id'] for row in valid_df.select("trans_id").distinct().collect()]
+            self.update_source_status(trans_ids)
             
             # Log final statistics
-            success_count = stats['inserted'] + stats['updated']
             self.logger.log_message(
-                step="LOAD",
-                status="S",
+                step='LOAD',
+                status='S',
                 records_processed=total_count,
-                records_success=success_count,
+                records_success=valid_count,
                 records_error=invalid_count,
-                message=f"Load completed: {stats['inserted']} inserted, {stats['updated']} updated, {invalid_count} invalid"
+                message=f'Loaded {valid_count} of {total_count} records'
             )
             
             return True
             
         except Exception as e:
             self.logger.log_message(
-                step="LOAD",
-                status="E",
-                message=f"Load failed: {str(e)}"
+                step='LOAD',
+                status='E',
+                message=f'Load failed: {str(e)}'
             )
-            raise ETLLoadError(f"Data load failed: {str(e)}")
+            return False
+
+
+def create_loader(spark: SparkSession, config_path: str = "config.yaml") -> DataLoader:
+    """
+    Factory function to create DataLoader instance.
+    
+    Args:
+        spark: Active SparkSession
+        config_path: Path to configuration file
+        
+    Returns:
+        Configured DataLoader instance
+    """
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    from src.logger import create_logger
+    logger = create_logger(config)
+    
+    return DataLoader(spark, config, logger)
 
 
 ===FILE: src/logger.py===
 """
 ETL Logger Module
-Implements logging functionality for ETL operations.
-Migrated from ABAP ZCL_ETL_LOGGER class.
+Provides structured logging for ETL operations
+Migrated from ZCL_ETL_LOGGER ABAP class
 """
 
-from datetime import datetime
 from typing import Optional
-import logging
+from datetime import datetime
+import uuid
+import yaml
 
 
 class ETLLogger:
     """
-    Logger for ETL process tracking and audit trail.
-    Implements functionality from ABAP ZCL_ETL_LOGGER.
+    Logger for ETL process with structured logging support.
     """
     
-    def __init__(self, etl_run_id: str, log_level: str = "INFO"):
+    # Status codes
+    STATUS_SUCCESS = 'S'
+    STATUS_ERROR = 'E'
+    STATUS_WARNING = 'W'
+    STATUS_INFO = 'I'
+    
+    # Process steps
+    STEP_INIT = 'INIT'
+    STEP_EXTRACT = 'EXTRACT'
+    STEP_TRANSFORM = 'TRANSFORM'
+    STEP_LOAD = 'LOAD'
+    STEP_VALIDATE = 'VALIDATE'
+    STEP_COMPLETE = 'COMPLETE'
+    STEP_ERROR = 'ERROR'
+    
+    def __init__(self, etl_run_id: str, config: dict):
         """
-        Initialize ETL logger with run ID.
+        Initialize logger with ETL run ID.
         
         Args:
-            etl_run_id: Unique identifier for ETL execution
-            log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+            etl_run_id: Unique identifier for this ETL run
+            config: Configuration dictionary
         """
         self.etl_run_id = etl_run_id
-        self.logger = logging.getLogger(f"ETL_{etl_run_id}")
-        self.logger.setLevel(getattr(logging, log_level.upper()))
+        self.config = config
+        self.logs = []
+    
+    def generate_log_id(self) -> str:
+        """
+        Generate unique log ID.
         
-        # Create console handler
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+        Returns:
+            Unique log identifier
+        """
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        return f"LOG{timestamp}{str(uuid.uuid4())[:6]}"
     
     def log_message(
         self,
@@ -422,21 +587,22 @@ class ETLLogger:
         records_error: int = 0
     ) -> None:
         """
-        Log ETL message with statistics.
-        Implements ABAP log_message method.
+        Log a message with metadata.
         
         Args:
-            step: Process step (EXTRACT, TRANSFORM, LOAD, etc.)
-            status: Status code (S=Success, E=Error, W=Warning, I=Info)
-            message: Log message text
-            records_processed: Total records processed
-            records_success: Successfully processed records
-            records_error: Failed records
+            step: ETL process step
+            status: Status code (S/E/W/I)
+            message: Log message
+            records_processed: Number of records processed
+            records_success: Number of successful records
+            records_error: Number of error records
         """
         log_entry = {
+            'log_id': self.generate_log_id(),
             'etl_run_id': self.etl_run_id,
-            'timestamp': datetime.now().isoformat(),
-            'step': step,
+            'execution_date': datetime.now().strftime('%Y-%m-%d'),
+            'execution_time': datetime.now().strftime('%H:%M:%S'),
+            'process_step': step,
             'status': status,
             'records_processed': records_processed,
             'records_success': records_success,
@@ -444,201 +610,261 @@ class ETLLogger:
             'message': message
         }
         
-        # Map status to log level
-        if status == 'E':
-            self.logger.error(f"[{step}] {message} | Processed: {records_processed}, Success: {records_success}, Error: {records_error}")
-        elif status == 'W':
-            self.logger.warning(f"[{step}] {message} | Processed: {records_processed}, Success: {records_success}, Error: {records_error}")
-        elif status == 'S':
-            self.logger.info(f"[{step}] {message} | Processed: {records_processed}, Success: {records_success}, Error: {records_error}")
-        else:
-            self.logger.debug(f"[{step}] {message} | Processed: {records_processed}, Success: {records_success}, Error: {records_error}")
+        self.logs.append(log_entry)
+        
+        # Console output
+        status_symbol = {
+            'S': '✓',
+            'E': '✗',
+            'W': '⚠',
+            'I': 'ℹ'
+        }.get(status, '•')
+        
+        print(f"[{log_entry['execution_time']}] {status_symbol} {step}: {message}")
+        
+        if records_processed > 0:
+            print(f"  → Processed: {records_processed}, Success: {records_success}, Errors: {records_error}")
     
     def get_etl_run_id(self) -> str:
-        """Get the current ETL run ID."""
+        """
+        Get ETL run ID.
+        
+        Returns:
+            ETL run ID
+        """
         return self.etl_run_id
-
-
-===FILE: src/exceptions.py===
-"""
-ETL Exception Classes
-Custom exceptions for ETL error handling.
-Migrated from ABAP ZCX_ETL_ERROR class.
-"""
-
-
-class ETLError(Exception):
-    """Base exception class for ETL errors."""
     
-    def __init__(self, message: str, error_step: str = None, record_id: str = None):
-        super().__init__(message)
-        self.error_step = error_step
-        self.record_id = record_id
+    def get_logs(self) -> list:
+        """
+        Get all log entries.
+        
+        Returns:
+            List of log entries
+        """
+        return self.logs
 
 
-class ETLExtractError(ETLError):
-    """Exception raised during data extraction."""
-    pass
-
-
-class ETLTransformError(ETLError):
-    """Exception raised during data transformation."""
-    pass
-
-
-class ETLLoadError(ETLError):
-    """Exception raised during data loading."""
-    pass
-
-
-class ETLValidationError(ETLError):
-    """Exception raised during data validation."""
-    pass
+def create_logger(config: dict) -> ETLLogger:
+    """
+    Factory function to create logger instance.
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        ETLLogger instance
+    """
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    etl_run_id = f"ETL{timestamp}"
+    return ETLLogger(etl_run_id, config)
 
 
 ===FILE: config.yaml===
 # ETL Configuration
-# Migrated from ABAP ZCL_ETL_CONSTANTS and package configuration
+# Migrated from ZCL_ETL_CONSTANTS and ABAP configuration
 
-etl:
-  # Application metadata
-  app_name: "Sales ETL System"
-  version: "1.0.0"
-  
-  # Spark configuration
-  spark:
-    app_name: "SalesETL"
-    master: "local[*]"
-    config:
-      spark.sql.adaptive.enabled: "true"
-      spark.sql.adaptive.coalescePartitions.enabled: "true"
-      spark.sql.sources.partitionOverwriteMode: "dynamic"
-      spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
-      spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
-  
-  # Database configuration
-  database:
-    format: "delta"  # parquet, delta, or jdbc
-    source_table: "sales_raw"
-    target_table: "sales_analytics"
-    log_table: "etl_log"
-    
-  # Processing configuration
-  processing:
-    batch_size: 1000
-    commit_interval: 500
-    retry_attempts: 3
-    timeout_seconds: 3600
-    enable_validation: true
-    parallel_jobs: 4
-    
-  # Status codes (from ABAP gc_status)
-  status_codes:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
-    
-  # Process steps (from ABAP gc_step)
-  process_steps:
-    init: "INIT"
-    extract: "EXTRACT"
-    transform: "TRANSFORM"
-    load: "LOAD"
-    validate: "VALIDATE"
-    complete: "COMPLETE"
-    error: "ERROR"
-    
-  # Business rules - Categories (from ABAP gc_category)
-  categories:
-    high: "HIGH"
-    medium: "MEDIUM"
-    low: "LOW"
-    
+# Data source configuration
+extract:
+  format: "parquet"  # or "delta", "csv", "jdbc"
+  source_table: "data/raw/sales_raw"
+  date_column: "trans_date"
+  status_column: "status"
+  new_status: "N"
+  processed_status: "P"
+  batch_size: 1000
+
+# Transformation configuration
+transform:
   # Business rules - Discount thresholds
   discount:
     quantity_tier1: 10
     quantity_tier2: 15
     rate_tier1: 0.05
     rate_tier2: 0.10
-    
-  # Business rules - Tax and cost
+  
+  # Tax rate
   tax_rate: 0.08
+  
+  # Cost ratio for profit calculation
   cost_ratio: 0.60
   
-  # Business rules - Category thresholds
-  category_thresholds:
-    high: 2000.00
-    medium: 500.00
-    
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+
+# Load configuration
+load:
+  format: "delta"  # "delta", "parquet", "jdbc"
+  target_table: "data/analytics/sales_analytics"
+  source_status_table: "data/raw/sales_raw"
+  batch_size: 1000
+  upsert_mode: "merge"  # "merge" (Delta only) or "separate"
+  
+  # Primary key for upsert
+  primary_key: "analytics_id"
+  
+  # Validation rules
+  validation:
+    required_fields:
+      - "analytics_id"
+      - "customer_id"
+      - "product_id"
+      - "gross_amount"
+      - "currency"
+    valid_categories:
+      - "HIGH"
+      - "MEDIUM"
+      - "LOW"
+
+# ETL configuration defaults
+etl:
+  default_batch_size: 1000
+  default_commit_interval: 500
+  default_retry_attempts: 3
+  default_timeout_seconds: 3600
+  
   # ID prefixes
-  prefixes:
+  prefix:
     etl_run: "ETL"
     log_id: "LOG"
     analytics_id: "ANL"
+
+# Runtime configuration
+runtime:
+  user: "etl_system"
+  application: "sales_etl"
+  
+  # Spark configuration
+  spark:
+    app_name: "Sales ETL Pipeline"
+    master: "local[*]"
+    log_level: "WARN"
     
-  # Logging configuration
-  logging:
-    level: "INFO"
-    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    # Delta Lake extensions
+    extensions:
+      - "io.delta.sql.DeltaSparkSessionExtension"
     
-  # User information
-  user: "spark_etl_system"
+    config:
+      spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
+      spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+      spark.sql.adaptive.enabled: "true"
+      spark.sql.adaptive.coalescePartitions.enabled: "true"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  output_table: "data/logs/etl_log"
+  console_output: true
+
+# Message texts
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
 
 
 ===FILE: tests/test_load.py===
 """
-Unit tests for DataLoader class.
-Tests upsert logic, validation, and error handling.
+Unit tests for DataLoader module
+Tests INSERT, UPDATE, and upsert logic
 """
 
 import pytest
-from datetime import date, datetime
-from decimal import Decimal
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from datetime import date, datetime
+import tempfile
+import shutil
+import os
 
 from src.load import DataLoader
 from src.logger import ETLLogger
-from src.exceptions import ETLLoadError
 
 
 @pytest.fixture(scope="module")
 def spark():
     """Create Spark session for testing."""
     spark = SparkSession.builder \
-        .appName("TestDataLoader") \
+        .appName("test_loader") \
         .master("local[2]") \
-        .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse") \
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
         .getOrCreate()
+    
+    spark.sparkContext.setLogLevel("ERROR")
+    
     yield spark
+    
     spark.stop()
 
 
 @pytest.fixture
-def logger():
-    """Create test logger."""
-    return ETLLogger("TEST_RUN_001", "DEBUG")
+def temp_dir():
+    """Create temporary directory for test data."""
+    temp_path = tempfile.mkdtemp()
+    yield temp_path
+    shutil.rmtree(temp_path)
 
 
 @pytest.fixture
-def config():
-    """Test configuration."""
+def config(temp_dir):
+    """Create test configuration."""
     return {
-        'target_table': 'test_sales_analytics',
-        'source_table': 'test_sales_raw',
-        'format': 'parquet',
-        'batch_size': 100,
-        'enable_validation': True,
-        'user': 'test_user'
+        'extract': {
+            'format': 'delta',
+            'source_table': f"{temp_dir}/raw"
+        },
+        'load': {
+            'format': 'delta',
+            'target_table': f"{temp_dir}/analytics",
+            'source_status_table': f"{temp_dir}/raw",
+            'batch_size': 100,
+            'upsert_mode': 'merge',
+            'primary_key': 'analytics_id',
+            'validation': {
+                'required_fields': ['analytics_id', 'customer_id', 'product_id', 'gross_amount', 'currency'],
+                'valid_categories': ['HIGH', 'MEDIUM', 'LOW']
+            }
+        },
+        'runtime': {
+            'user': 'test_user'
+        }
     }
+
+
+@pytest.fixture
+def logger(config):
+    """Create test logger."""
+    return ETLLogger("TEST_RUN_001", config)
+
+
+@pytest.fixture
+def loader(spark, config, logger):
+    """Create DataLoader instance."""
+    return DataLoader(spark, config, logger)
 
 
 @pytest.fixture
 def sample_analytics_data(spark):
     """Create sample analytics data for testing."""
+    data = [
+        ("ANL001", date(2024, 1, 1), "CUST001", "PROD001", 10, 999.90, 949.91, 49.99, 71.99, 
+         "USD", "John Doe", "NORTH", 25.5, "MEDIUM", "ETL001", "T000001"),
+        ("ANL002", date(2024, 1, 1), "CUST002", "PROD002", 5, 749.95, 712.45, 37.50, 53.98,
+         "USD", "Jane Smith", "SOUTH", 28.3, "MEDIUM", "ETL001", "T000002"),
+        ("ANL003", date(2024, 1, 1), "CUST003", "PROD001", 20, 1999.80, 1819.82, 199.98, 145.59,
+         "USD", "John Doe", "EAST", 30.1, "MEDIUM", "ETL001", "T000003")
+    ]
+    
     schema = StructType([
         StructField("analytics_id", StringType(), False),
         StructField("trans_date", DateType(), False),
@@ -654,56 +880,9 @@ def sample_analytics_data(spark):
         StructField("region", StringType(), True),
         StructField("profit_margin", DecimalType(5, 2), True),
         StructField("category", StringType(), False),
-        StructField("etl_run_id", StringType(), False)
+        StructField("etl_run_id", StringType(), False),
+        StructField("trans_id", StringType(), False)
     ])
-    
-    data = [
-        ("ANL001", date(2024, 1, 15), "CUST001", "PROD001", 10, 
-         Decimal("999.90"), Decimal("1029.89"), Decimal("49.99"), Decimal("79.99"),
-         "USD", "John Doe", "NORTH", Decimal("35.50"), "HIGH", "ETL001"),
-        ("ANL002", date(2024, 1, 15), "CUST002", "PROD002", 5,
-         Decimal("749.95"), Decimal("774.35"), Decimal("0.00"), Decimal("59.99"),
-         "USD", "Jane Smith", "SOUTH", Decimal("40.20"), "MEDIUM", "ETL001"),
-        ("ANL003", date(2024, 1, 15), "CUST003", "PROD001", 20,
-         Decimal("1999.80"), Decimal("2015.80"), Decimal("199.98"), Decimal("144.00"),
-         "USD", "John Doe", "EAST", Decimal("38.75"), "HIGH", "ETL001")
-    ]
-    
-    return spark.createDataFrame(data, schema)
-
-
-@pytest.fixture
-def invalid_analytics_data(spark):
-    """Create invalid analytics data for validation testing."""
-    schema = StructType([
-        StructField("analytics_id", StringType(), True),
-        StructField("trans_date", DateType(), True),
-        StructField("customer_id", StringType(), True),
-        StructField("product_id", StringType(), True),
-        StructField("total_quantity", IntegerType(), True),
-        StructField("gross_amount", DecimalType(16, 2), True),
-        StructField("net_amount", DecimalType(16, 2), True),
-        StructField("discount_amount", DecimalType(16, 2), True),
-        StructField("tax_amount", DecimalType(16, 2), True),
-        StructField("currency", StringType(), True),
-        StructField("sales_rep", StringType(), True),
-        StructField("region", StringType(), True),
-        StructField("profit_margin", DecimalType(5, 2), True),
-        StructField("category", StringType(), True),
-        StructField("etl_run_id", StringType(), True)
-    ])
-    
-    data = [
-        (None, date(2024, 1, 15), "CUST001", "PROD001", 10, 
-         Decimal("999.90"), Decimal("1029.89"), Decimal("49.99"), Decimal("79.99"),
-         "USD", "John Doe", "NORTH", Decimal("35.50"), "HIGH", "ETL001"),  # Missing analytics_id
-        ("ANL004", date(2024, 1, 15), None, "PROD002", 5,
-         Decimal("749.95"), Decimal("774.35"), Decimal("0.00"), Decimal("59.99"),
-         "USD", "Jane Smith", "SOUTH", Decimal("40.20"), "MEDIUM", "ETL001"),  # Missing customer_id
-        ("ANL005", date(2024, 1, 15), "CUST003", "PROD001", 20,
-         Decimal("-100.00"), Decimal("2015.80"), Decimal("199.98"), Decimal("144.00"),
-         "USD", "John Doe", "EAST", Decimal("38.75"), "INVALID", "ETL001")  # Invalid amount and category
-    ]
     
     return spark.createDataFrame(data, schema)
 
@@ -711,98 +890,37 @@ def invalid_analytics_data(spark):
 class TestDataLoader:
     """Test suite for DataLoader class."""
     
-    def test_initialization(self, spark, logger, config):
-        """Test DataLoader initialization."""
-        loader = DataLoader(spark, logger, config)
-        
-        assert loader.spark == spark
-        assert loader.logger == logger
-        assert loader.target_table == 'test_sales_analytics'
-        assert loader.batch_size == 100
-        assert loader.enable_validation is True
-    
-    def test_get_target_schema(self, spark, logger, config):
-        """Test target schema definition."""
-        loader = DataLoader(spark, logger, config)
-        schema = loader.get_target_schema()
-        
-        assert isinstance(schema, StructType)
-        assert len(schema.fields) == 18
-        assert schema.fieldNames()[0] == "analytics_id"
-        assert schema["analytics_id"].nullable is False
-        assert schema["gross_amount"].dataType.typeName() == "decimal(16,2)"
-    
-    def test_validate_record_valid_data(self, spark, logger, config, sample_analytics_data):
-        """Test validation with valid records."""
-        loader = DataLoader(spark, logger, config)
-        validated_df = loader.validate_record(sample_analytics_data)
-        
-        # Check that is_valid column was added
-        assert "is_valid" in validated_df.columns
-        
-        # All records should be valid
-        valid_count = validated_df.filter("is_valid = true").count()
-        assert valid_count == 3
-    
-    def test_validate_record_invalid_data(self, spark, logger, config, invalid_analytics_data):
-        """Test validation with invalid records."""
-        loader = DataLoader(spark, logger, config)
-        validated_df = loader.validate_record(invalid_analytics_data)
-        
-        # Check validation results
-        invalid_count = validated_df.filter("is_valid = false").count()
-        assert invalid_count == 3
-        
-        # Check validation messages
-        assert "validation_message" in validated_df.columns
-        messages = validated_df.filter("is_valid = false").select("validation_message").collect()
-        assert all(row.validation_message is not None for row in messages)
-    
-    def test_validate_record_disabled(self, spark, logger, sample_analytics_data):
-        """Test validation when disabled."""
-        config = {
-            'target_table': 'test_sales_analytics',
-            'enable_validation': False,
-            'user': 'test_user'
+    def test_validate_record_valid(self, loader):
+        """Test validation of valid record."""
+        valid_record = {
+            'analytics_id': 'ANL001',
+            'customer_id': 'CUST001',
+            'product_id': 'PROD001',
+            'gross_amount': 100.50,
+            'currency': 'USD',
+            'category': 'MEDIUM'
         }
-        loader = DataLoader(spark, logger, config)
-        validated_df = loader.validate_record(sample_analytics_data)
         
-        # All records should be marked as valid when validation is disabled
-        valid_count = validated_df.filter("is_valid = true").count()
-        assert valid_count == sample_analytics_data.count()
+        is_valid, error_msg = loader.validate_record(valid_record)
+        assert is_valid == True
+        assert error_msg == ""
     
-    def test_prepare_upsert_data_no_existing_table(self, spark, logger, config, sample_analytics_data):
-        """Test prepare_upsert_data when target table doesn't exist."""
-        loader = DataLoader(spark, logger, config)
-        insert_df, update_df = loader.prepare_upsert_data(sample_analytics_data)
+    def test_validate_record_missing_id(self, loader):
+        """Test validation with missing analytics_id."""
+        invalid_record = {
+            'analytics_id': None,
+            'customer_id': 'CUST001',
+            'product_id': 'PROD001',
+            'gross_amount': 100.50,
+            'currency': 'USD',
+            'category': 'MEDIUM'
+        }
         
-        # All records should be inserts
-        assert insert_df.count() == 3
-        assert update_df.count() == 0
-        
-        # Check metadata columns were added
-        assert "loaded_at" in insert_df.columns
-        assert "loaded_by" in insert_df.columns
-        assert insert_df.select("loaded_by").first()[0] == "test_user"
+        is_valid, error_msg = loader.validate_record(invalid_record)
+        assert is_valid == False
+        assert "analytics_id" in error_msg
     
-    def test_prepare_upsert_data_with_existing_records(self, spark, logger, config, sample_analytics_data):
-        """Test prepare_upsert_data with existing records."""
-        loader = DataLoader(spark, logger, config)
-        
-        # Create target table with one existing record
-        existing_data = sample_analytics_data.limit(1)
-        existing_data.write.format("parquet").mode("overwrite").saveAsTable(config['target_table'])
-        
-        try:
-            insert_df, update_df = loader.prepare_upsert_data(sample_analytics_data)
-            
-            # Should have 1 update and 2 inserts
-            assert update_df.count() == 1
-            assert insert_df.count() == 2
-            
-            # Update records should have updated_at and updated_by
-            assert "updated_at" in update_df.columns
-            assert "updated_by" in update_df.columns
-            
-        finally:
+    def test_validate_record_invalid_amount(self, loader):
+        """Test validation with invalid gross amount."""
+        invalid_record = {
+            'analytics_id': 'ANL001',
