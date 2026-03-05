@@ -1,59 +1,55 @@
 """
-Custom Exception Classes
-Migrated from ZCX_ETL_ERROR
+ETL Exception Module
+Custom exception classes for ETL errors
+Migrated from ZCX_ETL_ERROR ABAP exception class
 """
 
 
-class ETLError(Exception):
-    """Base exception class for ETL errors"""
-    
+class ETLException(Exception):
+    """
+    Base exception class for ETL errors.
+    Migrates ABAP exception class to Python exception hierarchy.
+    """
+
     def __init__(
         self,
-        message: str,
-        error_step: str = None,
-        record_id: str = None,
-        original_exception: Exception = None
+        error_text: str = "",
+        error_step: str = "",
+        record_id: str = ""
     ):
-        self.message = message
+        """
+        Initialize ETL exception.
+        
+        Args:
+            error_text: Error message text
+            error_step: ETL step where error occurred
+            record_id: Record ID related to error (if applicable)
+        """
+        self.error_text = error_text
         self.error_step = error_step
         self.record_id = record_id
-        self.original_exception = original_exception
-        super().__init__(self.message)
-    
-    def __str__(self):
-        error_parts = [f"ETL Error: {self.message}"]
-        if self.error_step:
-            error_parts.append(f"Step: {self.error_step}")
-        if self.record_id:
-            error_parts.append(f"Record ID: {self.record_id}")
-        if self.original_exception:
-            error_parts.append(f"Original: {str(self.original_exception)}")
-        return " | ".join(error_parts)
+
+        # Construct full error message
+        message_parts = []
+        if error_step:
+            message_parts.append(f"[{error_step}]")
+        if record_id:
+            message_parts.append(f"Record {record_id}:")
+        message_parts.append(error_text)
+
+        super().__init__(" ".join(message_parts))
 
 
-class ExtractError(ETLError):
-    """Exception raised during data extraction"""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(f"Extract Error: {message}", error_step="EXTRACT", **kwargs)
+class ETLExtractException(ETLException):
+    """Exception raised during data extraction."""
+    pass
 
 
-class TransformError(ETLError):
-    """Exception raised during data transformation"""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(f"Transform Error: {message}", error_step="TRANSFORM", **kwargs)
+class ETLTransformException(ETLException):
+    """Exception raised during data transformation."""
+    pass
 
 
-class LoadError(ETLError):
-    """Exception raised during data loading"""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(f"Load Error: {message}", error_step="LOAD", **kwargs)
-
-
-class ValidationError(ETLError):
-    """Exception raised during data validation"""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(f"Validation Error: {message}", error_step="VALIDATE", **kwargs)
+class ETLLoadException(ETLException):
+    """Exception raised during data loading."""
+    pass
