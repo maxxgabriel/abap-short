@@ -1,24 +1,32 @@
 # ETL Configuration File
-# Sales Data ETL System Configuration
+# Sales Data Processing Pipeline
 
-# Core ETL Settings
-batch_size: 1000
-commit_interval: 500
-retry_attempts: 3
-timeout_seconds: 3600
-parallel_jobs: 4
+# Spark Configuration
+spark:
+  app_name: "Sales ETL Pipeline"
+  master: "local[*]"
+  config:
+    spark.sql.shuffle.partitions: 200
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
 
-# Logging Configuration
-log_level: INFO
-log_file: logs/etl.log
+# Source Configuration
+source:
+  raw_sales_path: "data/raw/sales"
+  format: "parquet"
+  
+# Target Configuration
+target:
+  analytics_path: "data/analytics/sales"
+  format: "parquet"
+  write_mode: "append"
+  partition_by:
+    - "trans_date"
 
-# Data Paths
-source_path: data/input
-target_path: data/output
-
-# Business Rules Configuration
+# Business Rules
 business_rules:
-  # Discount thresholds and rates
+  # Discount thresholds
   discount_qty_tier1: 10
   discount_qty_tier2: 15
   discount_rate_tier1: 0.05
@@ -34,32 +42,36 @@ business_rules:
   category_high_threshold: 2000.00
   category_medium_threshold: 500.00
 
-# Spark Configuration (for PySpark ETL)
-spark:
-  app_name: SalesETL
-  master: local[*]
-  driver_memory: 4g
-  executor_memory: 4g
-  executor_cores: 2
-  
-  # Spark SQL settings
-  sql:
-    shuffle_partitions: 200
-    adaptive_enabled: true
-    
-  # Spark configurations
-  configs:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.serializer: org.apache.spark.serializer.KryoSerializer
+# ETL Processing Configuration
+processing:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
 
-# Data Quality Checks
-data_quality:
-  enable_validation: true
-  max_error_percentage: 5.0
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_path: "logs/etl.log"
+
+# Validation Rules
+validation:
   required_fields:
     - trans_id
+    - trans_date
     - customer_id
     - product_id
     - quantity
     - unit_price
+  
+  min_quantity: 1
+  max_quantity: 10000
+  min_unit_price: 0.01
+  max_unit_price: 100000.00
+
+# Test Data Configuration
+test_data:
+  enabled: true
+  sample_size: 100
+  mock_data_path: "tests/data/mock_sales.parquet"
