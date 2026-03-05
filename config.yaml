@@ -1,128 +1,85 @@
 # ETL Configuration File
-# Configuration for Sales ETL System
+# Converted from ABAP Constants (ZCL_ETL_CONSTANTS)
 
-etl:
-  # Run configuration
-  run_id_prefix: "ETL"
-  log_id_prefix: "LOG"
-  analytics_id_prefix: "ANL"
-  
-  # Batch processing
+# Status Codes
+status_codes:
+  new: 'N'
+  processed: 'P'
+  error: 'E'
+  warning: 'W'
+  success: 'S'
+  info: 'I'
+
+# ETL Process Steps
+process_steps:
+  init: 'INIT'
+  extract: 'EXTRACT'
+  transform: 'TRANSFORM'
+  load: 'LOAD'
+  validate: 'VALIDATE'
+  complete: 'COMPLETE'
+  error: 'ERROR'
+
+# Sale Categories
+categories:
+  high: 'HIGH'
+  medium: 'MEDIUM'
+  low: 'LOW'
+
+# Business Rules - Discount Thresholds
+discount:
+  quantity_tier1: 10
+  quantity_tier2: 15
+  rate_tier1: 0.05
+  rate_tier2: 0.10
+
+# Business Rules - Tax Rate
+tax:
+  rate: 0.08
+
+# Business Rules - Cost Ratio
+cost:
+  ratio: 0.60
+
+# Business Rules - Category Thresholds
+category_thresholds:
+  high: 2000.00
+  medium: 500.00
+
+# ETL Configuration Defaults
+etl_config:
   default_batch_size: 1000
   default_commit_interval: 500
   default_retry_attempts: 3
   default_timeout_seconds: 3600
-  
-  # Logging
-  log_level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
-  log_to_file: true
-  log_file_path: "logs/etl_run_{run_id}.log"
-  
-  # Status codes
-  status:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
-  
-  # Process steps
-  steps:
-    init: "INIT"
-    extract: "EXTRACT"
-    transform: "TRANSFORM"
-    load: "LOAD"
-    validate: "VALIDATE"
-    complete: "COMPLETE"
-    error: "ERROR"
+  parallel_jobs: 4
 
-# Business rules configuration
-business_rules:
-  # Discount thresholds
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
-  
-  # Tax configuration
-  tax:
-    rate: 0.08
-  
-  # Cost configuration
-  cost:
-    ratio: 0.60
-  
-  # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-    high_label: "HIGH"
-    medium_label: "MEDIUM"
-    low_label: "LOW"
+# ID Prefixes
+id_prefixes:
+  etl_run: 'ETL'
+  log: 'LOG'
+  analytics: 'ANL'
 
-# Data source configuration
-data_source:
-  # Source table
-  raw_table: "zsales_raw"
-  
-  # Target table
-  analytics_table: "zsales_analytics"
-  
-  # Log table
-  log_table: "zetl_log"
-  
-  # Database connection (configure as needed)
-  connection:
-    type: "spark"
-    options:
-      driver: "org.postgresql.Driver"  # Example
-      url: "jdbc:postgresql://localhost:5432/etl_db"
-      user: "etl_user"
-      password: "${ETL_DB_PASSWORD}"  # Use environment variable
-
-# Spark configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  
-  # Spark configurations
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
-    spark.sql.shuffle.partitions: "200"
-
-# Validation rules
-validation:
-  required_fields:
-    - trans_id
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-  
-  # Field constraints
-  constraints:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: 0.01
-      max: 999999.99
-    currency:
-      allowed_values: ["USD", "EUR", "GBP"]
-
-# Message templates
+# Message Texts
 messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+  init_success: 'ETL process initialized successfully'
+  extract_start: 'Starting data extraction'
+  extract_complete: 'Data extraction completed'
+  transform_start: 'Starting data transformation'
+  transform_complete: 'Data transformation completed'
+  load_start: 'Starting data load'
+  load_complete: 'Data load completed'
+  etl_complete: 'ETL process completed successfully'
+  etl_error: 'ETL process failed'
+
+# Logging Configuration
+logging:
+  level: 'INFO'
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
+  
+# Database Configuration (placeholder)
+database:
+  connection_timeout: 30
+  query_timeout: 300
+  max_retries: 3
