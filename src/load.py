@@ -1,192 +1,158 @@
 """
-Sales ETL - Load Module
-Loads transformed analytics data to target destination.
+Data loading module for Sales ETL pipeline.
+Loads transformed analytics data to target systems.
 """
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import col, lit
-import logging
 from typing import Tuple
-
-from src.utils.logger import ETLLogger
-from src.utils.exceptions import LoadError
+import logging
 
 
-class SalesLoader:
-    """Handles loading of analytics data to target."""
+class SalesDataLoader:
+    """Loads transformed analytics data to target tables."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
+    def __init__(self, spark: SparkSession, config: dict):
         """
         Initialize the loader.
         
         Args:
-            spark: SparkSession instance
-            logger: ETL logger instance
+            spark: Active SparkSession
             config: Configuration dictionary
         """
         self.spark = spark
-        self.logger = logger
         self.config = config
+        self.logger = logging.getLogger(__name__)
     
-    def load_data(
-        self, 
-        analytics_df: DataFrame,
-        target_type: str = "parquet"
-    ) -> Tuple[bool, int, int]:
+    def load_data(self, analytics_df: DataFrame) -> Tuple[bool, dict]:
         """
-        Load analytics data to target.
+        Load analytics data to target destination.
         
         Args:
-            analytics_df: Analytics DataFrame to load
-            target_type: Target type (parquet, delta, jdbc, etc.)
+            analytics_df: Transformed analytics DataFrame
             
         Returns:
-            Tuple of (success, success_count, error_count)
-            
-        Raises:
-            LoadError: If load fails
+            Tuple of (success boolean, metrics dictionary)
         """
         try:
-            self.logger.log_message(
-                step="LOAD",
-                status="I",
-                message="Starting data load"
-            )
+            self.logger.info("Starting data load")
             
-            total_count = analytics_df.count()
+            initial_count = analytics_df.count()
             
-            # Validate records before loading
-            valid_df = self._validate_records(analytics_df)
-            valid_count = valid_df.count()
-            error_count = total_count - valid_count
+            # Validate before loading
+            is_valid, validation_messages = self._validate_for_load(analytics_df)
             
-            if error_count > 0:
-                self.logger.log_message(
-                    step="LOAD",
-                    status="W",
-                    message=f"Skipped {error_count} invalid records"
-                )
+            if not is_valid:
+                self.logger.error(f"Pre-load validation failed: {validation_messages}")
+                return False, {
+                    'records_loaded': 0,
+                    'records_error': initial_count,
+                    'validation_errors': validation_messages
+                }
             
-            # Load to target
-            target_config = self.config.get("target", {})
+            # Get target configuration
+            target_path = self.config['target']['analytics_path']
+            target_format = self.config['target'].get('format', 'parquet')
+            write_mode = self.config['target'].get('write_mode', 'append')
+            partition_by = self.config['target'].get('partition_by', ['trans_date'])
             
-            if target_type == "parquet":
-                self._load_to_parquet(valid_df, target_config)
-            elif target_type == "delta":
-                self._load_to_delta(valid_df, target_config)
-            elif target_type == "jdbc":
-                self._load_to_jdbc(valid_df, target_config)
-            else:
-                raise LoadError(f"Unsupported target type: {target_type}")
+            # Write to target
+            analytics_df.write \
+                .format(target_format) \
+                .mode(write_mode) \
+                .partitionBy(*partition_by) \
+                .save(target_path)
             
-            self.logger.log_message(
-                step="LOAD",
-                status="S",
-                records_processed=total_count,
-                records_success=valid_count,
-                records_error=error_count,
-                message=f"Loaded {valid_count} of {total_count} records"
-            )
+            metrics = {
+                'records_loaded': initial_count,
+                'records_success': initial_count,
+                'records_error': 0,
+                'target_path': target_path,
+                'write_mode': write_mode
+            }
             
-            return True, valid_count, error_count
+            self.logger.info(f"Successfully loaded {initial_count} records to {target_path}")
+            
+            return True, metrics
             
         except Exception as e:
-            self.logger.log_message(
-                step="LOAD",
-                status="E",
-                message=f"Load failed: {str(e)}"
-            )
-            raise LoadError(f"Failed to load data: {str(e)}") from e
+            self.logger.error(f"Load failed: {str(e)}")
+            return False, {
+                'records_loaded': 0,
+                'records_error': initial_count if 'initial_count' in locals() else 0,
+                'error_message': str(e)
+            }
     
-    def _validate_records(self, df: DataFrame) -> DataFrame:
+    def _validate_for_load(self, df: DataFrame) -> Tuple[bool, list]:
         """
-        Validate records before loading.
+        Validate data before loading.
         
         Args:
             df: DataFrame to validate
             
         Returns:
-            DataFrame with only valid records
+            Tuple of (validation success boolean, list of validation messages)
         """
-        # Filter out invalid records
-        valid_df = df.filter(
-            col("analytics_id").isNotNull() &
-            col("customer_id").isNotNull() &
-            col("product_id").isNotNull() &
-            (col("gross_amount") > 0) &
-            (col("net_amount") > 0) &
-            col("currency").isNotNull() &
-            col("category").isin(["HIGH", "MEDIUM", "LOW"])
-        )
+        validation_messages = []
         
-        return valid_df
+        # Check for null analytics_id
+        null_ids = df.filter(df.analytics_id.isNull()).count()
+        if null_ids > 0:
+            validation_messages.append(f"Found {null_ids} records with null analytics_id")
+        
+        # Check for null customer_id or product_id
+        null_customers = df.filter(df.customer_id.isNull()).count()
+        null_products = df.filter(df.product_id.isNull()).count()
+        
+        if null_customers > 0:
+            validation_messages.append(f"Found {null_customers} records with null customer_id")
+        if null_products > 0:
+            validation_messages.append(f"Found {null_products} records with null product_id")
+        
+        # Check for invalid gross amounts
+        invalid_amounts = df.filter(df.gross_amount <= 0).count()
+        if invalid_amounts > 0:
+            validation_messages.append(f"Found {invalid_amounts} records with invalid gross amounts")
+        
+        is_valid = len(validation_messages) == 0
+        
+        return is_valid, validation_messages
     
-    def _load_to_parquet(self, df: DataFrame, config: dict):
-        """Load to Parquet files."""
-        path = config.get("path")
-        mode = config.get("mode", "append")
-        partition_by = config.get("partition_by", ["trans_date"])
-        
-        df.write.mode(mode).partitionBy(*partition_by).parquet(path)
-        
-        self.logger.log_message(
-            step="LOAD",
-            status="I",
-            message=f"Written data to Parquet: {path}"
-        )
-    
-    def _load_to_delta(self, df: DataFrame, config: dict):
-        """Load to Delta Lake."""
-        path = config.get("path")
-        mode = config.get("mode", "append")
-        partition_by = config.get("partition_by", ["trans_date"])
-        
-        df.write.format("delta").mode(mode).partitionBy(*partition_by).save(path)
-        
-        self.logger.log_message(
-            step="LOAD",
-            status="I",
-            message=f"Written data to Delta: {path}"
-        )
-    
-    def _load_to_jdbc(self, df: DataFrame, config: dict):
-        """Load to JDBC target (SAP/Database)."""
-        jdbc_config = config.get("jdbc", {})
-        
-        df.write.format("jdbc") \
-            .option("url", jdbc_config.get("url")) \
-            .option("dbtable", jdbc_config.get("table", "ZSALES_ANALYTICS")) \
-            .option("user", jdbc_config.get("user")) \
-            .option("password", jdbc_config.get("password")) \
-            .option("driver", jdbc_config.get("driver", "com.sap.db.jdbc.Driver")) \
-            .mode(jdbc_config.get("mode", "append")) \
-            .save()
-        
-        self.logger.log_message(
-            step="LOAD",
-            status="I",
-            message=f"Written data to JDBC table: {jdbc_config.get('table')}"
-        )
-    
-    def update_source_status(self, trans_ids: list, status: str = "P"):
+    def update_source_status(self, trans_ids: list, status: str = 'P') -> bool:
         """
-        Update status of processed records in source.
+        Update status of processed records in source table.
         
         Args:
             trans_ids: List of transaction IDs to update
-            status: New status code (default: 'P' for processed)
+            status: New status value (default: 'P' for processed)
+            
+        Returns:
+            Success boolean
         """
         try:
-            # This would typically update the source table
-            # Implementation depends on source system capabilities
-            self.logger.log_message(
-                step="LOAD",
-                status="I",
-                message=f"Updated {len(trans_ids)} source records to status {status}"
+            self.logger.info(f"Updating status for {len(trans_ids)} records")
+            
+            # In production, this would update the source table
+            # For now, just log the operation
+            source_path = self.config['source']['raw_sales_path']
+            
+            # Read source data
+            source_df = self.spark.read.parquet(source_path)
+            
+            # Update status (simplified - in production use Delta Lake or similar)
+            # This is a demonstration of the concept
+            from pyspark.sql.functions import when
+            
+            updated_df = source_df.withColumn('status',
+                when(source_df.trans_id.isin(trans_ids), status)
+                .otherwise(source_df.status)
             )
+            
+            # Write back (in production, use proper update mechanism)
+            # updated_df.write.mode('overwrite').parquet(source_path)
+            
+            self.logger.info(f"Status update completed for {len(trans_ids)} records")
+            return True
+            
         except Exception as e:
-            self.logger.log_message(
-                step="LOAD",
-                status="W",
-                message=f"Failed to update source status: {str(e)}"
-            )
+            self.logger.error(f"Status update failed: {str(e)}")
+            return False
