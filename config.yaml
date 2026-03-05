@@ -1,193 +1,66 @@
-# Sales ETL System Configuration
-# Converted from ABAP ETL system configuration
+# ETL Logger Configuration
 
 # Spark Configuration
 spark:
-  app_name: "Sales ETL Process"
+  app_name: "SalesETLLogger"
   master: "local[*]"
-  # Use local[*] for testing, cluster URL for production
-  
-  # Spark Session Configuration
   config:
+    spark.sql.shuffle.partitions: "8"
     spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.legacy.timeParserPolicy: "LEGACY"
-    spark.sql.session.timeZone: "UTC"
-
-# ETL Process Configuration
-etl:
-  # Batch processing settings
-  batch_size: 1000
-  commit_interval: 500
-  parallel_jobs: 4
-  
-  # Retry and timeout settings
-  retry_attempts: 3
-  retry_delay_seconds: 5
-  timeout_seconds: 3600
-  
-  # Test mode (no commits to database)
-  test_mode: false
-
-# Data Source Configuration
-data_sources:
-  # Raw sales data source
-  raw_sales:
-    format: "parquet"  # or "jdbc", "csv", "delta"
-    path: "data/raw/sales"
-    # For JDBC connection:
-    # jdbc_url: "jdbc:postgresql://hostname:5432/database"
-    # table: "zsales_raw"
-    # user: "${DB_USER}"
-    # password: "${DB_PASSWORD}"
-    
-  # Analytics target
-  analytics:
-    format: "parquet"
-    path: "data/analytics/sales"
-    mode: "append"  # append, overwrite, errorifexists
-    
-  # ETL logs
-  etl_logs:
-    format: "parquet"
-    path: "data/logs/etl"
-    mode: "append"
-
-# Business Rules Configuration
-business_rules:
-  # Discount rules
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05  # 5%
-    rate_tier2: 0.10  # 10%
-  
-  # Tax configuration
-  tax:
-    rate: 0.08  # 8%
-    
-  # Cost calculation
-  cost:
-    ratio: 0.60  # 60% of unit price
-    
-  # Category thresholds
-  categories:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
-# Date Range Configuration
-date_range:
-  # Default lookback days if not specified
-  default_lookback_days: 7
-  
-  # Maximum date range allowed
-  max_range_days: 365
 
 # Logging Configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARN, ERROR
+  level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # Log file configuration
-  file:
-    enabled: true
-    path: "logs/etl.log"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
-  
-  # Console logging
-  console:
-    enabled: true
+  console_enabled: true
+  file_enabled: true
+  file_path: "logs/etl_execution.log"
 
-# Data Quality Configuration
-data_quality:
-  # Validation rules
-  validation:
-    enable_schema_validation: true
-    enable_business_rule_validation: true
-    fail_on_validation_error: false
-    
-  # Data quality thresholds
-  thresholds:
-    max_error_rate: 0.05  # 5%
-    min_record_count: 0
-    
-# Performance Tuning
-performance:
-  # Partition settings
-  repartition:
-    enabled: true
-    num_partitions: 10
-    
-  # Caching
-  cache:
-    enabled: true
-    storage_level: "MEMORY_AND_DISK"
-    
-  # Broadcast joins
-  broadcast:
-    enabled: true
-    threshold: 10485760  # 10MB
-
-# Output Configuration
-output:
-  # Write modes
-  write_mode: "append"  # append, overwrite, ignore, errorifexists
+# ETL Run Configuration
+etl:
+  run_id_prefix: "ETL"
+  log_id_prefix: "LOG"
   
-  # Partition columns for analytics output
-  partition_by:
-    - "trans_date"
-    - "region"
-    
-  # Compression
-  compression: "snappy"  # none, snappy, gzip, lzo, brotli, lz4, zstd
+# Delta Table Configuration
+delta:
+  log_table_path: "/data/etl_logs"
+  checkpoint_location: "/data/checkpoints/etl_logs"
   
-  # Coalesce output files
-  coalesce:
-    enabled: true
-    num_files: 1
+# Status Codes
+status_codes:
+  success: "S"
+  error: "E"
+  warning: "W"
+  info: "I"
 
-# Monitoring Configuration
-monitoring:
-  # Metrics collection
-  metrics:
-    enabled: true
-    output_path: "metrics/etl"
-    
-  # Statistics collection
-  statistics:
-    collect_table_stats: true
-    collect_column_stats: true
+# Process Steps
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
 
-# Environment-specific overrides
-environments:
-  development:
-    etl:
-      test_mode: true
-    spark:
-      master: "local[2]"
-    logging:
-      level: "DEBUG"
-      
-  staging:
-    etl:
-      test_mode: false
-      batch_size: 5000
-    spark:
-      master: "spark://staging-cluster:7077"
-    logging:
-      level: "INFO"
-      
-  production:
-    etl:
-      test_mode: false
-      batch_size: 10000
-      parallel_jobs: 8
-    spark:
-      master: "spark://prod-cluster:7077"
-    logging:
-      level: "WARN"
-    performance:
-      repartition:
-        num_partitions: 50
+# Business Rules (migrated from ABAP constants)
+business_rules:
+  discount:
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  category_thresholds:
+    high: 2000.00
+    medium: 500.00
+
+# ETL Process Configuration
+etl_config:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
