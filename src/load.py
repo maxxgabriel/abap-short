@@ -1,173 +1,195 @@
 """
-ETL Loader Module
-Loads transformed analytics data into target table
+PySpark ETL Loader Module
+
+Migrated from ABAP ZCL_ETL_LOADER class.
+Loads transformed data into target analytics table.
 """
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col
-import logging
+
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 from typing import Tuple
+import logging
+
+from src.logger import ETLLogger
 
 
 class ETLLoader:
-    """Loads transformed data into target analytics table"""
+    """
+    Loads transformed analytics data into target.
+    Replaces ABAP INSERT/UPDATE with DataFrame write operations.
+    """
     
-    def __init__(self, spark: SparkSession, logger: logging.Logger, config: dict):
+    def __init__(self, logger: ETLLogger, spark: SparkSession):
         """
-        Initialize the loader
+        Initialize loader with logger and Spark session.
         
         Args:
-            spark: SparkSession instance
-            logger: Logger instance for logging
-            config: Configuration dictionary
+            logger: ETL logger instance
+            spark: Active SparkSession
         """
-        self.spark = spark
         self.logger = logger
-        self.config = config
+        self.spark = spark
+        self.log = logging.getLogger(__name__)
     
-    def validate_record(self, df: DataFrame) -> DataFrame:
+    def load_data(
+        self,
+        analytics_data: DataFrame,
+        target_table: str = None,
+        target_path: str = None,
+        mode: str = 'append'
+    ) -> bool:
         """
-        Validate records before loading
+        Load analytics data to target.
+        
+        Migrated from ABAP load_data method.
+        Replaces LOOP AT with DataFrame write operations.
+        
+        Args:
+            analytics_data: Transformed analytics DataFrame
+            target_table: Optional table name (for JDBC)
+            target_path: Optional file path (for files)
+            mode: Write mode (append, overwrite)
+            
+        Returns:
+            Success boolean
+        """
+        try:
+            self.logger.log_message(
+                step='LOAD',
+                status='S',
+                message='Starting data load'
+            )
+            
+            # Validate data before loading
+            validated_df = self._validate_records(analytics_data)
+            
+            total_count = analytics_data.count()
+            valid_count = validated_df.count()
+            error_count = total_count - valid_count
+            
+            if error_count > 0:
+                self.log.warning(f"Skipped {error_count} invalid records")
+            
+            # Load based on target type
+            if target_table:
+                self._load_to_table(validated_df, target_table, mode)
+            elif target_path:
+                self._load_to_file(validated_df, target_path, mode)
+            else:
+                # Default: write to console for testing
+                self._load_to_console(validated_df)
+            
+            self.logger.log_message(
+                step='LOAD',
+                status='S',
+                records_processed=total_count,
+                records_success=valid_count,
+                records_error=error_count,
+                message=f'Loaded {valid_count} of {total_count} records'
+            )
+            
+            return True
+            
+        except Exception as e:
+            self.log.error(f"Load failed: {str(e)}", exc_info=True)
+            self.logger.log_message(
+                step='LOAD',
+                status='E',
+                message=f'Load failed: {str(e)}'
+            )
+            return False
+    
+    def _validate_records(self, df: DataFrame) -> DataFrame:
+        """
+        Validate records before loading.
+        
+        Migrated from ABAP validate_record method.
         
         Args:
             df: DataFrame to validate
             
         Returns:
-            Validated DataFrame
+            DataFrame with only valid records
         """
-        # Add validation flag
-        validated_df = df.withColumn(
-            "is_valid",
-            (col("analytics_id").isNotNull()) &
-            (col("customer_id").isNotNull()) &
-            (col("product_id").isNotNull()) &
-            (col("gross_amount") > 0) &
-            (col("currency").isNotNull()) &
-            (col("category").isin("HIGH", "MEDIUM", "LOW"))
+        # Validate required fields and business rules
+        validated_df = df.filter(
+            F.col('analytics_id').isNotNull() &
+            (F.col('analytics_id') != '') &
+            F.col('customer_id').isNotNull() &
+            (F.col('customer_id') != '') &
+            F.col('product_id').isNotNull() &
+            (F.col('product_id') != '') &
+            (F.col('gross_amount') > 0) &
+            F.col('currency').isNotNull() &
+            (F.col('currency') != '') &
+            F.col('category').isin(['HIGH', 'MEDIUM', 'LOW'])
         )
         
         return validated_df
     
-    def load_data(self, analytics_df: DataFrame) -> Tuple[bool, int, int]:
+    def _load_to_table(
+        self,
+        df: DataFrame,
+        table_name: str,
+        mode: str
+    ) -> None:
         """
-        Load analytics data into target table
+        Load data to database table via JDBC.
         
         Args:
-            analytics_df: Transformed analytics DataFrame
-            
-        Returns:
-            Tuple of (success_flag, success_count, error_count)
+            df: DataFrame to load
+            table_name: Target table name
+            mode: Write mode
         """
-        try:
-            self.logger.info("Starting data load")
-            
-            # Validate records
-            validated_df = self.validate_record(analytics_df)
-            
-            # Split into valid and invalid records
-            valid_df = validated_df.filter(col("is_valid") == True).drop("is_valid")
-            invalid_df = validated_df.filter(col("is_valid") == False).drop("is_valid")
-            
-            success_count = valid_df.count()
-            error_count = invalid_df.count()
-            total_count = success_count + error_count
-            
-            # Log invalid records
-            if error_count > 0:
-                self.logger.warning(
-                    f"Found {error_count} invalid records",
-                    extra={'step': 'LOAD', 'status': 'W'}
-                )
-            
-            # Write valid records to target table
-            if success_count > 0:
-                valid_df.write \
-                    .format("jdbc") \
-                    .option("url", "jdbc:postgresql://localhost:5432/sales_db") \
-                    .option("dbtable", "zsales_analytics") \
-                    .option("user", "etl_user") \
-                    .option("password", "etl_password") \
-                    .mode("append") \
-                    .save()
-                
-                # Update source table status (in production)
-                # This would be a separate update operation
-                self.logger.info("Updated source table status to 'P'")
-            
-            self.logger.info(
-                f"Loaded {success_count} of {total_count} records",
-                extra={
-                    'step': 'LOAD',
-                    'status': 'S',
-                    'records_processed': total_count,
-                    'records_success': success_count,
-                    'records_error': error_count
-                }
-            )
-            
-            return True, success_count, error_count
-            
-        except Exception as e:
-            self.logger.error(
-                f"Load failed: {str(e)}",
-                extra={'step': 'LOAD', 'status': 'E'},
-                exc_info=True
-            )
-            return False, 0, 0
+        self.log.info(f"Loading to table: {table_name} (mode: {mode})")
+        
+        df.write \
+            .format("jdbc") \
+            .option("url", "jdbc:postgresql://localhost:5432/sales_db") \
+            .option("dbtable", table_name) \
+            .option("user", "etl_user") \
+            .option("password", "password") \
+            .mode(mode) \
+            .save()
     
-    def load_to_parquet(self, analytics_df: DataFrame, output_path: str) -> Tuple[bool, int, int]:
+    def _load_to_file(
+        self,
+        df: DataFrame,
+        file_path: str,
+        mode: str
+    ) -> None:
         """
-        Load analytics data to Parquet files (alternative output)
+        Load data to file (Parquet, CSV, etc.).
         
         Args:
-            analytics_df: Transformed analytics DataFrame
-            output_path: Path to write parquet files
-            
-        Returns:
-            Tuple of (success_flag, success_count, error_count)
+            df: DataFrame to load
+            file_path: Target file path
+            mode: Write mode
         """
-        try:
-            self.logger.info(f"Starting data load to parquet: {output_path}")
-            
-            # Validate records
-            validated_df = self.validate_record(analytics_df)
-            
-            # Split into valid and invalid records
-            valid_df = validated_df.filter(col("is_valid") == True).drop("is_valid")
-            invalid_df = validated_df.filter(col("is_valid") == False).drop("is_valid")
-            
-            success_count = valid_df.count()
-            error_count = invalid_df.count()
-            
-            # Write valid records to parquet
-            if success_count > 0:
-                valid_df.write \
-                    .mode("overwrite") \
-                    .partitionBy("trans_date") \
-                    .parquet(output_path)
-            
-            # Write invalid records to separate location
-            if error_count > 0:
-                invalid_df.write \
-                    .mode("overwrite") \
-                    .parquet(f"{output_path}_invalid")
-            
-            self.logger.info(
-                f"Loaded {success_count} records to parquet",
-                extra={
-                    'step': 'LOAD',
-                    'status': 'S',
-                    'records_processed': success_count + error_count,
-                    'records_success': success_count,
-                    'records_error': error_count
-                }
-            )
-            
-            return True, success_count, error_count
-            
-        except Exception as e:
-            self.logger.error(
-                f"Parquet load failed: {str(e)}",
-                extra={'step': 'LOAD', 'status': 'E'},
-                exc_info=True
-            )
-            return False, 0, 0
+        self.log.info(f"Loading to file: {file_path} (mode: {mode})")
+        
+        # Determine format from file extension
+        if file_path.endswith('.parquet'):
+            df.write.mode(mode).parquet(file_path)
+        elif file_path.endswith('.csv'):
+            df.write.mode(mode).option("header", "true").csv(file_path)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+    
+    def _load_to_console(self, df: DataFrame) -> None:
+        """
+        Display data to console for testing.
+        
+        Args:
+            df: DataFrame to display
+        """
+        self.log.info("Displaying data to console")
+        df.show(truncate=False)
+        
+        # Print summary statistics
+        self.log.info("Summary statistics:")
+        df.select(
+            F.count('*').alias('total_records'),
+            F.sum('gross_amount').alias('total_gross'),
+            F.avg('profit_margin').alias('avg_margin')
+        ).show()
