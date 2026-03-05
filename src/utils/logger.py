@@ -1,41 +1,54 @@
 """
-ETL Logger Utility Module
-Provides logging functionality for ETL processes with statistics tracking.
+ETL Logging Utility
+Migrated from ZCL_ETL_LOGGER
 """
 
+import logging
 from datetime import datetime
 from typing import Optional
-import logging
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.types import StructType
+
+from src.constants import ETLConstants
+from src.schemas import ETLSchemas
+from src.utils.id_generator import IDGenerator
 
 
 class ETLLogger:
-    """Logger class for ETL operations with message and statistics tracking."""
+    """ETL logging utility with DataFrame-based log storage"""
     
-    def __init__(self, etl_run_id: str, spark: Optional[SparkSession] = None):
+    def __init__(self, etl_run_id: str, spark: SparkSession):
         """
-        Initialize ETL logger.
+        Initialize ETL logger
         
         Args:
-            etl_run_id: Unique identifier for ETL run
-            spark: SparkSession for database logging (optional)
+            etl_run_id: Unique ETL run identifier
+            spark: SparkSession instance
         """
         self.etl_run_id = etl_run_id
         self.spark = spark
-        self._setup_logger()
+        self.id_generator = IDGenerator()
         
-    def _setup_logger(self):
-        """Configure Python logging."""
-        self.logger = logging.getLogger(f"ETL_{self.etl_run_id}")
-        self.logger.setLevel(logging.INFO)
+        # Setup Python logging
+        self.logger = logging.getLogger(f"ETL_{etl_run_id}")
+        self._setup_logging()
         
+        # Initialize empty log DataFrame
+        self.log_records = []
+    
+    def _setup_logging(self):
+        """Setup Python logging configuration"""
         if not self.logger.handlers:
-            handler = logging.StreamHandler()
+            self.logger.setLevel(logging.INFO)
+            
+            # Console handler
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
             formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
     
     def log_message(
         self,
@@ -45,109 +58,114 @@ class ETLLogger:
         records_processed: int = 0,
         records_success: int = 0,
         records_error: int = 0
-    ) -> None:
+    ):
         """
-        Log ETL message with optional statistics.
+        Log a message and store in DataFrame
         
         Args:
-            step: ETL process step (EXTRACT, TRANSFORM, LOAD, etc.)
-            status: Status code (S=Success, E=Error, W=Warning, I=Info)
-            message: Log message text
-            records_processed: Total records processed
-            records_success: Successfully processed records
-            records_error: Error records count
+            step: Process step name
+            status: Status code (S/E/W/I)
+            message: Log message
+            records_processed: Number of records processed
+            records_success: Number of successful records
+            records_error: Number of error records
         """
-        log_entry = {
-            'log_id': self._generate_log_id(),
-            'etl_run_id': self.etl_run_id,
-            'execution_date': datetime.now().date(),
-            'execution_time': datetime.now().time(),
-            'process_step': step,
-            'status': status,
-            'records_processed': records_processed,
-            'records_success': records_success,
-            'records_error': records_error,
-            'message': message,
-            'timestamp': datetime.now()
+        now = datetime.now()
+        log_id = self.id_generator.generate_log_id()
+        
+        # Create log record
+        log_record = {
+            "log_id": log_id,
+            "etl_run_id": self.etl_run_id,
+            "execution_date": now.date(),
+            "execution_time": now.strftime("%H:%M:%S"),
+            "process_step": step,
+            "status": status,
+            "records_processed": records_processed,
+            "records_success": records_success,
+            "records_error": records_error,
+            "message": message,
+            "created_at": now,
+            "created_by": "etl_system"
         }
         
-        # Console logging
-        log_level = self._get_log_level(status)
+        self.log_records.append(log_record)
+        
+        # Also log to Python logger
+        log_level = {
+            ETLConstants.Status.ERROR: logging.ERROR,
+            ETLConstants.Status.WARNING: logging.WARNING,
+            ETLConstants.Status.INFO: logging.INFO,
+            ETLConstants.Status.SUCCESS: logging.INFO,
+        }.get(status, logging.INFO)
+        
         self.logger.log(
             log_level,
-            f"[{step}] {message} | Processed: {records_processed}, "
-            f"Success: {records_success}, Error: {records_error}"
+            f"[{step}] {message} | "
+            f"Processed: {records_processed}, Success: {records_success}, Error: {records_error}"
         )
+    
+    def get_log_dataframe(self) -> DataFrame:
+        """
+        Get all log records as a DataFrame
         
-        # Database logging (if Spark session available)
-        if self.spark:
-            self._persist_log(log_entry)
+        Returns:
+            DataFrame with log records
+        """
+        if not self.log_records:
+            # Return empty DataFrame with proper schema
+            return self.spark.createDataFrame([], ETLSchemas.etl_log_schema())
+        
+        return self.spark.createDataFrame(self.log_records, ETLSchemas.etl_log_schema())
     
-    def _generate_log_id(self) -> str:
-        """Generate unique log ID."""
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-        return f"LOG{timestamp[:14]}"
-    
-    def _get_log_level(self, status: str) -> int:
-        """Map status code to logging level."""
-        status_map = {
-            'S': logging.INFO,
-            'E': logging.ERROR,
-            'W': logging.WARNING,
-            'I': logging.INFO
-        }
-        return status_map.get(status, logging.INFO)
-    
-    def _persist_log(self, log_entry: dict) -> None:
-        """Persist log entry to database (stub for implementation)."""
-        # In production, write to ETL_LOG table
-        # self.spark.createDataFrame([log_entry]).write.mode("append").saveAsTable("etl_log")
-        pass
+    def save_logs(self, target_path: str, mode: str = "append"):
+        """
+        Save log records to storage
+        
+        Args:
+            target_path: Path to save logs
+            mode: Write mode (append/overwrite)
+        """
+        log_df = self.get_log_dataframe()
+        if log_df.count() > 0:
+            log_df.write.mode(mode).parquet(target_path)
+            self.logger.info(f"Saved {log_df.count()} log records to {target_path}")
     
     def get_etl_run_id(self) -> str:
-        """Get current ETL run ID."""
+        """Get the ETL run ID"""
         return self.etl_run_id
-
-
-def log_etl_message(logger: ETLLogger, step: str, status: str, message: str) -> None:
-    """
-    Utility function to log ETL message.
     
-    Args:
-        logger: ETLLogger instance
-        step: Process step
-        status: Status code
-        message: Message text
-    """
-    logger.log_message(step=step, status=status, message=message)
-
-
-def log_etl_statistics(
-    logger: ETLLogger,
-    step: str,
-    status: str,
-    records_processed: int,
-    records_success: int,
-    records_error: int,
-    message: str
-) -> None:
-    """
-    Utility function to log ETL message with statistics.
-    
-    Args:
-        logger: ETLLogger instance
-        step: Process step
-        status: Status code
-        records_processed: Total records processed
-        records_success: Success count
-        records_error: Error count
-        message: Message text
-    """
-    logger.log_message(
-        step=step,
-        status=status,
-        message=message,
-        records_processed=records_processed,
-        records_success=records_success,
-        records_error=records_error
-    )
+    def get_statistics(self) -> dict:
+        """
+        Get aggregated statistics from logs
+        
+        Returns:
+            Dictionary with statistics
+        """
+        log_df = self.get_log_dataframe()
+        
+        if log_df.count() == 0:
+            return {
+                "total_processed": 0,
+                "total_success": 0,
+                "total_error": 0,
+                "error_count": 0,
+                "warning_count": 0
+            }
+        
+        stats = log_df.agg({
+            "records_processed": "sum",
+            "records_success": "sum",
+            "records_error": "sum"
+        }).collect()[0]
+        
+        error_count = log_df.filter(log_df.status == ETLConstants.Status.ERROR).count()
+        warning_count = log_df.filter(log_df.status == ETLConstants.Status.WARNING).count()
+        
+        return {
+            "total_processed": stats[0] or 0,
+            "total_success": stats[1] or 0,
+            "total_error": stats[2] or 0,
+            "error_count": error_count,
+            "warning_count": warning_count
+        }
