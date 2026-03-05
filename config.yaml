@@ -1,113 +1,125 @@
-# ETL Configuration File
-# Environment-specific settings for Sales Data ETL
+# ETL System Configuration
 
-common:
-  # Logging configuration
-  logging:
-    directory: "logs"
-    level: "INFO"
-    
-  # Business rules (shared across environments)
-  business_rules:
-    discount_qty_tier1: 10
-    discount_qty_tier2: 15
-    discount_rate_tier1: 0.05
-    discount_rate_tier2: 0.10
-    tax_rate: 0.08
-    cost_ratio: 0.60
-    category_high_threshold: 2000.00
-    category_medium_threshold: 500.00
+# Spark Configuration
+spark:
+  app_name: "Sales_ETL_System"
+  master: "local[*]"
+  enable_hive_support: false
+  log_level: "WARN"
+  configs:
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.driver.memory: "4g"
+    spark.executor.memory: "4g"
+    spark.executor.cores: "2"
+    spark.default.parallelism: "100"
+    spark.sql.sources.partitionOverwriteMode: "dynamic"
+
+# Database Configuration
+database:
+  jdbc:
+    driver: "org.postgresql.Driver"
+    host: "localhost"
+    port: 5432
+    database: "etl_db"
+    user: "etl_user"
+    password: "${DB_PASSWORD}"  # Use environment variable
+    connection_pool:
+      max_connections: 10
+      min_connections: 2
+      fetch_size: 1000
+      connection_timeout: 30000
   
-  # ETL processing defaults
-  processing:
-    batch_size: 1000
-    commit_interval: 500
-    retry_attempts: 3
-    timeout_seconds: 3600
+  tables:
+    source: "sales_raw"
+    target: "sales_analytics"
+    log: "etl_log"
 
-development:
-  # Spark configuration for development
-  spark:
-    app_name: "SalesETL-Dev"
-    master: "local[*]"
-    executor_memory: "2g"
-    driver_memory: "2g"
-    log_level: "INFO"
-    
-  # Source configuration
-  source:
-    table: "dev_zsales_raw"
-    status_filter: "N"
-    
-  # Target configuration
-  target:
-    table: "dev_zsales_analytics"
-    write_mode: "overwrite"  # Use overwrite in dev
-    
-  # Feature flags
-  features:
-    test_mode: true
-    enable_profiling: true
+# ETL Processing Configuration
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
+  
+  # Date range for processing
+  default_lookback_days: 7
+  
+  # Status codes
+  status:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
 
-qa:
-  # Spark configuration for QA
-  spark:
-    app_name: "SalesETL-QA"
-    master: "yarn"
-    executor_memory: "4g"
-    driver_memory: "4g"
-    executor_cores: 2
-    num_executors: 4
-    log_level: "INFO"
-    
-  # Source configuration
-  source:
-    table: "qa_zsales_raw"
-    status_filter: "N"
-    
-  # Target configuration
-  target:
-    table: "qa_zsales_analytics"
-    write_mode: "append"
-    
-  # Feature flags
-  features:
-    test_mode: false
-    enable_profiling: true
+# Business Rules Configuration
+business_rules:
+  # Discount rules
+  discount:
+    tier1_quantity: 10
+    tier2_quantity: 15
+    tier1_rate: 0.05
+    tier2_rate: 0.10
+  
+  # Tax configuration
+  tax_rate: 0.08
+  
+  # Cost calculation
+  cost_ratio: 0.60
+  
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-production:
-  # Spark configuration for production
-  spark:
-    app_name: "SalesETL-Prod"
-    master: "yarn"
-    executor_memory: "8g"
-    driver_memory: "8g"
-    executor_cores: 4
-    num_executors: 10
-    log_level: "WARN"
-    dynamic_allocation: true
-    shuffle_partitions: 200
-    
-  # Source configuration
-  source:
-    table: "zsales_raw"
-    status_filter: "N"
-    
-  # Target configuration
-  target:
-    table: "zsales_analytics"
-    write_mode: "append"
-    partition_columns:
-      - "trans_date"
-    
-  # Feature flags
-  features:
-    test_mode: false
-    enable_profiling: false
-    
-  # Production-specific settings
-  processing:
-    batch_size: 5000
-    commit_interval: 2500
-    retry_attempts: 5
-    timeout_seconds: 7200
+# Logging Configuration
+logging:
+  level: "INFO"
+  log_dir: "logs"
+  console_output: true
+  file_output: true
+  structured_logging: true
+  
+  # Log rotation
+  rotation:
+    max_bytes: 10485760  # 10 MB
+    backup_count: 5
+
+# Data Quality Configuration
+data_quality:
+  validation_enabled: true
+  validation_rules:
+    - field: "customer_id"
+      rule: "not_null"
+    - field: "product_id"
+      rule: "not_null"
+    - field: "quantity"
+      rule: "greater_than"
+      value: 0
+    - field: "unit_price"
+      rule: "greater_than"
+      value: 0
+    - field: "gross_amount"
+      rule: "greater_than"
+      value: 0
+    - field: "currency"
+      rule: "not_null"
+    - field: "category"
+      rule: "in_list"
+      values: ["HIGH", "MEDIUM", "LOW"]
+
+# Performance Configuration
+performance:
+  enable_caching: true
+  cache_storage_level: "MEMORY_AND_DISK"
+  broadcast_threshold: 10485760  # 10 MB
+  shuffle_partitions: 200
+
+# Monitoring Configuration
+monitoring:
+  metrics_enabled: true
+  metrics_interval_seconds: 60
+  health_check_enabled: true
