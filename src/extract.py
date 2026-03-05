@@ -1,176 +1,214 @@
 """
-ETL Extractor module.
-Converted from ABAP ZCL_ETL_EXTRACTOR class.
+Data Extractor Module
+Extracts raw sales data from source with date filtering using PySpark DataFrame operations.
+Implements dependency injection pattern for logger.
 """
 
-from datetime import date
-from typing import List, Tuple
-from decimal import Decimal
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import (
-    StructType, StructField, StringType, DateType, 
-    IntegerType, DecimalType, TimestampType
-)
-
-from src.config import CONSTANTS, ETLStep, ETLStatus
-from src.logger import ETLLogger
-from src.types import RawSalesData
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from datetime import date
+from typing import Optional
+import logging
 
 
-class ETLExtractor:
+class DataExtractor:
     """
-    Data extraction component for ETL process.
-    Extracts raw sales data from source system.
+    Extracts raw sales data from source table with date-based filtering.
+    Uses PySpark DataFrame API for scalable data extraction.
     """
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger):
+    def __init__(self, spark: SparkSession, logger: logging.Logger, config: dict):
         """
-        Initialize extractor.
+        Initialize the DataExtractor with dependencies.
         
         Args:
-            spark: SparkSession instance
-            logger: ETL logger instance
+            spark: SparkSession instance for data operations
+            logger: Logger instance for logging extraction activities
+            config: Configuration dictionary with extraction parameters
         """
         self.spark = spark
         self.logger = logger
-        self.schema = self._get_raw_sales_schema()
+        self.config = config
+        self.schema = self._define_schema()
+        
+    def _define_schema(self) -> StructType:
+        """
+        Define the schema for raw sales data.
+        
+        Returns:
+            StructType schema for raw sales records
+        """
+        return StructType([
+            StructField("trans_id", StringType(), nullable=False),
+            StructField("trans_date", DateType(), nullable=False),
+            StructField("customer_id", StringType(), nullable=False),
+            StructField("product_id", StringType(), nullable=False),
+            StructField("quantity", IntegerType(), nullable=False),
+            StructField("unit_price", DecimalType(16, 2), nullable=False),
+            StructField("currency", StringType(), nullable=False),
+            StructField("sales_rep", StringType(), nullable=True),
+            StructField("region", StringType(), nullable=True),
+            StructField("status", StringType(), nullable=False)
+        ])
     
     def extract_data(
         self, 
         from_date: date, 
-        to_date: date
-    ) -> Tuple[bool, DataFrame]:
+        to_date: date,
+        source_table: Optional[str] = None
+    ) -> Optional[DataFrame]:
         """
-        Extract raw sales data for date range.
+        Extract raw sales data within the specified date range.
         
         Args:
-            from_date: Start date for extraction
-            to_date: End date for extraction
+            from_date: Start date for extraction (inclusive)
+            to_date: End date for extraction (inclusive)
+            source_table: Optional override for source table name
             
         Returns:
-            Tuple of (success flag, DataFrame with raw sales data)
+            DataFrame containing extracted sales data, or None if extraction fails
         """
         try:
-            self.logger.log_message(
-                step=ETLStep.EXTRACT,
-                status=ETLStatus.SUCCESS,
-                message=f"Starting extraction from {from_date} to {to_date}"
+            table_name = source_table or self.config.get('source_table', 'zsales_raw')
+            status_filter = self.config.get('extract_status_filter', 'N')
+            
+            self.logger.info(
+                f"Starting extraction from {table_name} for date range: {from_date} to {to_date}"
             )
             
-            # In production, read from actual database
-            # df = self._read_from_database(from_date, to_date)
+            # Read data from source table with date filtering
+            df = self._read_source_data(table_name, from_date, to_date, status_filter)
             
-            # For demonstration, create sample data
-            df = self._create_sample_data()
+            if df is None:
+                self.logger.error("Failed to read source data")
+                return None
             
-            # Filter by date range
-            df = df.filter(
-                (df.trans_date >= from_date) & 
-                (df.trans_date <= to_date) &
-                (df.status == CONSTANTS.status.NEW.value)
+            # Apply additional filters and validations
+            df_filtered = self._apply_filters(df)
+            
+            record_count = df_filtered.count()
+            
+            self.logger.info(
+                f"Extraction completed successfully. Records extracted: {record_count}",
+                extra={
+                    'step': 'EXTRACT',
+                    'status': 'SUCCESS',
+                    'records_processed': record_count,
+                    'records_success': record_count
+                }
             )
             
-            record_count = df.count()
-            
-            self.logger.log_message(
-                step=ETLStep.EXTRACT,
-                status=ETLStatus.SUCCESS,
-                records_processed=record_count,
-                records_success=record_count,
-                message=f"Extracted {record_count} records successfully"
-            )
-            
-            return True, df
+            return df_filtered
             
         except Exception as e:
-            self.logger.log_message(
-                step=ETLStep.EXTRACT,
-                status=ETLStatus.ERROR,
-                message=f"Extraction failed: {str(e)}"
+            self.logger.error(
+                f"Extraction failed: {str(e)}",
+                extra={'step': 'EXTRACT', 'status': 'ERROR'},
+                exc_info=True
             )
-            return False, self.spark.createDataFrame([], self.schema)
+            return None
     
-    def _get_raw_sales_schema(self) -> StructType:
+    def _read_source_data(
+        self, 
+        table_name: str, 
+        from_date: date, 
+        to_date: date,
+        status_filter: str
+    ) -> Optional[DataFrame]:
         """
-        Define schema for raw sales data.
+        Read data from source table with date and status filters.
         
+        Args:
+            table_name: Name of the source table
+            from_date: Start date for filtering
+            to_date: End date for filtering
+            status_filter: Status value to filter ('N' for new records)
+            
         Returns:
-            StructType schema definition
+            DataFrame with filtered data or None if read fails
         """
-        return StructType([
-            StructField("trans_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("quantity", IntegerType(), False),
-            StructField("unit_price", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("status", StringType(), False),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
-        ])
+        try:
+            # For production: read from actual database/table
+            # df = self.spark.read.table(table_name)
+            
+            # For demonstration: create sample data
+            df = self._create_sample_data()
+            
+            # Apply date range filter
+            df_filtered = df.filter(
+                (df.trans_date >= from_date) & 
+                (df.trans_date <= to_date) &
+                (df.status == status_filter)
+            )
+            
+            return df_filtered
+            
+        except Exception as e:
+            self.logger.error(f"Error reading source data: {str(e)}")
+            return None
     
     def _create_sample_data(self) -> DataFrame:
         """
-        Create sample data for demonstration.
+        Create sample data for demonstration purposes.
         
         Returns:
-            DataFrame with sample raw sales data
+            DataFrame with sample sales records
         """
-        from datetime import datetime
-        
         sample_data = [
-            ("T000001", date.today(), "CUST001", "PROD001", 10, 
-             Decimal("99.99"), "USD", "John Doe", "NORTH", "N", 
-             datetime.now(), "SYSTEM"),
-            ("T000002", date.today(), "CUST002", "PROD002", 5,
-             Decimal("149.99"), "USD", "Jane Smith", "SOUTH", "N",
-             datetime.now(), "SYSTEM"),
-            ("T000003", date.today(), "CUST003", "PROD001", 20,
-             Decimal("99.99"), "USD", "John Doe", "EAST", "N",
-             datetime.now(), "SYSTEM"),
-            ("T000004", date.today(), "CUST001", "PROD003", 3,
-             Decimal("299.99"), "USD", "Bob Wilson", "WEST", "N",
-             datetime.now(), "SYSTEM"),
-            ("T000005", date.today(), "CUST004", "PROD002", 15,
-             Decimal("149.99"), "USD", "Jane Smith", "SOUTH", "N",
-             datetime.now(), "SYSTEM"),
+            ('T000001', date.today(), 'CUST001', 'PROD001', 10, 99.99, 'USD', 'John Doe', 'NORTH', 'N'),
+            ('T000002', date.today(), 'CUST002', 'PROD002', 5, 149.99, 'USD', 'Jane Smith', 'SOUTH', 'N'),
+            ('T000003', date.today(), 'CUST003', 'PROD001', 20, 99.99, 'USD', 'John Doe', 'EAST', 'N'),
+            ('T000004', date.today(), 'CUST001', 'PROD003', 3, 299.99, 'USD', 'Bob Wilson', 'WEST', 'N'),
+            ('T000005', date.today(), 'CUST004', 'PROD002', 15, 149.99, 'USD', 'Jane Smith', 'SOUTH', 'N'),
         ]
         
-        return self.spark.createDataFrame(sample_data, self.schema)
+        return self.spark.createDataFrame(sample_data, schema=self.schema)
     
-    def _read_from_database(self, from_date: date, to_date: date) -> DataFrame:
+    def _apply_filters(self, df: DataFrame) -> DataFrame:
         """
-        Read data from source database (production implementation).
+        Apply additional business filters to extracted data.
         
         Args:
-            from_date: Start date
-            to_date: End date
+            df: Input DataFrame
             
         Returns:
-            DataFrame with extracted data
+            Filtered DataFrame
         """
-        # Example for JDBC connection
-        jdbc_url = "jdbc:sap://localhost:30015"
-        connection_properties = {
-            "user": "SAPABAP",
-            "password": "password",
-            "driver": "com.sap.db.jdbc.Driver"
-        }
-        
-        query = f"""
-            (SELECT * FROM ZSALES_RAW 
-             WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
-             AND status = '{CONSTANTS.status.NEW.value}') as raw_sales
-        """
-        
-        df = self.spark.read.jdbc(
-            url=jdbc_url,
-            table=query,
-            properties=connection_properties
+        # Filter out invalid records
+        df_clean = df.filter(
+            (df.quantity > 0) & 
+            (df.unit_price > 0) &
+            (df.trans_id.isNotNull()) &
+            (df.customer_id.isNotNull()) &
+            (df.product_id.isNotNull())
         )
         
-        return df
+        return df_clean
+    
+    def get_extraction_stats(self, df: DataFrame) -> dict:
+        """
+        Calculate extraction statistics.
+        
+        Args:
+            df: Extracted DataFrame
+            
+        Returns:
+            Dictionary containing extraction statistics
+        """
+        try:
+            total_records = df.count()
+            distinct_customers = df.select("customer_id").distinct().count()
+            distinct_products = df.select("product_id").distinct().count()
+            
+            return {
+                'total_records': total_records,
+                'distinct_customers': distinct_customers,
+                'distinct_products': distinct_products,
+                'date_range': {
+                    'min_date': df.agg({"trans_date": "min"}).collect()[0][0],
+                    'max_date': df.agg({"trans_date": "max"}).collect()[0][0]
+                }
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to calculate extraction stats: {str(e)}")
+            return {}
