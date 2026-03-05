@@ -1,86 +1,170 @@
-# ETL Logger Configuration
-# Configuration for logging and ETL process parameters
+# ETL Configuration File
+# Sales Data ETL System
 
-logging:
-  # Python logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  level: INFO
-  
-  # Whether to persist logs to storage (Delta Lake)
-  persist_to_storage: true
-  
-  # Log storage location
-  log_storage_path: /mnt/etl/logs
-  
-  # Log retention period (days)
-  retention_days: 90
-  
-  # Console logging format
-  console_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # File logging (optional)
-  file_logging:
-    enabled: false
-    path: /var/log/etl
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
+# Application Settings
+application:
+  name: "Sales ETL System"
+  version: "1.0.0"
+  description: "ETL system for sales data processing"
 
+# ETL Process Configuration
 etl:
-  # ETL run ID prefix
-  run_id_prefix: ETL
-  
-  # Default batch size for processing
-  default_batch_size: 1000
-  
-  # Commit interval for database operations
+  # Batch processing settings
+  batch_size: 1000
   commit_interval: 500
+  parallel_jobs: 4
   
-  # Number of retry attempts for failed operations
+  # Retry and timeout settings
   retry_attempts: 3
-  
-  # Timeout in seconds
   timeout_seconds: 3600
+  retry_backoff_seconds: 2
   
-  # Enable test mode (no actual data commits)
-  test_mode: false
+  # Date range defaults
+  default_lookback_days: 7
+  
+  # ID prefixes
+  prefixes:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
 
+# Business Rules
 business_rules:
-  # Discount thresholds
+  # Discount thresholds and rates
   discount:
-    tier1_quantity: 10
-    tier1_rate: 0.05
-    tier2_quantity: 15
-    tier2_rate: 0.10
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05  # 5%
+    rate_tier2: 0.10  # 10%
   
-  # Tax rate
-  tax_rate: 0.08
+  # Tax configuration
+  tax:
+    default_rate: 0.08  # 8%
   
-  # Cost ratio for profit calculation
-  cost_ratio: 0.60
+  # Cost calculation
+  cost:
+    default_ratio: 0.60  # 60% of unit price
   
   # Category thresholds
   category:
     high_threshold: 2000.00
     medium_threshold: 500.00
+    low_threshold: 0.00
 
+# Status Codes
 status_codes:
-  new: 'N'
-  processed: 'P'
-  error: 'E'
-  warning: 'W'
-  success: 'S'
-  info: 'I'
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
 
+# ETL Process Steps
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
+
+# Sale Categories
+categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
+
+# Data Quality Rules
+data_quality:
+  # Mandatory fields for raw sales data
+  mandatory_fields_raw:
+    - "trans_id"
+    - "trans_date"
+    - "customer_id"
+    - "product_id"
+    - "quantity"
+    - "unit_price"
+    - "currency"
+  
+  # Mandatory fields for analytics data
+  mandatory_fields_analytics:
+    - "analytics_id"
+    - "customer_id"
+    - "product_id"
+    - "gross_amount"
+    - "currency"
+    - "category"
+  
+  # Valid currency codes
+  valid_currencies:
+    - "USD"
+    - "EUR"
+    - "GBP"
+  
+  # Valid regions
+  valid_regions:
+    - "NORTH"
+    - "SOUTH"
+    - "EAST"
+    - "WEST"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  console_output: true
+  file_output: false
+  log_directory: "logs"
+
+# Spark Configuration
 spark:
-  # Spark configuration
-  app_name: SalesETL
-  master: local[*]  # Change to yarn for cluster mode
+  app_name: "SalesETL"
+  master: "local[*]"  # Change for cluster deployment
   
-  # Spark SQL settings
-  sql:
-    shuffle_partitions: 200
-    adaptive_enabled: true
+  # Spark configurations
+  config:
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.sql.shuffle.partitions": "200"
+    "spark.sql.legacy.timeParserPolicy": "LEGACY"
+    "spark.driver.memory": "4g"
+    "spark.executor.memory": "4g"
+
+# Database/Storage Configuration
+storage:
+  # Input paths (adjust for your environment)
+  input:
+    format: "delta"  # or "parquet", "csv", etc.
+    path: "data/raw/sales"
   
-  # Delta Lake settings
-  delta:
-    enable_change_data_feed: true
-    log_retention_duration: "interval 30 days"
+  # Output paths
+  output:
+    format: "delta"
+    analytics_path: "data/analytics/sales"
+    log_path: "data/logs/etl"
+  
+  # Write modes
+  write_mode:
+    analytics: "append"  # or "overwrite"
+    logs: "append"
+
+# Message Templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
+
+# Test Mode Configuration
+test_mode:
+  enabled: false
+  sample_size: 100
+  skip_database_writes: true
+  use_mock_data: false
