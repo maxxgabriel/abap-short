@@ -1,362 +1,259 @@
 """
-Unit tests for ETL configuration module.
-Tests constant mappings, type conversions, and configuration loading.
+Unit tests for configuration management module.
 """
 
 import pytest
-from decimal import Decimal
 from pathlib import Path
-import tempfile
 import yaml
-
 from src.config import (
-    ETLConstants,
+    ConfigurationManager,
+    DatabaseConfig,
+    SparkConfig,
     ETLConfig,
-    StatusCode,
-    ProcessStep,
-    SaleCategory,
-    BusinessRules,
-    ETLDefaults,
-    IDPrefixes,
-    Messages,
-    get_config,
-    reset_config
+    BusinessRulesConfig,
+    LoggingConfig,
+    get_config_manager
 )
 
 
-class TestEnumerations:
-    """Test enum mappings from ABAP structures"""
+@pytest.fixture
+def sample_config_file(tmp_path):
+    """Create sample configuration file."""
+    config_data = {
+        'database': {
+            'host': 'localhost',
+            'port': 5432,
+            'database': 'test_db',
+            'username': 'test_user',
+            'password': 'test_pass',
+            'driver': 'postgresql'
+        },
+        'spark': {
+            'app_name': 'Test ETL',
+            'master': 'local[2]'
+        },
+        'etl': {
+            'batch_size': 500,
+            'commit_interval': 250
+        },
+        'business_rules': {
+            'discount_qty_tier1': 10,
+            'tax_rate': 0.08
+        },
+        'logging': {
+            'level': 'DEBUG',
+            'log_dir': 'test_logs'
+        }
+    }
     
-    def test_status_code_values(self):
-        """Test status code enum matches ABAP gc_status"""
-        assert StatusCode.NEW.value == 'N'
-        assert StatusCode.PROCESSED.value == 'P'
-        assert StatusCode.ERROR.value == 'E'
-        assert StatusCode.WARNING.value == 'W'
-        assert StatusCode.SUCCESS.value == 'S'
-        assert StatusCode.INFO.value == 'I'
+    config_file = tmp_path / "test_config.yaml"
+    with open(config_file, 'w') as f:
+        yaml.dump(config_data, f)
     
-    def test_process_step_values(self):
-        """Test process step enum matches ABAP gc_step"""
-        assert ProcessStep.INIT.value == 'INIT'
-        assert ProcessStep.EXTRACT.value == 'EXTRACT'
-        assert ProcessStep.TRANSFORM.value == 'TRANSFORM'
-        assert ProcessStep.LOAD.value == 'LOAD'
-        assert ProcessStep.VALIDATE.value == 'VALIDATE'
-        assert ProcessStep.COMPLETE.value == 'COMPLETE'
-        assert ProcessStep.ERROR.value == 'ERROR'
-    
-    def test_sale_category_values(self):
-        """Test sale category enum matches ABAP gc_category"""
-        assert SaleCategory.HIGH.value == 'HIGH'
-        assert SaleCategory.MEDIUM.value == 'MEDIUM'
-        assert SaleCategory.LOW.value == 'LOW'
+    return config_file
 
 
-class TestBusinessRules:
-    """Test business rules configuration class"""
-    
-    def test_default_values(self):
-        """Test business rules have correct default values"""
-        rules = BusinessRules()
-        
-        # Integer thresholds (ABAP TYPE i)
-        assert rules.discount_qty_tier1 == 10
-        assert rules.discount_qty_tier2 == 15
-        
-        # Decimal rates (ABAP TYPE p LENGTH 3 DECIMALS 2)
-        assert rules.discount_rate_tier1 == Decimal('0.05')
-        assert rules.discount_rate_tier2 == Decimal('0.10')
-        assert rules.tax_rate == Decimal('0.08')
-        assert rules.cost_ratio == Decimal('0.60')
-        
-        # Decimal thresholds (ABAP TYPE p LENGTH 16 DECIMALS 2)
-        assert rules.category_high_threshold == Decimal('2000.00')
-        assert rules.category_medium_threshold == Decimal('500.00')
-    
-    def test_decimal_precision(self):
-        """Test Decimal types maintain precision"""
-        rules = BusinessRules()
-        
-        # Verify Decimal type
-        assert isinstance(rules.discount_rate_tier1, Decimal)
-        assert isinstance(rules.tax_rate, Decimal)
-        
-        # Verify precision preservation
-        rate = rules.discount_rate_tier1
-        assert str(rate) == '0.05'
-        assert rate.as_tuple().exponent == -2
-    
-    def test_immutability(self):
-        """Test BusinessRules is immutable (frozen dataclass)"""
-        rules = BusinessRules()
-        
-        with pytest.raises(Exception):  # FrozenInstanceError
-            rules.tax_rate = Decimal('0.10')
+@pytest.fixture
+def config_manager(sample_config_file):
+    """Create ConfigurationManager instance."""
+    return ConfigurationManager(str(sample_config_file))
 
 
-class TestETLDefaults:
-    """Test ETL defaults configuration"""
-    
-    def test_default_values(self):
-        """Test ETL defaults match ABAP constants"""
-        defaults = ETLDefaults()
+class TestConfigurationManager:
+    """Test ConfigurationManager class."""
+
+    def test_init_with_valid_file(self, sample_config_file):
+        """Test initialization with valid config file."""
+        manager = ConfigurationManager(str(sample_config_file))
+        assert manager.config_path.exists()
+        assert manager._config_data is not None
+
+    def test_init_with_missing_file(self):
+        """Test initialization with missing config file."""
+        with pytest.raises(FileNotFoundError):
+            ConfigurationManager("nonexistent.yaml")
+
+    def test_get_database_config(self, config_manager):
+        """Test getting database configuration."""
+        db_config = config_manager.get_database_config()
         
-        assert defaults.batch_size == 1000
-        assert defaults.commit_interval == 500
-        assert defaults.retry_attempts == 3
-        assert defaults.timeout_seconds == 3600
-        assert defaults.parallel_jobs == 4
-    
-    def test_all_integers(self):
-        """Test all default values are integers (ABAP TYPE i)"""
-        defaults = ETLDefaults()
+        assert isinstance(db_config, DatabaseConfig)
+        assert db_config.host == 'localhost'
+        assert db_config.port == 5432
+        assert db_config.database == 'test_db'
+        assert db_config.username == 'test_user'
+        assert db_config.password == 'test_pass'
+
+    def test_get_spark_config(self, config_manager):
+        """Test getting Spark configuration."""
+        spark_config = config_manager.get_spark_config()
         
-        assert isinstance(defaults.batch_size, int)
-        assert isinstance(defaults.commit_interval, int)
-        assert isinstance(defaults.retry_attempts, int)
-        assert isinstance(defaults.timeout_seconds, int)
+        assert isinstance(spark_config, SparkConfig)
+        assert spark_config.app_name == 'Test ETL'
+        assert spark_config.master == 'local[2]'
+
+    def test_get_etl_config(self, config_manager):
+        """Test getting ETL configuration."""
+        etl_config = config_manager.get_etl_config()
+        
+        assert isinstance(etl_config, ETLConfig)
+        assert etl_config.batch_size == 500
+        assert etl_config.commit_interval == 250
+
+    def test_get_business_rules_config(self, config_manager):
+        """Test getting business rules configuration."""
+        rules_config = config_manager.get_business_rules_config()
+        
+        assert isinstance(rules_config, BusinessRulesConfig)
+        assert rules_config.discount_qty_tier1 == 10
+        assert rules_config.tax_rate == 0.08
+
+    def test_get_logging_config(self, config_manager):
+        """Test getting logging configuration."""
+        log_config = config_manager.get_logging_config()
+        
+        assert isinstance(log_config, LoggingConfig)
+        assert log_config.level == 'DEBUG'
+        assert log_config.log_dir == 'test_logs'
+
+    def test_get_value_nested(self, config_manager):
+        """Test getting nested configuration value."""
+        value = config_manager.get_value('database.host')
+        assert value == 'localhost'
+        
+        value = config_manager.get_value('etl.batch_size')
+        assert value == 500
+
+    def test_get_value_with_default(self, config_manager):
+        """Test getting value with default."""
+        value = config_manager.get_value('nonexistent.key', default='default_value')
+        assert value == 'default_value'
+
+    def test_get_raw_config(self, config_manager):
+        """Test getting raw configuration."""
+        raw_config = config_manager.get_raw_config()
+        
+        assert isinstance(raw_config, dict)
+        assert 'database' in raw_config
+        assert 'spark' in raw_config
+
+    def test_validate_config_valid(self, config_manager):
+        """Test configuration validation with valid config."""
+        assert config_manager.validate_config() is True
+
+    def test_validate_config_missing_section(self, tmp_path):
+        """Test configuration validation with missing section."""
+        incomplete_config = {
+            'database': {
+                'host': 'localhost',
+                'port': 5432,
+                'database': 'test_db',
+                'username': 'test_user',
+                'password': 'test_pass'
+            }
+            # Missing other required sections
+        }
+        
+        config_file = tmp_path / "incomplete_config.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(incomplete_config, f)
+        
+        manager = ConfigurationManager(str(config_file))
+        with pytest.raises(ValueError, match="Missing required configuration section"):
+            manager.validate_config()
+
+    def test_validate_config_missing_db_field(self, tmp_path):
+        """Test configuration validation with missing database field."""
+        incomplete_config = {
+            'database': {
+                'host': 'localhost',
+                'port': 5432
+                # Missing required fields
+            },
+            'spark': {},
+            'etl': {},
+            'business_rules': {},
+            'logging': {}
+        }
+        
+        config_file = tmp_path / "incomplete_db_config.yaml"
+        with open(config_file, 'w') as f:
+            yaml.dump(incomplete_config, f)
+        
+        manager = ConfigurationManager(str(config_file))
+        with pytest.raises(ValueError, match="Missing required database field"):
+            manager.validate_config()
 
 
-class TestIDPrefixes:
-    """Test ID prefix constants"""
-    
-    def test_prefix_values(self):
-        """Test ID prefixes match ABAP constants"""
-        prefixes = IDPrefixes()
+class TestDatabaseConfig:
+    """Test DatabaseConfig dataclass."""
+
+    def test_database_config_defaults(self):
+        """Test DatabaseConfig with defaults."""
+        config = DatabaseConfig(
+            host='localhost',
+            port=5432,
+            database='test_db',
+            username='user',
+            password='pass'
+        )
         
-        assert prefixes.etl_run == 'ETL'
-        assert prefixes.log_id == 'LOG'
-        assert prefixes.analytics_id == 'ANL'
+        assert config.driver == 'postgresql'
+        assert config.pool_size == 10
+        assert config.max_overflow == 20
 
 
-class TestMessages:
-    """Test message text constants"""
-    
-    def test_message_texts(self):
-        """Test message texts match ABAP constants"""
-        messages = Messages()
-        
-        assert messages.init_success == 'ETL process initialized successfully'
-        assert messages.extract_start == 'Starting data extraction'
-        assert messages.extract_complete == 'Data extraction completed'
-        assert messages.transform_start == 'Starting data transformation'
-        assert messages.transform_complete == 'Data transformation completed'
-        assert messages.load_start == 'Starting data load'
-        assert messages.load_complete == 'Data load completed'
-        assert messages.etl_complete == 'ETL process completed successfully'
-        assert messages.etl_error == 'ETL process failed'
+class TestSparkConfig:
+    """Test SparkConfig dataclass."""
 
-
-class TestETLConstants:
-    """Test main ETL constants class"""
-    
-    def test_static_attributes(self):
-        """Test static attributes are accessible"""
-        assert ETLConstants.STATUS == StatusCode
-        assert ETLConstants.STEP == ProcessStep
-        assert ETLConstants.CATEGORY == SaleCategory
-        assert isinstance(ETLConstants.BUSINESS_RULES, BusinessRules)
-        assert isinstance(ETLConstants.DEFAULTS, ETLDefaults)
-        assert isinstance(ETLConstants.PREFIXES, IDPrefixes)
-        assert isinstance(ETLConstants.MESSAGES, Messages)
-    
-    def test_get_status_dict(self):
-        """Test status dictionary conversion"""
-        status_dict = ETLConstants.get_status_dict()
+    def test_spark_config_defaults(self):
+        """Test SparkConfig with defaults."""
+        config = SparkConfig()
         
-        assert status_dict['NEW'] == 'N'
-        assert status_dict['PROCESSED'] == 'P'
-        assert status_dict['ERROR'] == 'E'
-        assert len(status_dict) == 6
-    
-    def test_get_step_dict(self):
-        """Test step dictionary conversion"""
-        step_dict = ETLConstants.get_step_dict()
-        
-        assert step_dict['INIT'] == 'INIT'
-        assert step_dict['EXTRACT'] == 'EXTRACT'
-        assert step_dict['TRANSFORM'] == 'TRANSFORM'
-        assert len(step_dict) == 7
-    
-    def test_get_category_dict(self):
-        """Test category dictionary conversion"""
-        category_dict = ETLConstants.get_category_dict()
-        
-        assert category_dict['HIGH'] == 'HIGH'
-        assert category_dict['MEDIUM'] == 'MEDIUM'
-        assert category_dict['LOW'] == 'LOW'
-        assert len(category_dict) == 3
-    
-    def test_to_dict(self):
-        """Test full dictionary export"""
-        config_dict = ETLConstants.to_dict()
-        
-        assert 'status' in config_dict
-        assert 'step' in config_dict
-        assert 'category' in config_dict
-        assert 'business_rules' in config_dict
-        assert 'defaults' in config_dict
-        assert 'prefixes' in config_dict
-        assert 'messages' in config_dict
-        
-        # Verify nested structure
-        assert config_dict['business_rules']['tax_rate'] == '0.08'
-        assert config_dict['defaults']['batch_size'] == 1000
-        assert config_dict['prefixes']['etl_run'] == 'ETL'
+        assert config.app_name == "Sales ETL System"
+        assert config.master == "local[*]"
+        assert config.executor_memory == "4g"
 
 
 class TestETLConfig:
-    """Test runtime configuration class"""
-    
-    def test_default_initialization(self):
-        """Test ETLConfig initializes with defaults from ETLConstants"""
+    """Test ETLConfig dataclass."""
+
+    def test_etl_config_defaults(self):
+        """Test ETLConfig with defaults."""
         config = ETLConfig()
         
-        assert config.batch_size == ETLConstants.DEFAULTS.batch_size
-        assert config.tax_rate == ETLConstants.BUSINESS_RULES.tax_rate
-        assert config.spark_app_name == "SalesETL"
-    
-    def test_from_yaml(self):
-        """Test loading configuration from YAML file"""
-        # Create temporary YAML config
-        config_data = {
-            'batch_size': 2000,
-            'tax_rate': '0.10',
-            'spark_app_name': 'TestETL',
-            'raw_data_path': '/test/path',
-        }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.dump(config_data, f)
-            temp_path = f.name
-        
-        try:
-            config = ETLConfig.from_yaml(temp_path)
-            
-            assert config.batch_size == 2000
-            assert config.tax_rate == Decimal('0.10')
-            assert config.spark_app_name == 'TestETL'
-            assert config.raw_data_path == '/test/path'
-            
-            # Verify non-overridden values use defaults
-            assert config.commit_interval == ETLConstants.DEFAULTS.commit_interval
-        finally:
-            Path(temp_path).unlink()
-    
-    def test_to_yaml(self):
-        """Test exporting configuration to YAML file"""
-        config = ETLConfig(
-            batch_size=1500,
-            tax_rate=Decimal('0.09')
-        )
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            temp_path = f.name
-        
-        try:
-            config.to_yaml(temp_path)
-            
-            # Reload and verify
-            with open(temp_path, 'r') as f:
-                loaded_data = yaml.safe_load(f)
-            
-            assert loaded_data['batch_size'] == 1500
-            assert loaded_data['tax_rate'] == '0.09'
-        finally:
-            Path(temp_path).unlink()
-    
-    def test_decimal_conversion(self):
-        """Test proper Decimal conversion from YAML"""
-        config_data = {
-            'tax_rate': '0.08',
-            'cost_ratio': '0.60',
-        }
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.dump(config_data, f)
-            temp_path = f.name
-        
-        try:
-            config = ETLConfig.from_yaml(temp_path)
-            
-            assert isinstance(config.tax_rate, Decimal)
-            assert isinstance(config.cost_ratio, Decimal)
-            assert config.tax_rate == Decimal('0.08')
-        finally:
-            Path(temp_path).unlink()
+        assert config.batch_size == 1000
+        assert config.commit_interval == 500
+        assert config.retry_attempts == 3
 
 
-class TestSingletonConfig:
-    """Test singleton configuration management"""
-    
-    def setup_method(self):
-        """Reset config before each test"""
-        reset_config()
-    
-    def test_get_config_default(self):
-        """Test getting default config without YAML"""
-        config = get_config()
+class TestBusinessRulesConfig:
+    """Test BusinessRulesConfig dataclass."""
+
+    def test_business_rules_config_defaults(self):
+        """Test BusinessRulesConfig with defaults."""
+        config = BusinessRulesConfig()
         
-        assert isinstance(config, ETLConfig)
-        assert config.batch_size == ETLConstants.DEFAULTS.batch_size
-    
-    def test_get_config_from_yaml(self):
-        """Test getting config from YAML file"""
-        config_data = {'batch_size': 3000}
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.dump(config_data, f)
-            temp_path = f.name
-        
-        try:
-            config = get_config(temp_path)
-            assert config.batch_size == 3000
-        finally:
-            Path(temp_path).unlink()
-    
-    def test_singleton_behavior(self):
-        """Test singleton returns same instance"""
-        config1 = get_config()
-        config2 = get_config()
-        
-        assert config1 is config2
-    
-    def test_reset_config(self):
-        """Test resetting singleton"""
-        config1 = get_config()
-        reset_config()
-        config2 = get_config()
-        
-        assert config1 is not config2
+        assert config.discount_qty_tier1 == 10
+        assert config.discount_rate_tier1 == 0.05
+        assert config.tax_rate == 0.08
 
 
-class TestTypeMapping:
-    """Test ABAP to Python type mappings"""
-    
-    def test_integer_mapping(self):
-        """Test ABAP TYPE i maps to Python int"""
-        assert isinstance(ETLConstants.BUSINESS_RULES.discount_qty_tier1, int)
-        assert isinstance(ETLConstants.DEFAULTS.batch_size, int)
-    
-    def test_decimal_mapping(self):
-        """Test ABAP TYPE p maps to Python Decimal"""
-        assert isinstance(ETLConstants.BUSINESS_RULES.tax_rate, Decimal)
-        assert isinstance(ETLConstants.BUSINESS_RULES.category_high_threshold, Decimal)
-    
-    def test_string_mapping(self):
-        """Test ABAP TYPE char/string maps to Python str"""
-        assert isinstance(ETLConstants.PREFIXES.etl_run, str)
-        assert isinstance(ETLConstants.MESSAGES.init_success, str)
-    
-    def test_structure_mapping(self):
-        """Test ABAP structures map to Python Enums/dataclasses"""
-        # ABAP structure -> Python Enum
-        assert isinstance(StatusCode.NEW, StatusCode)
+class TestLoggingConfig:
+    """Test LoggingConfig dataclass."""
+
+    def test_logging_config_defaults(self):
+        """Test LoggingConfig with defaults."""
+        config = LoggingConfig()
         
-        # ABAP structure -> Python dataclass
-        assert isinstance(ETLConstants.BUSINESS_RULES, BusinessRules)
+        assert config.level == "INFO"
+        assert config.log_dir == "logs"
+        assert config.console_output is True
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+def test_get_config_manager_singleton(sample_config_file):
+    """Test singleton behavior of get_config_manager."""
+    manager1 = get_config_manager(str(sample_config_file))
+    manager2 = get_config_manager()
+    
+    assert manager1 is manager2
