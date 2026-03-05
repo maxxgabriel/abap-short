@@ -1,64 +1,93 @@
 """
-PySpark ETL Orchestrator Module
-Main orchestrator coordinating extract, transform, and load operations.
+ETL Orchestrator Module
+Main orchestrator that coordinates the ETL pipeline process
+Migrated from ZCL_ETL_ORCHESTRATOR ABAP class
 """
 
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional
+import sys
+
 from pyspark.sql import SparkSession
+
 from src.logger import ETLLogger
-from src.extract import SalesDataExtractor
-from src.transform import SalesDataTransformer
-from src.load import SalesDataLoader
+from src.extractor import ETLExtractor
+from src.transformer import ETLTransformer
+from src.loader import ETLLoader
+from src.exceptions import ETLException
 
 
 class ETLOrchestrator:
     """
-    Main ETL orchestrator coordinating all ETL phases.
-    Uses dependency injection for all components.
+    Main ETL orchestrator that coordinates extract, transform, and load operations.
+    Migrates ABAP sequential method calls to PySpark pipeline stages.
     """
-    
-    def __init__(self, spark: SparkSession, config: dict):
+
+    def __init__(self, spark: Optional[SparkSession] = None):
         """
-        Initialize orchestrator with Spark session and configuration.
+        Initialize ETL orchestrator with all pipeline components.
         
         Args:
-            spark: Active SparkSession instance
-            config: Configuration dictionary
+            spark: Optional SparkSession. Creates new session if not provided.
         """
-        self.spark = spark
-        self.config = config
+        # Initialize or use provided Spark session
+        self.spark = spark or self._create_spark_session()
+        
+        # Generate unique ETL run ID
         self.etl_run_id = self._generate_etl_run_id()
-        self.logger = ETLLogger(self.etl_run_id, spark)
         
-        # Initialize components with dependency injection
-        self.extractor = SalesDataExtractor(spark, self.logger)
-        self.transformer = SalesDataTransformer(self.logger, config)
-        self.loader = SalesDataLoader(self.logger, config)
+        # Initialize logger
+        self.logger = ETLLogger(self.etl_run_id, self.spark)
         
+        # Initialize ETL components (ABAP object instantiation -> Python constructors)
+        self.extractor = ETLExtractor(self.logger, self.spark)
+        self.transformer = ETLTransformer(self.logger, self.spark)
+        self.loader = ETLLoader(self.logger, self.spark)
+        
+        # Track execution times
         self.start_time: Optional[datetime] = None
         self.end_time: Optional[datetime] = None
-    
-    def run_etl(
-        self, 
-        from_date: date, 
-        to_date: date,
-        source_path: Optional[str] = None,
-        target_path: Optional[str] = None
-    ) -> bool:
+        
+        # Log initialization
+        self.logger.log_message(
+            step="INIT",
+            status="S",
+            message=f"ETL process initialized with run ID: {self.etl_run_id}"
+        )
+
+    def _create_spark_session(self) -> SparkSession:
+        """Create and configure Spark session."""
+        return (SparkSession.builder
+                .appName("SalesETLOrchestrator")
+                .config("spark.sql.adaptive.enabled", "true")
+                .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+                .getOrCreate())
+
+    def _generate_etl_run_id(self) -> str:
         """
-        Execute complete ETL process.
+        Generate unique ETL run ID based on timestamp.
+        Migrates ABAP generate_etl_run_id method.
+        
+        Returns:
+            Unique ETL run ID string
+        """
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        return f"ETL{timestamp}"
+
+    def run_etl(self, from_date: str, to_date: str) -> bool:
+        """
+        Execute complete ETL pipeline: Extract -> Transform -> Load.
+        Migrates ABAP method calls to Python pipeline stages with try-except error handling.
         
         Args:
-            from_date: Start date for data extraction
-            to_date: End date for data extraction
-            source_path: Optional source data path
-            target_path: Optional target data path
+            from_date: Start date for extraction (YYYY-MM-DD format)
+            to_date: End date for extraction (YYYY-MM-DD format)
             
         Returns:
-            True if ETL successful, False otherwise
+            True if ETL process completed successfully, False otherwise
         """
         try:
+            # Capture start time
             self.start_time = datetime.now()
             
             self.logger.log_message(
@@ -67,37 +96,52 @@ class ETLOrchestrator:
                 message=f"ETL process started at {self.start_time.isoformat()}"
             )
             
-            print("\n" + "="*70)
+            # ===================================================================
+            # STEP 1: EXTRACT (ABAP mo_extractor->extract_data)
+            # ===================================================================
+            print("=" * 60)
             print("=== EXTRACT Phase ===")
-            print("="*70)
+            print("=" * 60)
             
-            # Extract
-            raw_df = self.extractor.extract_data(
-                from_date=from_date,
-                to_date=to_date,
-                source_path=source_path
-            )
+            raw_data_df = self.extractor.extract_data(from_date, to_date)
             
-            print("\n" + "="*70)
+            if raw_data_df is None or raw_data_df.count() == 0:
+                raise ETLException(
+                    error_text="Extraction returned no data",
+                    error_step="EXTRACT"
+                )
+            
+            # ===================================================================
+            # STEP 2: TRANSFORM (ABAP mo_transformer->transform_data)
+            # ===================================================================
+            print("\n" + "=" * 60)
             print("=== TRANSFORM Phase ===")
-            print("="*70)
+            print("=" * 60)
             
-            # Transform
-            analytics_df = self.transformer.transform_data(raw_df)
+            analytics_df = self.transformer.transform_data(raw_data_df)
             
-            print("\n" + "="*70)
+            if analytics_df is None or analytics_df.count() == 0:
+                raise ETLException(
+                    error_text="Transformation returned no data",
+                    error_step="TRANSFORM"
+                )
+            
+            # ===================================================================
+            # STEP 3: LOAD (ABAP mo_loader->load_data)
+            # ===================================================================
+            print("\n" + "=" * 60)
             print("=== LOAD Phase ===")
-            print("="*70)
+            print("=" * 60)
             
-            # Load
-            load_success = self.loader.load_data(
-                analytics_df=analytics_df,
-                target_path=target_path
-            )
+            load_success = self.loader.load_data(analytics_df)
             
             if not load_success:
-                raise RuntimeError("Load phase failed")
+                raise ETLException(
+                    error_text="Load operation failed",
+                    error_step="LOAD"
+                )
             
+            # Capture end time
             self.end_time = datetime.now()
             
             self.logger.log_message(
@@ -108,52 +152,65 @@ class ETLOrchestrator:
             
             return True
             
-        except Exception as e:
+        except ETLException as etl_error:
+            # Handle ETL-specific exceptions
             self.end_time = datetime.now()
-            error_msg = f"ETL process failed: {str(e)}"
             
             self.logger.log_message(
                 step="ERROR",
                 status="E",
-                message=error_msg
+                message=f"ETL process failed: {str(etl_error)}"
             )
             
+            print(f"\n*** ETL Error: {str(etl_error)} ***", file=sys.stderr)
             return False
-    
-    def _generate_etl_run_id(self) -> str:
-        """
-        Generate unique ETL run ID.
-        
-        Returns:
-            Unique ETL run identifier
-        """
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        return f"ETL{timestamp}"
-    
+            
+        except Exception as ex:
+            # Handle unexpected exceptions (ABAP CATCH cx_root)
+            self.end_time = datetime.now()
+            
+            self.logger.log_message(
+                step="ERROR",
+                status="E",
+                message=f"Unexpected error in ETL process: {str(ex)}"
+            )
+            
+            print(f"\n*** Unexpected Error: {str(ex)} ***", file=sys.stderr)
+            return False
+
     def get_etl_run_id(self) -> str:
         """
-        Get the ETL run ID.
+        Get current ETL run ID.
         
         Returns:
-            ETL run identifier
+            ETL run ID string
         """
         return self.etl_run_id
-    
+
     def display_summary(self) -> None:
-        """Display ETL execution summary."""
-        print("\n" + "="*70)
+        """
+        Display ETL process execution summary.
+        Migrates ABAP display_summary method.
+        """
+        print("\n" + "=" * 60)
         print("ETL Process Summary")
-        print("="*70)
+        print("=" * 60)
         print(f"ETL Run ID:    {self.etl_run_id}")
         
         if self.start_time:
-            print(f"Start Time:    {self.start_time.isoformat()}")
+            print(f"Start Time:    {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         if self.end_time:
-            print(f"End Time:      {self.end_time.isoformat()}")
+            print(f"End Time:      {self.end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
+        # Calculate duration
         if self.start_time and self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
             print(f"Duration:      {duration:.2f} seconds")
         
-        print("="*70 + "\n")
+        print("=" * 60)
+
+    def cleanup(self) -> None:
+        """Clean up resources and stop Spark session if created internally."""
+        if self.spark:
+            self.spark.stop()
