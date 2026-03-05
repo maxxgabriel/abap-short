@@ -1,47 +1,47 @@
 """
-ETL Logger Module - PySpark Implementation
-Provides structured logging for ETL operations.
+ETL Logging Module
+Provides comprehensive logging for ETL processes.
 """
 
-from pyspark.sql import SparkSession
+import logging
 from datetime import datetime
 from typing import Optional
-import uuid
-import logging
+from pyspark.sql import SparkSession
+
+from src.utils import generate_run_id
 
 
 class ETLLogger:
-    """
-    Logger for ETL operations with structured output.
-    
-    Tracks:
-    - Process steps
-    - Status codes
-    - Record counts
-    - Messages and errors
-    """
-    
-    def __init__(self, spark: SparkSession, etl_run_id: str, config: dict):
+    """Logger for ETL processes with database persistence."""
+
+    def __init__(self, spark: SparkSession, run_id: str, config: dict):
         """
-        Initialize the logger.
-        
+        Initialize the ETL logger.
+
         Args:
             spark: Active SparkSession
-            etl_run_id: Unique ETL run identifier
+            run_id: Unique ETL run identifier
             config: Configuration dictionary
         """
         self.spark = spark
-        self.etl_run_id = etl_run_id
+        self.run_id = run_id
         self.config = config
-        self.log_path = config.get('logging', {}).get('log_path', '/tmp/etl_logs')
         
-        # Setup Python logging
+        # Set up Python logging
+        self._setup_logging()
+
+    def _setup_logging(self):
+        """Configure Python logging."""
+        log_level = self.config.get("log_level", "INFO")
+        
         logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            level=getattr(logging, log_level),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
-        self.logger = logging.getLogger('ETL')
-    
+        
+        self.logger = logging.getLogger("ETLLogger")
+
     def log_message(
         self,
         step: str,
@@ -50,10 +50,10 @@ class ETLLogger:
         records_processed: int = 0,
         records_success: int = 0,
         records_error: int = 0
-    ) -> None:
+    ):
         """
-        Log a message with ETL context.
-        
+        Log an ETL message.
+
         Args:
             step: Process step (EXTRACT, TRANSFORM, LOAD, etc.)
             status: Status code (S=Success, E=Error, W=Warning, I=Info)
@@ -63,54 +63,55 @@ class ETLLogger:
             records_error: Number of error records
         """
         log_entry = {
-            'log_id': self._generate_log_id(),
-            'etl_run_id': self.etl_run_id,
-            'execution_date': datetime.now().strftime('%Y-%m-%d'),
-            'execution_time': datetime.now().strftime('%H:%M:%S'),
-            'process_step': step,
-            'status': status,
-            'records_processed': records_processed,
-            'records_success': records_success,
-            'records_error': records_error,
-            'message': message,
-            'created_at': datetime.now().isoformat()
+            "log_id": generate_run_id("LOG"),
+            "etl_run_id": self.run_id,
+            "execution_timestamp": datetime.now().isoformat(),
+            "process_step": step,
+            "status": status,
+            "records_processed": records_processed,
+            "records_success": records_success,
+            "records_error": records_error,
+            "message": message
+        }
+
+        # Log to console/file
+        log_level_map = {
+            "S": logging.INFO,
+            "I": logging.INFO,
+            "W": logging.WARNING,
+            "E": logging.ERROR
         }
         
-        # Log to Python logger
-        log_level = self._get_log_level(status)
+        log_level = log_level_map.get(status, logging.INFO)
         self.logger.log(
             log_level,
-            f"[{step}] {message} | Processed: {records_processed}, "
-            f"Success: {records_success}, Errors: {records_error}"
+            f"[{step}] {message} (Processed: {records_processed}, "
+            f"Success: {records_success}, Errors: {records_error})"
         )
-        
-        # Optionally persist to Spark DataFrame/Table
-        if self.config.get('logging', {}).get('persist_logs', False):
-            self._persist_log_entry(log_entry)
-    
-    def _generate_log_id(self) -> str:
-        """Generate unique log entry ID."""
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        return f"LOG{timestamp}{str(uuid.uuid4())[:6]}"
-    
-    def _get_log_level(self, status: str) -> int:
-        """Map status code to Python logging level."""
-        mapping = {
-            'S': logging.INFO,
-            'E': logging.ERROR,
-            'W': logging.WARNING,
-            'I': logging.INFO
-        }
-        return mapping.get(status, logging.INFO)
-    
-    def _persist_log_entry(self, log_entry: dict) -> None:
-        """Persist log entry to storage."""
+
+        # Persist to database/storage if configured
+        if self.config.get("persist_logs", False):
+            self._persist_log(log_entry)
+
+    def _persist_log(self, log_entry: dict):
+        """
+        Persist log entry to database/storage.
+
+        Args:
+            log_entry: Log entry dictionary
+        """
         try:
-            df = self.spark.createDataFrame([log_entry])
-            df.write.mode('append').format('parquet').save(self.log_path)
+            log_path = self.config.get("log_data_path")
+            if log_path:
+                # Convert to DataFrame and append
+                log_df = self.spark.createDataFrame([log_entry])
+                log_df.write \
+                    .format("parquet") \
+                    .mode("append") \
+                    .save(log_path)
         except Exception as e:
-            self.logger.error(f"Failed to persist log entry: {str(e)}")
-    
-    def get_etl_run_id(self) -> str:
+            self.logger.warning(f"Failed to persist log: {str(e)}")
+
+    def get_run_id(self) -> str:
         """Get the current ETL run ID."""
-        return self.etl_run_id
+        return self.run_id
