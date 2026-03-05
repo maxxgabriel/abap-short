@@ -1,138 +1,120 @@
-# ETL Configuration for Sales Analytics Pipeline
-# Maps ABAP constants and settings to PySpark configuration
+# ETL Logger Configuration
+# Corresponds to ABAP ZCL_ETL_CONSTANTS and system configuration
 
-spark:
-  app_name: "SalesETLPipeline"
-  master: "local[*]"  # Change to yarn/kubernetes in production
-  configs:
-    spark.sql.shuffle.partitions: 200
-    spark.default.parallelism: 100
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-
-# Extractor Configuration (from ZCL_ETL_EXTRACTOR)
-extractor:
-  source_path: "dbfs:/mnt/raw/zsales_raw"
-  source_format: "parquet"  # or delta, jdbc for real SAP connection
-  date_column: "trans_date"
-  status_column: "status"
-  status_new: "N"  # Maps to gc_status-new
-  status_processed: "P"  # Maps to gc_status-processed
+# Delta Lake Configuration
+delta_lake:
+  audit_log_path: "/mnt/delta/etl_audit_logs"
+  checkpoint_location: "/mnt/delta/checkpoints/etl_logs"
   
-  # JDBC configuration for SAP HANA/database connection
-  jdbc:
-    enabled: false
-    url: "jdbc:sap://hostname:30015"
-    driver: "com.sap.db.jdbc.Driver"
-    table: "ZSALES_RAW"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
-    fetch_size: 10000
+  # Delta table properties
+  properties:
+    delta.autoOptimize.optimizeWrite: "true"
+    delta.autoOptimize.autoCompact: "true"
+    delta.logRetentionDuration: "interval 30 days"
+    delta.deletedFileRetentionDuration: "interval 7 days"
 
-# Transformer Configuration (from ZCL_ETL_TRANSFORMER)
-transformer:
-  # Business rules from ZCL_ETL_CONSTANTS
-  discount_qty_tier1: 10  # gc_discount_qty_tier1
-  discount_qty_tier2: 15  # gc_discount_qty_tier2
-  discount_rate_tier1: 0.05  # gc_discount_rate_tier1
-  discount_rate_tier2: 0.10  # gc_discount_rate_tier2
+# Logging Configuration
+logging:
+  # ETL run ID prefix (corresponds to ABAP gc_prefix_etl_run)
+  etl_run_prefix: "ETL"
   
-  tax_rate: 0.08  # gc_tax_rate
-  cost_ratio: 0.60  # gc_cost_ratio
+  # Log ID prefix (corresponds to ABAP gc_prefix_log_id)
+  log_id_prefix: "LOG"
+  
+  # Console output settings
+  console_output: true
+  verbose: true
+  
+  # Log retention
+  retention_days: 90
+
+# Status Codes (corresponds to ABAP gc_status)
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
+
+# Process Steps (corresponds to ABAP gc_step)
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
+
+# ETL Configuration Defaults (corresponds to ABAP constants)
+etl_defaults:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
+
+# Business Rules (from ABAP ZCL_ETL_CONSTANTS)
+business_rules:
+  # Discount thresholds
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
+  
+  # Tax rate
+  tax_rate: 0.08
+  
+  # Cost ratio
+  cost_ratio: 0.60
   
   # Category thresholds
-  category_high_threshold: 2000.00  # gc_category_high_threshold
-  category_medium_threshold: 500.00  # gc_category_medium_threshold
-  
-  # Categories
-  category_high: "HIGH"  # gc_category-high
-  category_medium: "MEDIUM"  # gc_category-medium
-  category_low: "LOW"  # gc_category-low
-  
-  # ID generation
-  analytics_id_prefix: "ANL"  # gc_prefix_analytics_id
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
-# Loader Configuration (from ZCL_ETL_LOADER)
-loader:
-  target_path: "dbfs:/mnt/analytics/zsales_analytics"
-  target_format: "delta"
-  write_mode: "merge"  # merge (MODIFY) or append (INSERT)
-  
-  # Batch configuration
-  batch_size: 1000  # gc_default_batch_size
-  commit_interval: 500  # gc_default_commit_interval
-  
-  # Partitioning strategy
-  partition_columns:
-    - "trans_date"
-    - "region"
-  
-  # Optimization settings
-  enable_optimization: true
-  z_order_columns:
-    - "customer_id"
-    - "product_id"
-  
-  # Validation
-  enable_validation: true
-  error_path: "dbfs:/mnt/errors/zsales_analytics"
-  
-  # Delta Lake specific
-  checkpoint_location: "dbfs:/mnt/checkpoints/zsales_analytics"
-  auto_optimize: true
-  optimize_write: true
+# Message Templates (corresponds to ABAP gc_msg_* constants)
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
 
-# Logger Configuration (from ZCL_ETL_LOGGER)
-logger:
-  log_level: "INFO"
-  log_path: "dbfs:/mnt/logs/etl"
-  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  enable_console: true
-  enable_file: true
+# Spark Configuration
+spark:
+  app_name: "Sales_ETL_Logger"
   
-  # ETL run ID configuration
-  etl_run_id_prefix: "ETL"  # gc_prefix_etl_run
-  log_id_prefix: "LOG"  # gc_prefix_log_id
-
-# Orchestrator Configuration (from ZCL_ETL_ORCHESTRATOR)
-orchestrator:
-  retry_attempts: 3  # gc_default_retry_attempts
-  timeout_seconds: 3600  # gc_default_timeout_seconds
-  enable_parallel_execution: false
+  # Delta Lake extensions
+  extensions:
+    - "io.delta.sql.DeltaSparkSessionExtension"
   
-  # Process steps
-  steps:
-    - extract
-    - transform
-    - load
-    - validate
+  # Catalog configuration
+  catalog_implementation: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
   
-  # Error handling
-  stop_on_error: true
-  error_threshold_percent: 5.0
+  # Memory settings
+  driver_memory: "4g"
+  executor_memory: "4g"
+  executor_cores: 2
+  
+  # Serialization
+  serializer: "org.apache.spark.serializer.KryoSerializer"
 
-# Environment-specific overrides
-environments:
-  development:
-    spark:
-      master: "local[4]"
-    loader:
-      target_path: "file:///tmp/analytics/zsales_analytics"
-      
-  production:
-    spark:
-      master: "yarn"
-      configs:
-        spark.executor.memory: "8g"
-        spark.executor.cores: 4
-        spark.executor.instances: 10
-    loader:
-      target_path: "s3a://production-bucket/analytics/zsales_analytics"
-      batch_size: 5000
-
-# Monitoring and Alerting
+# Monitoring and Alerts
 monitoring:
   enable_metrics: true
-  metrics_path: "dbfs:/mnt/metrics/etl"
-  alert_on_failure: true
-  alert_email: "etl-alerts@company.com"
+  metrics_path: "/mnt/metrics/etl_logger"
+  
+  # Alert thresholds
+  alert_on_error_count: 10
+  alert_on_duration_seconds: 7200
+
+# Testing Configuration
+testing:
+  test_mode: false
+  sample_size: 100
+  mock_data_enabled: false
