@@ -1,0 +1,250 @@
+╔════════════════════════════════════════════════════════════════════╗
+║           SALES ETL SYSTEM - ARCHITECTURE DIAGRAM                  ║
+╚════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────┐
+│                       PRESENTATION LAYER                         │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │  Z_SALES_ETL_MAIN.abap (Executable Report)             │    │
+│  │  ┌──────────────────────────────────────────────┐     │    │
+│  │  │  Selection Screen:                           │     │    │
+│  │  │  - From Date                                 │     │    │
+│  │  │  - To Date                                   │     │    │
+│  │  │  - Test Mode (Checkbox)                      │     │    │
+│  │  └──────────────────────────────────────────────┘     │    │
+│  └────────────────────────────────────────────────────────┘    │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ Creates & Invokes
+                            ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                       ORCHESTRATION LAYER                        │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────┐    │
+│  │  ZCL_ETL_ORCHESTRATOR                                  │    │
+│  │  ┌──────────────────────────────────────────────┐     │    │
+│  │  │  - Generate ETL Run ID                       │     │    │
+│  │  │  - Initialize Components                     │     │    │
+│  │  │  - Coordinate ETL Flow                       │     │    │
+│  │  │  - Track Execution Time                      │     │    │
+│  │  │  - Display Summary                           │     │    │
+│  │  └──────────────────────────────────────────────┘     │    │
+│  └────────────────────────────────────────────────────────┘    │
+└──┬─────────────────┬─────────────────┬────────────────┬─────────┘
+   │                 │                 │                │
+   │ Creates         │ Creates         │ Creates        │ Creates
+   ▼                 ▼                 ▼                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                       PROCESSING LAYER                           │
+│                                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐ │
+│  │   ETL    │    │   ETL    │    │   ETL    │    │   ETL    │ │
+│  │  LOGGER  │◄───┤EXTRACTOR │◄───┤TRANSFORM │◄───┤  LOADER  │ │
+│  │          │    │          │    │   -ER    │    │          │ │
+│  │  - Log   │    │ - Read   │    │ - Calc   │    │ - Valid  │ │
+│  │  - Track │    │ - Filter │    │ - Enrich │    │ - Insert │ │
+│  │  - Audit │    │ - Count  │    │ - Map    │    │ - Update │ │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘ │
+│       │               │                │               │        │
+│       │               │                │               │        │
+│       │ Logs to       │ Reads from     │ Processes     │ Writes │
+└───────┼───────────────┼────────────────┼───────────────┼────────┘
+        │               │                │               │
+        ▼               ▼                │               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                         DATA LAYER                               │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │  ZETL_LOG    │  │ ZSALES_RAW   │  │  ZSALES_ANALYTICS    │  │
+│  │              │  │              │  │                      │  │
+│  │ Log Details: │  │ Source Data: │  │ Target Analytics:    │  │
+│  │ - Run ID     │  │ - Trans ID   │  │ - Analytics ID       │  │
+│  │ - Step       │  │ - Date       │  │ - Gross Amount       │  │
+│  │ - Status     │  │ - Customer   │  │ - Net Amount         │  │
+│  │ - Records    │  │ - Product    │  │ - Discount           │  │
+│  │ - Message    │  │ - Quantity   │  │ - Tax                │  │
+│  │ - Timestamp  │  │ - Price      │  │ - Profit Margin      │  │
+│  │              │  │ - Status     │  │ - Category           │  │
+│  │              │  │ - Currency   │  │ - ETL Run ID         │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                          ETL FLOW SEQUENCE
+═══════════════════════════════════════════════════════════════════
+
+Step 1: INITIALIZATION
+  ┌─────────────────────────────────────────────────────┐
+  │ Orchestrator generates unique ETL Run ID            │
+  │ Creates Logger instance with Run ID                 │
+  │ Creates Extractor, Transformer, Loader instances    │
+  │ Logs: "ETL process initialized"                     │
+  └─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+Step 2: EXTRACT
+  ┌─────────────────────────────────────────────────────┐
+  │ Read from ZSALES_RAW                                │
+  │ WHERE trans_date BETWEEN from_date AND to_date      │
+  │   AND status = 'N' (New)                            │
+  │ Count records extracted                             │
+  │ Log: "Extracted X records"                          │
+  └─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+Step 3: TRANSFORM
+  ┌─────────────────────────────────────────────────────┐
+  │ For each extracted record:                          │
+  │   1. Calculate gross amount (qty × price)           │
+  │   2. Apply discount rules:                          │
+  │      - 10% if qty > 15                              │
+  │      - 5% if qty > 10                               │
+  │      - 0% otherwise                                 │
+  │   3. Calculate tax (8% on gross - discount)         │
+  │   4. Calculate net amount                           │
+  │   5. Calculate profit margin (40% target)           │
+  │   6. Categorize: HIGH/MEDIUM/LOW                    │
+  │   7. Add ETL metadata                               │
+  │ Log: "Transformed Y of X records"                   │
+  └─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+Step 4: VALIDATE & LOAD
+  ┌─────────────────────────────────────────────────────┐
+  │ For each transformed record:                        │
+  │   1. Validate required fields                       │
+  │   2. Validate business rules                        │
+  │   3. INSERT into ZSALES_ANALYTICS                   │
+  │   4. UPDATE ZSALES_RAW status = 'P'                 │
+  │ Handle errors gracefully                            │
+  │ Log: "Loaded Z of Y records"                        │
+  └─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+Step 5: COMPLETION
+  ┌─────────────────────────────────────────────────────┐
+  │ Calculate execution duration                        │
+  │ Display summary report                              │
+  │ COMMIT (if not test mode)                           │
+  │ Log: "ETL process completed"                        │
+  └─────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                     TRANSFORMATION LOGIC DETAIL
+═══════════════════════════════════════════════════════════════════
+
+INPUT: Raw Sales Record
+┌────────────────────────────────┐
+│ Trans ID:    T000001           │
+│ Date:        2026-03-05        │
+│ Customer:    CUST001           │
+│ Product:     PROD001           │
+│ Quantity:    20                │
+│ Unit Price:  $99.99            │
+│ Currency:    USD               │
+│ Sales Rep:   John Doe          │
+│ Region:      NORTH             │
+└────────────────────────────────┘
+         │
+         ▼
+TRANSFORMATION STEPS
+┌────────────────────────────────────────────────┐
+│ 1. Gross = Qty × Price                         │
+│    = 20 × $99.99 = $1,999.80                   │
+│                                                │
+│ 2. Discount = Gross × Rate                     │
+│    Qty > 15 → 10% discount                     │
+│    = $1,999.80 × 0.10 = $199.98                │
+│                                                │
+│ 3. Taxable = Gross - Discount                  │
+│    = $1,999.80 - $199.98 = $1,799.82           │
+│                                                │
+│ 4. Tax = Taxable × 8%                          │
+│    = $1,799.82 × 0.08 = $143.99                │
+│                                                │
+│ 5. Net = Taxable + Tax                         │
+│    = $1,799.82 + $143.99 = $1,943.81           │
+│                                                │
+│ 6. Cost = Qty × Price × 60%                    │
+│    = 20 × $99.99 × 0.60 = $1,199.88            │
+│                                                │
+│ 7. Profit Margin = (Net - Cost) / Net × 100   │
+│    = ($1,943.81 - $1,199.88) / $1,943.81 × 100│
+│    = 38.28%                                    │
+│                                                │
+│ 8. Category = MEDIUM (< $2,000)                │
+└────────────────────────────────────────────────┘
+         │
+         ▼
+OUTPUT: Analytics Record
+┌────────────────────────────────────────────────┐
+│ Analytics ID:   ANL_T000001_120000             │
+│ Trans Date:     2026-03-05                     │
+│ Customer:       CUST001                        │
+│ Product:        PROD001                        │
+│ Total Qty:      20                             │
+│ Gross Amount:   $1,999.80                      │
+│ Discount:       $199.98                        │
+│ Tax:            $143.99                        │
+│ Net Amount:     $1,943.81                      │
+│ Currency:       USD                            │
+│ Sales Rep:      John Doe                       │
+│ Region:         NORTH                          │
+│ Profit Margin:  38.28%                         │
+│ Category:       MEDIUM                         │
+│ ETL Run ID:     ETL20260305120000              │
+│ Loaded At:      2026-03-05 12:00:00            │
+└────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                     CLASS DEPENDENCIES DIAGRAM
+═══════════════════════════════════════════════════════════════════
+
+                    ┌──────────────────────┐
+                    │ Z_SALES_ETL_MAIN     │
+                    │    (Report)          │
+                    └──────────┬───────────┘
+                               │
+                               │ uses
+                               ▼
+                    ┌──────────────────────┐
+        ┌───────────┤ ZCL_ETL_ORCHESTRATOR │◄──────────┐
+        │           └──────────┬───────────┘           │
+        │                      │                       │
+        │ creates              │ creates               │ creates
+        │                      │                       │
+        ▼                      ▼                       ▼
+┌────────────────┐    ┌────────────────┐    ┌────────────────┐
+│ ZCL_ETL_LOGGER │◄───│ZCL_ETL_        │    │ ZCL_ETL_       │
+│                │    │  EXTRACTOR     │    │   TRANSFORMER  │
+└────────────────┘    └────────────────┘    └────────────────┘
+        ▲                      │                       │
+        │                      │ returns data          │ returns data
+        │ uses                 │                       │
+        │                      ▼                       ▼
+        │              ┌────────────────────────────────┐
+        └──────────────┤     ZCL_ETL_LOADER             │
+                       └────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════
+                           KEY FEATURES
+═══════════════════════════════════════════════════════════════════
+
+✓ Modular Design       - Separate classes for each concern
+✓ Error Handling       - Try-catch at all levels
+✓ Comprehensive Logs   - Detailed execution tracking
+✓ Data Validation      - Business rule validation
+✓ Test Mode            - Safe testing without commits
+✓ Unique IDs           - Trackable ETL runs
+✓ Date Range Filter    - Flexible extraction
+✓ Status Management    - Process tracking
+✓ Business Logic       - Discounts, taxes, margins
+✓ Categorization       - Automatic classification
+✓ Audit Trail          - Complete lineage
+✓ Summary Reports      - Execution statistics
+
+═══════════════════════════════════════════════════════════════════

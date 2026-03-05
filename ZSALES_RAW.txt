@@ -1,0 +1,26 @@
+*&---------------------------------------------------------------------*
+*& Table: ZSALES_RAW
+*& Description: Source table for raw sales transaction data
+*&---------------------------------------------------------------------*
+
+@EndUserText.label : 'Raw Sales Data'
+@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+
+define table zsales_raw {
+  key client      : mandt not null;
+  key trans_id    : char10 not null;
+  trans_date      : dats;
+  customer_id     : char10;
+  product_id      : char10;
+  quantity        : int4;
+  unit_price      : curr23_2;
+  currency        : waers;
+  sales_rep       : char20;
+  region          : char10;
+  status          : char1;  // 'N'=New, 'P'=Processed, 'E'=Error
+  created_at      : timestampl;
+  created_by      : syuname;
+}

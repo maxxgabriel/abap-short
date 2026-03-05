@@ -1,0 +1,31 @@
+*&---------------------------------------------------------------------*
+*& Table: ZSALES_ANALYTICS
+*& Description: Target table for transformed sales analytics data
+*&---------------------------------------------------------------------*
+
+@EndUserText.label : 'Sales Analytics Data'
+@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+
+define table zsales_analytics {
+  key client         : mandt not null;
+  key analytics_id   : char20 not null;
+  trans_date         : dats;
+  customer_id        : char10;
+  product_id         : char10;
+  total_quantity     : int4;
+  gross_amount       : curr23_2;
+  net_amount         : curr23_2;
+  discount_amount    : curr23_2;
+  tax_amount         : curr23_2;
+  currency           : waers;
+  sales_rep          : char20;
+  region             : char10;
+  profit_margin      : dec5_2;
+  category           : char10;  // 'HIGH', 'MEDIUM', 'LOW'
+  etl_run_id         : char20;
+  loaded_at          : timestampl;
+  loaded_by          : syuname;
+}

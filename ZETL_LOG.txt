@@ -1,0 +1,26 @@
+*&---------------------------------------------------------------------*
+*& Table: ZETL_LOG
+*& Description: ETL execution log table
+*&---------------------------------------------------------------------*
+
+@EndUserText.label : 'ETL Execution Log'
+@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE
+@AbapCatalog.tableCategory : #TRANSPARENT
+@AbapCatalog.deliveryClass : #A
+@AbapCatalog.dataMaintenance : #ALLOWED
+
+define table zetl_log {
+  key client         : mandt not null;
+  key log_id         : char20 not null;
+  etl_run_id         : char20;
+  execution_date     : dats;
+  execution_time     : tims;
+  process_step       : char20;  // 'EXTRACT', 'TRANSFORM', 'LOAD'
+  status             : char1;   // 'S'=Success, 'E'=Error, 'W'=Warning
+  records_processed  : int4;
+  records_success    : int4;
+  records_error      : int4;
+  message            : char255;
+  created_at         : timestampl;
+  created_by         : syuname;
+}
