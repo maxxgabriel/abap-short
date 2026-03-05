@@ -3,75 +3,57 @@
 
 # Spark Configuration
 spark:
-  app_name: "Sales ETL Pipeline"
+  app_name: "SalesETLPipeline"
   master: "local[*]"
   config:
-    spark.sql.shuffle.partitions: 200
+    spark.sql.shuffle.partitions: 10
     spark.sql.adaptive.enabled: true
     spark.sql.adaptive.coalescePartitions.enabled: true
-    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
 
-# Source Configuration
-source:
-  raw_sales_path: "data/raw/sales"
-  format: "parquet"
-  
-# Target Configuration
-target:
-  analytics_path: "data/analytics/sales"
-  format: "parquet"
-  write_mode: "append"
-  partition_by:
-    - "trans_date"
+# Data Source Configuration
+source_path: "data/raw/sales"
+source_format: "parquet"
 
-# Business Rules
-business_rules:
-  # Discount thresholds
-  discount_qty_tier1: 10
-  discount_qty_tier2: 15
-  discount_rate_tier1: 0.05
-  discount_rate_tier2: 0.10
-  
-  # Tax rate
-  tax_rate: 0.08
-  
-  # Cost calculation
-  cost_ratio: 0.60
-  
-  # Category thresholds
-  category_high_threshold: 2000.00
-  category_medium_threshold: 500.00
+# Data Target Configuration
+target_path: "data/analytics/sales"
+target_format: "parquet"
+write_mode: "append"
+partition_by:
+  - "trans_date"
 
-# ETL Processing Configuration
-processing:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
+# Business Rules - Discount Thresholds
+discount_qty_tier1: 10
+discount_qty_tier2: 15
+discount_rate_tier1: 0.05
+discount_rate_tier2: 0.10
+
+# Business Rules - Tax and Cost
+tax_rate: 0.08
+cost_ratio: 0.60
+
+# Business Rules - Category Thresholds
+category_high_threshold: 2000.00
+category_medium_threshold: 500.00
+
+# ETL Configuration
+batch_size: 1000
+commit_interval: 500
+max_retries: 3
+timeout_seconds: 3600
 
 # Logging Configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  log_path: "logs/etl.log"
+log_level: "INFO"
+log_path: "logs/etl"
 
 # Validation Rules
 validation:
-  required_fields:
-    - trans_id
-    - trans_date
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-  
-  min_quantity: 1
-  max_quantity: 10000
-  min_unit_price: 0.01
-  max_unit_price: 100000.00
+  check_nulls: true
+  check_amounts: true
+  check_categories: true
+  min_records: 1
 
-# Test Data Configuration
-test_data:
-  enabled: true
-  sample_size: 100
-  mock_data_path: "tests/data/mock_sales.parquet"
+# Performance Tuning
+performance:
+  cache_intermediate_results: true
+  broadcast_threshold: "10MB"
+  parallel_jobs: 4
