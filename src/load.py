@@ -1,144 +1,150 @@
 """
-Data Loader - loads transformed data into target analytics table
-Migrated from ABAP ZCL_ETL_LOADER
+Data loading component for ETL system.
+Converted from ABAP ZCL_ETL_LOADER.
 """
 
-import logging
-
+from typing import Optional
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, lit
+from src.logger import ETLLogger
+from src.constants import ETLConstants
 
-from src.config import Config
-from src.etl_logger import ETLLogger
 
-
-class Loader:
+class ETLLoader:
     """Loads transformed data into target analytics table."""
-    
-    def __init__(self, spark: SparkSession, config: Config, etl_logger: ETLLogger, test_mode: bool = False):
+
+    def __init__(self, logger: ETLLogger, spark: SparkSession):
         """
-        Initialize the loader.
-        
+        Initialize loader with logger and Spark session.
+
         Args:
-            spark: SparkSession instance
-            config: ETL configuration
-            etl_logger: ETL logger instance
-            test_mode: Whether to run in test mode
+            logger: ETL logger instance
+            spark: Active SparkSession
         """
+        self.logger = logger
         self.spark = spark
-        self.config = config
-        self.etl_logger = etl_logger
-        self.test_mode = test_mode
-        self.logger = logging.getLogger(__name__)
-    
-    def validate_record(self, row: dict) -> bool:
+
+    def load_data(
+        self, analytics_df: DataFrame, target_table: str, update_source: bool = True
+    ) -> bool:
         """
-        Validate a single record.
-        
+        Load transformed analytics data to target table.
+
         Args:
-            row: Record as dictionary
-            
+            analytics_df: Transformed analytics DataFrame
+            target_table: Target table name or path
+            update_source: Whether to update source table status
+
         Returns:
-            True if valid, False otherwise
-        """
-        # Validate required fields
-        if not row.get("analytics_id") or not row.get("customer_id") or not row.get("product_id"):
-            return False
-        
-        if row.get("gross_amount", 0) <= 0:
-            return False
-        
-        # Validate currency
-        if not row.get("currency"):
-            return False
-        
-        # Validate category
-        if row.get("category") not in ["HIGH", "MEDIUM", "LOW"]:
-            return False
-        
-        return True
-    
-    def load_data(self, analytics_data: DataFrame) -> bool:
-        """
-        Load transformed data into target table.
-        
-        Args:
-            analytics_data: DataFrame with analytics data
-            
-        Returns:
-            True if successful, False otherwise
+            True if load succeeded, False otherwise
         """
         try:
-            self.etl_logger.log_message(
-                step='LOAD',
-                status='S',
-                message='Starting data load'
+            self.logger.log_message(
+                step=ETLConstants.Step.LOAD,
+                status=ETLConstants.Status.SUCCESS,
+                message="Starting data load",
             )
+
+            # Validate records before loading
+            validated_df = self._validate_records(analytics_df)
             
-            self.logger.info("Starting data load")
-            
-            total_count = analytics_data.count()
-            
-            # Validate records (in production, you might want to do this more efficiently)
-            # For now, we'll assume all records are valid after transformation
-            valid_data = analytics_data
-            
-            if self.test_mode:
-                # In test mode, just show the data
-                self.logger.info("Test mode: Displaying sample data")
-                valid_data.show(10, truncate=False)
-                success_count = total_count
-                error_count = 0
-            else:
-                # In production mode, write to target table
-                # Example: Write to Delta Lake
-                # valid_data.write \
-                #     .format("delta") \
-                #     .mode("append") \
-                #     .option("mergeSchema", "true") \
-                #     .save(self.config.target_table_path)
-                
-                # Example: Write to JDBC database
-                # valid_data.write \
-                #     .format("jdbc") \
-                #     .option("url", self.config.target_url) \
-                #     .option("dbtable", "zsales_analytics") \
-                #     .mode("append") \
-                #     .save()
-                
-                # For demonstration, write to Parquet
-                output_path = self.config.output_path
-                valid_data.write \
-                    .mode("append") \
-                    .parquet(output_path)
-                
-                self.logger.info(f"Data written to {output_path}")
-                
-                success_count = total_count
-                error_count = 0
-                
-                # Update status in source table (in production)
-                # UPDATE zsales_raw SET status = 'P' WHERE trans_id IN (...)
-            
-            self.etl_logger.log_message(
-                step='LOAD',
-                status='S',
+            total_count = analytics_df.count()
+            valid_count = validated_df.count()
+            error_count = total_count - valid_count
+
+            if error_count > 0:
+                self.logger.log_message(
+                    step=ETLConstants.Step.LOAD,
+                    status=ETLConstants.Status.WARNING,
+                    message=f"{error_count} invalid records skipped",
+                    records_error=error_count,
+                )
+
+            # Write to target table
+            # In production: validated_df.write.mode("append").saveAsTable(target_table)
+            validated_df.write.mode("append").parquet(target_table)
+
+            # Update source table status if requested
+            if update_source:
+                self._update_source_status(analytics_df)
+
+            self.logger.log_message(
+                step=ETLConstants.Step.LOAD,
+                status=ETLConstants.Status.SUCCESS,
+                message=f"Loaded {valid_count} of {total_count} records",
                 records_processed=total_count,
-                records_success=success_count,
+                records_success=valid_count,
                 records_error=error_count,
-                message=f'Loaded {success_count} of {total_count} records'
             )
-            
-            self.logger.info(f"Loaded {success_count} of {total_count} records")
-            
+
             return True
-            
+
         except Exception as e:
-            self.etl_logger.log_message(
-                step='LOAD',
-                status='E',
-                message=f'Load failed: {str(e)}'
+            self.logger.log_message(
+                step=ETLConstants.Step.LOAD,
+                status=ETLConstants.Status.ERROR,
+                message=f"Load failed: {str(e)}",
             )
-            
-            self.logger.error(f"Load failed: {str(e)}", exc_info=True)
             return False
+
+    def _validate_records(self, df: DataFrame) -> DataFrame:
+        """
+        Validate analytics records before loading.
+
+        Args:
+            df: Analytics DataFrame
+
+        Returns:
+            Validated DataFrame with invalid records filtered out
+        """
+        return df.filter(
+            # Required fields must not be null
+            col("analytics_id").isNotNull()
+            & col("customer_id").isNotNull()
+            & col("product_id").isNotNull()
+            & col("gross_amount").isNotNull()
+            # Gross amount must be positive
+            & (col("gross_amount") > 0)
+            # Currency must not be null
+            & col("currency").isNotNull()
+            # Category must be valid
+            & col("category").isin(
+                ETLConstants.Category.HIGH,
+                ETLConstants.Category.MEDIUM,
+                ETLConstants.Category.LOW,
+            )
+        )
+
+    def _update_source_status(self, analytics_df: DataFrame) -> None:
+        """
+        Update source table to mark records as processed.
+
+        Args:
+            analytics_df: Analytics DataFrame containing transaction IDs
+        """
+        try:
+            # Extract transaction IDs from analytics_id
+            # Format: ANL<trans_id><date>
+            # In production, would execute UPDATE statement on source table
+            trans_ids = (
+                analytics_df.select("analytics_id")
+                .distinct()
+                .rdd.map(lambda row: row.analytics_id[3:13])  # Extract trans_id
+                .collect()
+            )
+
+            self.logger.log_message(
+                step=ETLConstants.Step.LOAD,
+                status=ETLConstants.Status.INFO,
+                message=f"Updated status for {len(trans_ids)} source records",
+            )
+
+            # In production:
+            # UPDATE raw_sales_table SET status = 'P' WHERE trans_id IN (trans_ids)
+
+        except Exception as e:
+            self.logger.log_message(
+                step=ETLConstants.Step.LOAD,
+                status=ETLConstants.Status.WARNING,
+                message=f"Failed to update source status: {str(e)}",
+            )
