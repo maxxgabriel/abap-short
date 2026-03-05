@@ -1,5 +1,11 @@
 """
-Unit tests for ETL exception hierarchy
+Unit tests for custom ETL exception hierarchy.
+
+Tests cover:
+- Exception instantiation and attributes
+- Error context handling
+- Exception inheritance
+- Serialization methods
 """
 
 import pytest
@@ -11,444 +17,372 @@ from src.exceptions import (
     LoadError,
     ValidationError,
     ConfigurationError,
-    OrchestrationError
+    ETLTimeoutError
 )
 
 
 class TestETLError:
-    """Test cases for base ETLError class"""
+    """Test suite for base ETLError exception."""
     
     def test_basic_error_creation(self):
-        """Test basic error creation with minimal arguments"""
-        error = ETLError(message="Test error")
+        """Test creating basic ETL error."""
+        error = ETLError(
+            error_text="Test error",
+            error_step="TEST"
+        )
         
-        assert error.message == "Test error"
-        assert error.error_step == "UNKNOWN"
+        assert error.error_text == "Test error"
+        assert error.error_step == "TEST"
         assert error.record_id is None
         assert isinstance(error.timestamp, datetime)
         assert error.context == {}
     
-    def test_error_with_all_attributes(self):
-        """Test error creation with all attributes"""
-        context = {"source": "test_table", "query": "SELECT * FROM test"}
+    def test_error_with_record_id(self):
+        """Test error with record ID."""
         error = ETLError(
-            message="Test error",
-            error_step="TEST_STEP",
-            record_id="REC001",
+            error_text="Record failed",
+            error_step="PROCESS",
+            record_id="T000001"
+        )
+        
+        assert error.record_id == "T000001"
+        assert "T000001" in str(error)
+    
+    def test_error_with_context(self):
+        """Test error with additional context."""
+        context = {
+            "table": "sales_raw",
+            "batch_id": "BATCH123"
+        }
+        error = ETLError(
+            error_text="Context test",
             context=context
         )
         
-        assert error.message == "Test error"
-        assert error.error_step == "TEST_STEP"
-        assert error.record_id == "REC001"
-        assert error.context == context
+        assert error.context["table"] == "sales_raw"
+        assert error.context["batch_id"] == "BATCH123"
     
-    def test_get_error_details(self):
-        """Test get_error_details method"""
-        context = {"key": "value"}
+    def test_error_to_dict(self):
+        """Test error serialization to dictionary."""
         error = ETLError(
-            message="Test error",
+            error_text="Serialization test",
             error_step="TEST",
             record_id="REC001",
-            context=context
+            context={"key": "value"}
         )
         
-        details = error.get_error_details()
+        error_dict = error.to_dict()
         
-        assert details["error_type"] == "ETLError"
-        assert details["message"] == "Test error"
-        assert details["error_step"] == "TEST"
-        assert details["record_id"] == "REC001"
-        assert details["context"] == context
-        assert "timestamp" in details
+        assert error_dict["error_type"] == "ETLError"
+        assert error_dict["error_text"] == "Serialization test"
+        assert error_dict["error_step"] == "TEST"
+        assert error_dict["record_id"] == "REC001"
+        assert "timestamp" in error_dict
+        assert error_dict["context"]["key"] == "value"
     
     def test_error_string_representation(self):
-        """Test string representation of error"""
-        error = ETLError(message="Test error", error_step="TEST")
-        error_str = str(error)
+        """Test error string formatting."""
+        error = ETLError(
+            error_text="String test",
+            error_step="FORMAT",
+            record_id="REC123"
+        )
         
-        assert "ETLError" in error_str
-        assert "Test error" in error_str
+        error_str = str(error)
+        assert "[FORMAT]" in error_str
+        assert "String test" in error_str
+        assert "(Record: REC123)" in error_str
+    
+    def test_error_default_step(self):
+        """Test default error step."""
+        error = ETLError(error_text="No step provided")
+        assert error.error_step == "UNKNOWN"
 
 
 class TestExtractError:
-    """Test cases for ExtractError class"""
+    """Test suite for ExtractError exception."""
     
     def test_extract_error_basic(self):
-        """Test basic extraction error"""
-        error = ExtractError(message="Failed to read data")
-        
-        assert error.message == "Failed to read data"
-        assert error.error_step == "EXTRACT"
-        assert isinstance(error, ETLError)
-    
-    def test_extract_error_with_source(self):
-        """Test extraction error with source information"""
+        """Test basic extraction error."""
         error = ExtractError(
-            message="Table not found",
-            source="zsales_raw"
+            error_text="Failed to read source table",
+            source="sales_raw"
         )
         
-        assert error.message == "Table not found"
-        assert error.context["source"] == "zsales_raw"
+        assert error.error_text == "Failed to read source table"
+        assert error.error_step == "EXTRACT"
+        assert error.source == "sales_raw"
+        assert error.context["source"] == "sales_raw"
     
     def test_extract_error_with_query(self):
-        """Test extraction error with query information"""
-        query = "SELECT * FROM zsales_raw WHERE status = 'N'"
+        """Test extraction error with query information."""
         error = ExtractError(
-            message="Query failed",
-            source="zsales_raw",
-            query=query
-        )
-        
-        assert error.context["source"] == "zsales_raw"
-        assert error.context["query"] == query
-    
-    def test_extract_error_with_record_id(self):
-        """Test extraction error with record ID"""
-        error = ExtractError(
-            message="Invalid record",
+            error_text="Query execution failed",
+            source="sales_raw",
+            query="SELECT * FROM sales_raw WHERE date > '2024-01-01'",
             record_id="T000001"
         )
         
+        assert error.query is not None
+        assert error.context["query"] == "SELECT * FROM sales_raw WHERE date > '2024-01-01'"
         assert error.record_id == "T000001"
+    
+    def test_extract_error_inheritance(self):
+        """Test that ExtractError inherits from ETLError."""
+        error = ExtractError(error_text="Test")
+        assert isinstance(error, ETLError)
+        assert isinstance(error, ExtractError)
+    
+    def test_extract_error_serialization(self):
+        """Test extraction error serialization."""
+        error = ExtractError(
+            error_text="Source unavailable",
+            source="database.sales",
+            query="SELECT count(*)"
+        )
+        
+        error_dict = error.to_dict()
+        assert error_dict["error_type"] == "ExtractError"
+        assert error_dict["error_step"] == "EXTRACT"
 
 
 class TestTransformError:
-    """Test cases for TransformError class"""
+    """Test suite for TransformError exception."""
     
     def test_transform_error_basic(self):
-        """Test basic transformation error"""
-        error = TransformError(message="Transformation failed")
-        
-        assert error.message == "Transformation failed"
-        assert error.error_step == "TRANSFORM"
-        assert isinstance(error, ETLError)
-    
-    def test_transform_error_with_transformation(self):
-        """Test transformation error with transformation name"""
+        """Test basic transformation error."""
         error = TransformError(
-            message="Discount calculation failed",
-            transformation="calculate_discount"
-        )
-        
-        assert error.context["transformation"] == "calculate_discount"
-    
-    def test_transform_error_with_field_info(self):
-        """Test transformation error with field information"""
-        error = TransformError(
-            message="Invalid field value",
-            field_name="quantity",
-            field_value=-5
-        )
-        
-        assert error.context["field_name"] == "quantity"
-        assert error.context["field_value"] == "-5"
-    
-    def test_transform_error_complete(self):
-        """Test transformation error with all attributes"""
-        error = TransformError(
-            message="Type conversion failed",
-            transformation="convert_to_decimal",
-            field_name="unit_price",
-            field_value="invalid",
+            error_text="Calculation failed",
             record_id="T000001"
         )
         
-        assert error.context["transformation"] == "convert_to_decimal"
-        assert error.context["field_name"] == "unit_price"
-        assert error.context["field_value"] == "invalid"
+        assert error.error_text == "Calculation failed"
+        assert error.error_step == "TRANSFORM"
         assert error.record_id == "T000001"
+    
+    def test_transform_error_with_field(self):
+        """Test transformation error with field information."""
+        error = TransformError(
+            error_text="Invalid value for discount",
+            record_id="T000001",
+            field_name="discount_amount",
+            field_value=-10.50
+        )
+        
+        assert error.field_name == "discount_amount"
+        assert error.field_value == -10.50
+        assert error.context["field_name"] == "discount_amount"
+        assert error.context["field_value"] == "-10.5"
+    
+    def test_transform_error_with_transformation(self):
+        """Test transformation error with transformation name."""
+        error = TransformError(
+            error_text="Profit margin calculation failed",
+            record_id="T000002",
+            transformation="calculate_profit_margin",
+            field_name="profit_margin"
+        )
+        
+        assert error.transformation == "calculate_profit_margin"
+        assert error.context["transformation"] == "calculate_profit_margin"
+    
+    def test_transform_error_inheritance(self):
+        """Test that TransformError inherits from ETLError."""
+        error = TransformError(error_text="Test")
+        assert isinstance(error, ETLError)
+        assert isinstance(error, TransformError)
 
 
 class TestLoadError:
-    """Test cases for LoadError class"""
+    """Test suite for LoadError exception."""
     
     def test_load_error_basic(self):
-        """Test basic load error"""
-        error = LoadError(message="Failed to load data")
-        
-        assert error.message == "Failed to load data"
-        assert error.error_step == "LOAD"
-        assert isinstance(error, ETLError)
-    
-    def test_load_error_with_target(self):
-        """Test load error with target information"""
+        """Test basic load error."""
         error = LoadError(
-            message="Target table not found",
-            target="zsales_analytics"
+            error_text="Failed to insert record",
+            target="sales_analytics"
         )
         
-        assert error.context["target"] == "zsales_analytics"
+        assert error.error_text == "Failed to insert record"
+        assert error.error_step == "LOAD"
+        assert error.target == "sales_analytics"
+        assert error.context["target"] == "sales_analytics"
     
     def test_load_error_with_operation(self):
-        """Test load error with operation type"""
+        """Test load error with operation type."""
         error = LoadError(
-            message="Insert failed",
-            target="zsales_analytics",
-            operation="INSERT"
+            error_text="Constraint violation",
+            target="sales_analytics",
+            operation="INSERT",
+            record_id="ANL123"
         )
         
-        assert error.context["target"] == "zsales_analytics"
+        assert error.operation == "INSERT"
         assert error.context["operation"] == "INSERT"
+        assert error.record_id == "ANL123"
     
-    def test_load_error_with_statistics(self):
-        """Test load error with processing statistics"""
+    def test_load_error_with_constraint(self):
+        """Test load error with constraint information."""
         error = LoadError(
-            message="Batch insert failed",
-            target="zsales_analytics",
-            records_processed=500,
-            records_failed=10
+            error_text="Primary key violation",
+            target="sales_analytics",
+            constraint="pk_analytics_id",
+            record_id="ANL123"
         )
         
-        assert error.context["records_processed"] == 500
-        assert error.context["records_failed"] == 10
+        assert error.constraint == "pk_analytics_id"
+        assert error.context["constraint"] == "pk_analytics_id"
     
-    def test_load_error_complete(self):
-        """Test load error with all attributes"""
-        error = LoadError(
-            message="Load failed",
-            target="zsales_analytics",
-            operation="UPSERT",
-            record_id="ANL001",
-            records_processed=1000,
-            records_failed=5
-        )
-        
-        assert error.context["target"] == "zsales_analytics"
-        assert error.context["operation"] == "UPSERT"
-        assert error.record_id == "ANL001"
-        assert error.context["records_processed"] == 1000
-        assert error.context["records_failed"] == 5
+    def test_load_error_inheritance(self):
+        """Test that LoadError inherits from ETLError."""
+        error = LoadError(error_text="Test")
+        assert isinstance(error, ETLError)
+        assert isinstance(error, LoadError)
 
 
 class TestValidationError:
-    """Test cases for ValidationError class"""
+    """Test suite for ValidationError exception."""
     
     def test_validation_error_basic(self):
-        """Test basic validation error"""
-        error = ValidationError(message="Validation failed")
-        
-        assert error.message == "Validation failed"
-        assert error.error_step == "VALIDATE"
-        assert isinstance(error, ETLError)
-    
-    def test_validation_error_with_rule(self):
-        """Test validation error with validation rule"""
+        """Test basic validation error."""
         error = ValidationError(
-            message="Required field missing",
-            validation_rule="required_fields"
-        )
-        
-        assert error.context["validation_rule"] == "required_fields"
-    
-    def test_validation_error_with_field_info(self):
-        """Test validation error with field information"""
-        error = ValidationError(
-            message="Invalid value",
-            field_name="quantity",
-            field_value=0,
-            expected_value="> 0"
-        )
-        
-        assert error.context["field_name"] == "quantity"
-        assert error.context["field_value"] == "0"
-        assert error.context["expected_value"] == "> 0"
-    
-    def test_validation_error_complete(self):
-        """Test validation error with all attributes"""
-        error = ValidationError(
-            message="Business rule violation",
-            validation_rule="minimum_quantity",
-            field_name="quantity",
-            field_value=0,
-            expected_value=">= 1",
+            error_text="Required field missing",
             record_id="T000001"
         )
         
-        assert error.context["validation_rule"] == "minimum_quantity"
-        assert error.context["field_name"] == "quantity"
-        assert error.record_id == "T000001"
+        assert error.error_text == "Required field missing"
+        assert error.error_step == "VALIDATE"
+    
+    def test_validation_error_with_rule(self):
+        """Test validation error with rule information."""
+        error = ValidationError(
+            error_text="Value out of range",
+            record_id="T000001",
+            validation_rule="quantity_range",
+            expected_value="0-1000",
+            actual_value=1500
+        )
+        
+        assert error.validation_rule == "quantity_range"
+        assert error.expected_value == "0-1000"
+        assert error.actual_value == 1500
+        assert error.context["validation_rule"] == "quantity_range"
 
 
 class TestConfigurationError:
-    """Test cases for ConfigurationError class"""
+    """Test suite for ConfigurationError exception."""
     
     def test_configuration_error_basic(self):
-        """Test basic configuration error"""
-        error = ConfigurationError(message="Configuration invalid")
+        """Test basic configuration error."""
+        error = ConfigurationError(
+            error_text="Missing configuration file"
+        )
         
-        assert error.message == "Configuration invalid"
-        assert error.error_step == "CONFIG"
-        assert isinstance(error, ETLError)
+        assert error.error_text == "Missing configuration file"
+        assert error.error_step == "INIT"
     
     def test_configuration_error_with_key(self):
-        """Test configuration error with config key"""
+        """Test configuration error with key information."""
         error = ConfigurationError(
-            message="Missing required parameter",
-            config_key="batch_size"
-        )
-        
-        assert error.context["config_key"] == "batch_size"
-    
-    def test_configuration_error_with_value(self):
-        """Test configuration error with config value"""
-        error = ConfigurationError(
-            message="Invalid value",
+            error_text="Invalid configuration value",
             config_key="batch_size",
-            config_value=-1
+            config_value=-100
         )
         
+        assert error.config_key == "batch_size"
+        assert error.config_value == -100
         assert error.context["config_key"] == "batch_size"
-        assert error.context["config_value"] == "-1"
 
 
-class TestOrchestrationError:
-    """Test cases for OrchestrationError class"""
+class TestETLTimeoutError:
+    """Test suite for ETLTimeoutError exception."""
     
-    def test_orchestration_error_basic(self):
-        """Test basic orchestration error"""
-        error = OrchestrationError(message="Orchestration failed")
-        
-        assert error.message == "Orchestration failed"
-        assert error.error_step == "ORCHESTRATION"
-        assert isinstance(error, ETLError)
-    
-    def test_orchestration_error_with_workflow_step(self):
-        """Test orchestration error with workflow step"""
-        error = OrchestrationError(
-            message="Workflow step failed",
-            workflow_step="EXTRACT"
+    def test_timeout_error_basic(self):
+        """Test basic timeout error."""
+        error = ETLTimeoutError(
+            error_text="Operation timed out"
         )
         
-        assert error.context["workflow_step"] == "EXTRACT"
+        assert error.error_text == "Operation timed out"
+        assert error.error_step == "TIMEOUT"
     
-    def test_orchestration_error_with_component(self):
-        """Test orchestration error with failed component"""
-        error = OrchestrationError(
-            message="Component initialization failed",
-            failed_component="extractor"
+    def test_timeout_error_with_duration(self):
+        """Test timeout error with duration information."""
+        error = ETLTimeoutError(
+            error_text="Extract phase timed out",
+            timeout_seconds=3600,
+            error_step="EXTRACT"
         )
         
-        assert error.context["failed_component"] == "extractor"
-    
-    def test_orchestration_error_complete(self):
-        """Test orchestration error with all attributes"""
-        error = OrchestrationError(
-            message="Workflow failed",
-            workflow_step="TRANSFORM",
-            failed_component="transformer",
-            context={"reason": "timeout"}
-        )
-        
-        assert error.context["workflow_step"] == "TRANSFORM"
-        assert error.context["failed_component"] == "transformer"
-        assert error.context["reason"] == "timeout"
+        assert error.timeout_seconds == 3600
+        assert error.error_step == "EXTRACT"
+        assert error.context["timeout_seconds"] == 3600
 
 
-class TestExceptionInheritance:
-    """Test exception hierarchy and inheritance"""
+class TestExceptionChaining:
+    """Test exception chaining and catching."""
     
-    def test_all_inherit_from_etl_error(self):
-        """Test that all custom exceptions inherit from ETLError"""
-        assert issubclass(ExtractError, ETLError)
-        assert issubclass(TransformError, ETLError)
-        assert issubclass(LoadError, ETLError)
-        assert issubclass(ValidationError, ETLError)
-        assert issubclass(ConfigurationError, ETLError)
-        assert issubclass(OrchestrationError, ETLError)
+    def test_catch_specific_exception(self):
+        """Test catching specific exception type."""
+        with pytest.raises(ExtractError) as exc_info:
+            raise ExtractError("Extract failed")
+        
+        assert "Extract failed" in str(exc_info.value)
     
-    def test_all_inherit_from_exception(self):
-        """Test that all custom exceptions inherit from base Exception"""
-        assert issubclass(ETLError, Exception)
-        assert issubclass(ExtractError, Exception)
-        assert issubclass(TransformError, Exception)
-        assert issubclass(LoadError, Exception)
-    
-    def test_exception_catching(self):
-        """Test that exceptions can be caught properly"""
+    def test_catch_base_exception(self):
+        """Test catching base ETLError."""
         with pytest.raises(ETLError):
-            raise ExtractError(message="Test error")
-        
-        with pytest.raises(ETLError):
-            raise TransformError(message="Test error")
-        
-        with pytest.raises(ETLError):
-            raise LoadError(message="Test error")
+            raise TransformError("Transform failed")
     
-    def test_specific_exception_catching(self):
-        """Test catching specific exception types"""
-        with pytest.raises(ExtractError):
-            raise ExtractError(message="Extract failed")
-        
-        with pytest.raises(TransformError):
-            raise TransformError(message="Transform failed")
-        
-        with pytest.raises(LoadError):
-            raise LoadError(message="Load failed")
+    def test_exception_chain(self):
+        """Test exception chaining with context."""
+        try:
+            try:
+                raise ValueError("Original error")
+            except ValueError as e:
+                raise ExtractError(
+                    error_text="Extract failed due to value error",
+                    context={"original_error": str(e)}
+                )
+        except ExtractError as exc:
+            assert "Original error" in exc.context["original_error"]
 
 
 class TestExceptionUsagePatterns:
-    """Test real-world usage patterns"""
+    """Test common exception usage patterns."""
     
-    def test_extract_with_database_error(self):
-        """Test extraction error in database context"""
-        try:
-            # Simulate database extraction failure
-            raise ExtractError(
-                message="Connection to database failed",
-                source="zsales_raw",
-                query="SELECT * FROM zsales_raw WHERE status = 'N'",
-                context={"error_code": "08001", "host": "localhost"}
-            )
-        except ExtractError as e:
-            assert e.error_step == "EXTRACT"
-            assert e.context["source"] == "zsales_raw"
-            assert "error_code" in e.context
+    def test_error_context_accumulation(self):
+        """Test accumulating context across error handling."""
+        context = {"batch_id": "BATCH001"}
+        
+        error = TransformError(
+            error_text="Failed transformation",
+            record_id="T000001",
+            field_name="amount",
+            context=context
+        )
+        
+        # Add more context
+        error.context["retry_count"] = 3
+        error.context["last_error"] = "Division by zero"
+        
+        assert len(error.context) >= 3
+        assert error.context["batch_id"] == "BATCH001"
     
-    def test_transform_with_calculation_error(self):
-        """Test transformation error in calculation context"""
-        try:
-            # Simulate calculation failure
-            raise TransformError(
-                message="Division by zero in profit margin calculation",
-                transformation="calculate_profit_margin",
-                field_name="net_amount",
-                field_value=0,
-                record_id="T000001"
-            )
-        except TransformError as e:
-            assert e.error_step == "TRANSFORM"
-            assert e.record_id == "T000001"
-            assert e.context["transformation"] == "calculate_profit_margin"
-    
-    def test_load_with_batch_error(self):
-        """Test load error in batch processing context"""
-        try:
-            # Simulate batch load failure
-            raise LoadError(
-                message="Batch insert failed after 500 records",
-                target="zsales_analytics",
-                operation="INSERT",
-                records_processed=500,
-                records_failed=10
-            )
-        except LoadError as e:
-            assert e.error_step == "LOAD"
-            assert e.context["records_processed"] == 500
-            assert e.context["records_failed"] == 10
-    
-    def test_chained_exception_handling(self):
-        """Test exception handling with cause chain"""
-        try:
+    def test_error_re_raise_pattern(self):
+        """Test re-raising with additional context."""
+        def inner_function():
+            raise ExtractError("Source unavailable")
+        
+        def outer_function():
             try:
-                # Simulate nested error
-                raise ValueError("Invalid data type")
-            except ValueError as ve:
-                raise TransformError(
-                    message="Type conversion failed",
-                    field_name="unit_price",
-                    context={"original_error": str(ve)}
-                )
-        except TransformError as e:
-            assert "Invalid data type" in e.context["original_error"]
+                inner_function()
+            except ExtractError as e:
+                # Add context and re-raise
+                e.context["function"] = "outer_function"
+                raise
+        
+        with pytest.raises(ExtractError) as exc_info:
+            outer_function()
+        
+        assert exc_info.value.context["function"] == "outer_function"
