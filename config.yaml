@@ -1,30 +1,47 @@
-# ETL Logging Configuration
-# Migrated from ABAP ZCL_ETL_CONSTANTS and ZETL configuration
+# PySpark ETL Configuration for Sales Data Processing
 
-logging:
-  # Delta table path for log persistence
-  delta_table_path: "/mnt/etl/logs/etl_execution_log"
+# Spark Configuration
+spark:
+  app_name: "SalesETLTransformer"
+  master: "local[*]"
+  log_level: "WARN"
   
-  # Console logging settings
-  console_logging: true
-  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+# Business Rules - Discount Thresholds
+business_rules:
+  discount:
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
   
-  # Default user for audit trail
-  default_user: "etl_system"
+  # Tax Rate
+  tax_rate: 0.08
   
-  # Log buffer settings
-  buffer_size: 100
-  auto_flush_enabled: true
-  auto_flush_interval_seconds: 60
+  # Cost Ratio (for profit margin calculation)
+  cost_ratio: 0.60
+  
+  # Category Thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# Status codes (from ABAP gc_status)
+# ETL Configuration
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+
+# Status Codes
 status_codes:
-  success: "S"
+  new: "N"
+  processed: "P"
   error: "E"
   warning: "W"
+  success: "S"
   info: "I"
 
-# Process steps (from ABAP gc_step)
+# Process Steps
 process_steps:
   init: "INIT"
   extract: "EXTRACT"
@@ -34,41 +51,30 @@ process_steps:
   complete: "COMPLETE"
   error: "ERROR"
 
-# ETL configuration defaults (from ABAP gc_default_*)
-etl_defaults:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
+# Categories
+categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
 
-# Delta table configuration
-delta:
-  # Optimization settings
-  optimize_write: true
-  optimize_z_order: ["etl_run_id", "execution_timestamp"]
-  
-  # Retention settings
-  log_retention_days: 90
-  vacuum_enabled: true
-  
-  # Performance settings
-  data_skipping_enabled: true
-  checkpoint_interval: 10
+# ID Prefixes
+id_prefixes:
+  etl_run: "ETL"
+  log_id: "LOG"
+  analytics_id: "ANL"
 
-# Spark configuration overrides
-spark:
-  # Delta Lake specific settings
-  sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
-  sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+# Data Sources (example paths - adjust for your environment)
+data_sources:
+  raw_sales_path: "data/raw/sales"
+  analytics_output_path: "data/analytics/sales"
+  log_output_path: "data/logs/etl"
   
-  # Performance tuning
-  sql.shuffle.partitions: 200
-  sql.adaptive.enabled: true
-  sql.adaptive.coalescePartitions.enabled: true
-
-# Monitoring and alerting
-monitoring:
-  enable_metrics: true
-  metrics_output_path: "/mnt/etl/metrics"
-  alert_on_error_threshold: 10
-  alert_on_error_percentage: 5.0
+# File Formats
+file_formats:
+  input_format: "parquet"  # or "csv", "json"
+  output_format: "parquet"
+  
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
