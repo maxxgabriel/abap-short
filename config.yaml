@@ -1,40 +1,36 @@
-# ETL Configuration File
-# Sales Data ETL System
-
-# Application metadata
-app:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  description: "Complete ETL system for sales data processing"
-
-# Spark configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"  # Change to cluster master for production
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-    spark.default.parallelism: 8
-    spark.driver.memory: "4g"
-    spark.executor.memory: "4g"
-    spark.executor.cores: 2
-
-# ETL process configuration
-etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
+# ETL Logger Configuration
+etl_logger:
+  # Enable console logging
+  enable_console: true
   
+  # Log persistence settings
+  persistence:
+    # Base path for log storage
+    log_table_path: "s3://etl-logs/sales_etl/"
+    
+    # Write mode: append or overwrite
+    write_mode: "append"
+    
+    # Storage format: parquet, delta, or csv
+    format: "parquet"
+    
+    # Partition columns for log storage
+    partition_by:
+      - "execution_date"
+      - "process_step"
+  
+  # ETL run ID settings
+  run_id:
+    prefix: "ETL"
+    auto_generate: true
+
+# ETL Process Configuration
+etl_process:
   # Status codes
   status:
-    new: "N"
-    processed: "P"
+    success: "S"
     error: "E"
     warning: "W"
-    success: "S"
     info: "I"
   
   # Process steps
@@ -47,192 +43,56 @@ etl:
     complete: "COMPLETE"
     error: "ERROR"
   
-  # ID prefixes
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+  # Processing configuration
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
 
-# Business rules for transformations
+# Business Rules (from ABAP constants)
 business_rules:
-  # Discount calculation
+  # Discount thresholds
   discount:
-    tier1:
-      quantity_threshold: 10
-      rate: 0.05
-    tier2:
-      quantity_threshold: 15
-      rate: 0.10
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
   
-  # Tax calculation
-  tax:
-    rate: 0.08
+  # Tax rate
+  tax_rate: 0.08
   
-  # Cost calculation
-  cost:
-    ratio: 0.60  # Assume cost is 60% of unit price
+  # Cost ratio
+  cost_ratio: 0.60
   
   # Category thresholds
   category:
     high_threshold: 2000.00
     medium_threshold: 500.00
-    categories:
-      high: "HIGH"
-      medium: "MEDIUM"
-      low: "LOW"
 
-# Data source configuration
-source:
-  format: "parquet"  # Change to jdbc for database
-  path: "data/input/sales_raw"
+# Spark Configuration
+spark:
+  app_name: "Sales ETL Logger"
+  master: "local[*]"
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.executor.memory: "4g"
+    spark.driver.memory: "2g"
+
+# Storage Paths
+storage:
+  # Raw data source
+  raw_data_path: "s3://etl-data/raw/sales/"
   
-  # For database connection
-  jdbc:
-    url: "jdbc:postgresql://localhost:5432/sales_db"
-    driver: "org.postgresql.Driver"
-    table: "zsales_raw"
-    user: "${DB_USER}"  # Use environment variables
-    password: "${DB_PASSWORD}"
-    fetch_size: 10000
-    
-  # Date filter
-  date_column: "trans_date"
-  status_column: "status"
-  filter_status: "N"  # Only process new records
-
-# Data target configuration
-target:
-  format: "parquet"  # Change to jdbc for database
-  path: "data/output/sales_analytics"
-  mode: "append"  # append, overwrite, error, ignore
+  # Analytics target
+  analytics_path: "s3://etl-data/analytics/sales/"
   
-  # For database connection
-  jdbc:
-    url: "jdbc:postgresql://localhost:5432/sales_db"
-    driver: "org.postgresql.Driver"
-    table: "zsales_analytics"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
-    batch_size: 1000
-    
-  # Partitioning
-  partition_by:
-    - "trans_date"
-    - "region"
+  # Checkpoint location
+  checkpoint_path: "s3://etl-data/checkpoints/"
 
-# Logging configuration
+# Logging Configuration
 logging:
-  format: "parquet"
-  path: "data/logs/etl_log"
-  
-  # For database logging
-  jdbc:
-    url: "jdbc:postgresql://localhost:5432/sales_db"
-    driver: "org.postgresql.Driver"
-    table: "zetl_log"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
-  
-  # Console logging
-  console:
-    enabled: true
-    level: "INFO"
-  
-  # File logging
-  file:
-    enabled: true
-    path: "logs/etl.log"
-    level: "DEBUG"
-    max_bytes: 10485760  # 10 MB
-    backup_count: 5
-
-# Validation rules
-validation:
-  required_fields:
-    - "trans_id"
-    - "trans_date"
-    - "customer_id"
-    - "product_id"
-    - "quantity"
-    - "unit_price"
-    - "currency"
-  
-  # Data type validation
-  numeric_fields:
-    - "quantity"
-    - "unit_price"
-    - "gross_amount"
-    - "net_amount"
-  
-  # Value constraints
-  constraints:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: 0.01
-      max: 1000000.00
-    gross_amount:
-      min: 0.01
-  
-  # Valid values
-  valid_values:
-    status:
-      - "N"
-      - "P"
-      - "E"
-    category:
-      - "HIGH"
-      - "MEDIUM"
-      - "LOW"
-
-# Error handling
-error_handling:
-  # Error thresholds
-  max_error_rate: 0.05  # 5% of records
-  max_consecutive_errors: 100
-  
-  # Retry configuration
-  retry:
-    enabled: true
-    max_attempts: 3
-    backoff_seconds: 5
-    exponential_backoff: true
-  
-  # Error output
-  error_records:
-    enabled: true
-    path: "data/errors/failed_records"
-    format: "json"
-
-# Monitoring and alerts
-monitoring:
-  enabled: true
-  
-  # Metrics
-  metrics:
-    - "records_processed"
-    - "records_success"
-    - "records_error"
-    - "processing_time"
-    - "throughput"
-  
-  # Alerts
-  alerts:
-    email:
-      enabled: false
-      recipients:
-        - "etl-team@example.com"
-      smtp_host: "smtp.example.com"
-      smtp_port: 587
-    
-    slack:
-      enabled: false
-      webhook_url: "${SLACK_WEBHOOK_URL}"
-
-# Test mode configuration
-test_mode:
-  enabled: false
-  sample_size: 100
-  skip_commit: true
-  output_path: "data/test/output"
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - [%(levelname)s] - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
