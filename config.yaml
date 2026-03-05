@@ -1,66 +1,56 @@
-# ETL Configuration File
-# Sales Data ETL System
+# ETL Logger Configuration
 
-# Application Settings
-application:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  description: "ETL system for sales data processing"
+# Logging Configuration
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: INFO
+  
+  # Log format
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Console output
+  console_output: true
+  
+  # File output configuration
+  file_output:
+    enabled: false
+    path: "/tmp/etl_logs"
+    filename_pattern: "etl_{run_id}_{date}.log"
+    max_size_mb: 100
+    backup_count: 5
 
-# ETL Process Configuration
-etl:
-  # Batch processing settings
-  batch_size: 1000
-  commit_interval: 500
-  parallel_jobs: 4
-  
-  # Retry and timeout settings
-  retry_attempts: 3
-  timeout_seconds: 3600
-  retry_backoff_seconds: 2
-  
-  # Date range defaults
-  default_lookback_days: 7
-  
-  # ID prefixes
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+# Database Configuration
+database:
+  # Log table configuration
+  log_table:
+    name: "etl_log"
+    database: "etl_db"
+    write_mode: "append"
+    
+  # Connection settings
+  connection:
+    url: "jdbc:postgresql://localhost:5432/etl"
+    driver: "org.postgresql.Driver"
+    user: "etl_user"
+    password_env: "ETL_DB_PASSWORD"
 
-# Business Rules
-business_rules:
-  # Discount thresholds and rates
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05  # 5%
-    rate_tier2: 0.10  # 10%
+# ETL Run Configuration
+etl_run:
+  # ID generation
+  id_prefix: "ETL"
+  id_format: "timestamp"  # timestamp, uuid, sequential
   
-  # Tax configuration
-  tax:
-    default_rate: 0.08  # 8%
-  
-  # Cost calculation
-  cost:
-    default_ratio: 0.60  # 60% of unit price
-  
-  # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-    low_threshold: 0.00
+  # Log entry ID generation
+  log_id_prefix: "LOG"
 
-# Status Codes
+# Status Codes Configuration
 status_codes:
-  new: "N"
-  processed: "P"
+  success: "S"
   error: "E"
   warning: "W"
-  success: "S"
   info: "I"
 
-# ETL Process Steps
+# Process Steps Configuration
 process_steps:
   init: "INIT"
   extract: "EXTRACT"
@@ -70,88 +60,22 @@ process_steps:
   complete: "COMPLETE"
   error: "ERROR"
 
-# Sale Categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-
-# Data Quality Rules
-data_quality:
-  # Mandatory fields for raw sales data
-  mandatory_fields_raw:
-    - "trans_id"
-    - "trans_date"
-    - "customer_id"
-    - "product_id"
-    - "quantity"
-    - "unit_price"
-    - "currency"
+# Performance Configuration
+performance:
+  # Batch logging (group multiple log entries)
+  batch_logging:
+    enabled: false
+    batch_size: 100
+    flush_interval_seconds: 30
   
-  # Mandatory fields for analytics data
-  mandatory_fields_analytics:
-    - "analytics_id"
-    - "customer_id"
-    - "product_id"
-    - "gross_amount"
-    - "currency"
-    - "category"
-  
-  # Valid currency codes
-  valid_currencies:
-    - "USD"
-    - "EUR"
-    - "GBP"
-  
-  # Valid regions
-  valid_regions:
-    - "NORTH"
-    - "SOUTH"
-    - "EAST"
-    - "WEST"
-
-# Logging Configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  console_output: true
-  file_output: false
-  log_directory: "logs"
-
-# Spark Configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"  # Change for cluster deployment
-  
-  # Spark configurations
-  config:
-    "spark.sql.adaptive.enabled": "true"
-    "spark.sql.adaptive.coalescePartitions.enabled": "true"
-    "spark.sql.shuffle.partitions": "200"
-    "spark.sql.legacy.timeParserPolicy": "LEGACY"
-    "spark.driver.memory": "4g"
-    "spark.executor.memory": "4g"
-
-# Database/Storage Configuration
-storage:
-  # Input paths (adjust for your environment)
-  input:
-    format: "delta"  # or "parquet", "csv", etc.
-    path: "data/raw/sales"
-  
-  # Output paths
-  output:
-    format: "delta"
-    analytics_path: "data/analytics/sales"
-    log_path: "data/logs/etl"
-  
-  # Write modes
-  write_mode:
-    analytics: "append"  # or "overwrite"
-    logs: "append"
+  # Async logging
+  async_logging:
+    enabled: false
+    queue_size: 1000
+    worker_threads: 2
 
 # Message Templates
-messages:
+message_templates:
   init_success: "ETL process initialized successfully"
   extract_start: "Starting data extraction"
   extract_complete: "Data extraction completed"
@@ -162,9 +86,11 @@ messages:
   etl_complete: "ETL process completed successfully"
   etl_error: "ETL process failed"
 
-# Test Mode Configuration
-test_mode:
-  enabled: false
-  sample_size: 100
-  skip_database_writes: true
-  use_mock_data: false
+# Retention Policy
+retention:
+  # Days to keep logs
+  log_retention_days: 90
+  
+  # Cleanup schedule
+  cleanup_enabled: true
+  cleanup_schedule: "0 2 * * *"  # Daily at 2 AM
