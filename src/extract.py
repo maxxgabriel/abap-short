@@ -1,251 +1,185 @@
 """
-Data Extraction Module for Sales ETL System
-
-Extracts raw sales data from source system and validates records.
+Data Extraction Module
+Extracts raw sales data from source database
 """
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import (
-    StructType, StructField, StringType, DateType, 
-    IntegerType, DecimalType, TimestampType
-)
+from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
+from typing import Optional
 from datetime import datetime
-from typing import Tuple, Optional
 import logging
 
 from src.logger import ETLLogger
-from src.exceptions import ETLExtractionError
+from src.exceptions import ETLExtractError
 
 
-class SalesExtractor:
-    """Extracts raw sales data from source tables."""
+class SalesDataExtractor:
+    """Extracts raw sales data from source systems"""
     
-    # Schema definition for raw sales data
-    RAW_SALES_SCHEMA = StructType([
-        StructField("trans_id", StringType(), False),
-        StructField("trans_date", DateType(), False),
-        StructField("customer_id", StringType(), False),
-        StructField("product_id", StringType(), False),
-        StructField("quantity", IntegerType(), False),
-        StructField("unit_price", DecimalType(16, 2), False),
-        StructField("currency", StringType(), False),
-        StructField("sales_rep", StringType(), True),
-        StructField("region", StringType(), True),
-        StructField("status", StringType(), False),
-        StructField("created_at", TimestampType(), True),
-        StructField("created_by", StringType(), True)
-    ])
-    
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
+    def __init__(self, spark: SparkSession, config: dict, logger: ETLLogger):
         """
-        Initialize extractor.
+        Initialize the extractor
         
         Args:
-            spark: SparkSession instance
-            logger: ETL logger instance
+            spark: Active SparkSession
             config: Configuration dictionary
+            logger: ETL logger instance
         """
         self.spark = spark
-        self.logger = logger
         self.config = config
-        self.log = logging.getLogger(__name__)
+        self.logger = logger
+        self._setup_schema()
+    
+    def _setup_schema(self) -> None:
+        """Define schema for raw sales data"""
+        self.raw_sales_schema = StructType([
+            StructField("trans_id", StringType(), False),
+            StructField("trans_date", DateType(), False),
+            StructField("customer_id", StringType(), False),
+            StructField("product_id", StringType(), False),
+            StructField("quantity", IntegerType(), False),
+            StructField("unit_price", DecimalType(16, 2), False),
+            StructField("currency", StringType(), False),
+            StructField("sales_rep", StringType(), True),
+            StructField("region", StringType(), True),
+            StructField("status", StringType(), False)
+        ])
     
     def extract_data(
-        self, 
-        from_date: str, 
+        self,
+        from_date: str,
         to_date: str,
-        source_table: Optional[str] = None
-    ) -> Tuple[DataFrame, bool]:
+        test_mode: bool = False
+    ) -> DataFrame:
         """
-        Extract raw sales data for given date range.
+        Extract raw sales data from source
         
         Args:
             from_date: Start date (YYYY-MM-DD)
             to_date: End date (YYYY-MM-DD)
-            source_table: Optional table name override
+            test_mode: If True, return sample data
             
         Returns:
-            Tuple of (DataFrame, success_flag)
+            DataFrame containing raw sales data
             
         Raises:
-            ETLExtractionError: If extraction fails
+            ETLExtractError: If extraction fails
         """
         try:
-            step = "EXTRACT"
             self.logger.log_message(
-                step=step,
+                step="EXTRACT",
                 status="S",
                 message=f"Starting extraction from {from_date} to {to_date}"
             )
             
-            # Get source configuration
-            table_name = source_table or self.config.get("source_table", "zsales_raw")
-            batch_size = self.config.get("batch_size", 1000)
+            if test_mode:
+                df = self._generate_sample_data(from_date, to_date)
+            else:
+                df = self._extract_from_database(from_date, to_date)
             
-            # Build source DataFrame
-            df_raw = self._read_source_data(table_name, from_date, to_date)
+            record_count = df.count()
             
-            # Validate schema
-            self._validate_schema(df_raw)
-            
-            # Filter for new records
-            df_filtered = df_raw.filter(df_raw.status == "N")
-            
-            # Apply batch limit if configured
-            if batch_size > 0:
-                df_filtered = df_filtered.limit(batch_size)
-            
-            # Cache for reuse
-            df_filtered.cache()
-            record_count = df_filtered.count()
-            
-            # Validate extracted data
-            if record_count == 0:
-                self.logger.log_message(
-                    step=step,
-                    status="W",
-                    records_processed=0,
-                    message="No new records found for extraction"
-                )
-                return df_filtered, True
-            
-            # Log success
             self.logger.log_message(
-                step=step,
+                step="EXTRACT",
                 status="S",
                 records_processed=record_count,
                 records_success=record_count,
                 message=f"Extracted {record_count} records successfully"
             )
             
-            return df_filtered, True
+            return df
             
         except Exception as e:
-            error_msg = f"Extraction failed: {str(e)}"
             self.logger.log_message(
                 step="EXTRACT",
                 status="E",
-                message=error_msg
+                message=f"Extraction failed: {str(e)}"
             )
-            raise ETLExtractionError(error_msg, step="EXTRACT") from e
+            raise ETLExtractError(f"Failed to extract data: {str(e)}") from e
     
-    def _read_source_data(
-        self, 
-        table_name: str, 
-        from_date: str, 
-        to_date: str
-    ) -> DataFrame:
+    def _extract_from_database(self, from_date: str, to_date: str) -> DataFrame:
         """
-        Read data from source table or file.
+        Extract data from source database
         
         Args:
-            table_name: Source table/file name
             from_date: Start date
             to_date: End date
             
         Returns:
-            DataFrame with raw data
+            DataFrame with extracted data
         """
-        source_type = self.config.get("source_type", "jdbc")
+        db_config = self.config['database']['source']
         
-        if source_type == "jdbc":
-            return self._read_jdbc(table_name, from_date, to_date)
-        elif source_type == "parquet":
-            return self._read_parquet(table_name, from_date, to_date)
-        elif source_type == "csv":
-            return self._read_csv(table_name, from_date, to_date)
-        else:
-            raise ValueError(f"Unsupported source type: {source_type}")
-    
-    def _read_jdbc(
-        self, 
-        table_name: str, 
-        from_date: str, 
-        to_date: str
-    ) -> DataFrame:
-        """Read from JDBC source (SAP HANA, PostgreSQL, etc.)."""
-        jdbc_config = self.config.get("jdbc", {})
-        
-        # Build query with date filter
         query = f"""
-        (SELECT * FROM {table_name}
+        (SELECT trans_id, trans_date, customer_id, product_id, 
+                quantity, unit_price, currency, sales_rep, region, status
+         FROM {db_config['table']}
          WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
-         AND status = 'N') AS filtered_data
+         AND status = '{self.config['status_codes']['new']}') AS sales_data
         """
         
         df = self.spark.read \
-            .format("jdbc") \
-            .option("url", jdbc_config.get("url")) \
+            .format(db_config['format']) \
+            .option("url", db_config['url']) \
             .option("dbtable", query) \
-            .option("user", jdbc_config.get("user")) \
-            .option("password", jdbc_config.get("password")) \
-            .option("driver", jdbc_config.get("driver", "org.postgresql.Driver")) \
+            .option("driver", db_config['driver']) \
+            .option("user", db_config['user']) \
+            .option("password", db_config['password']) \
+            .option("fetchsize", db_config['fetch_size']) \
+            .schema(self.raw_sales_schema) \
             .load()
         
         return df
     
-    def _read_parquet(
-        self, 
-        path: str, 
-        from_date: str, 
-        to_date: str
-    ) -> DataFrame:
-        """Read from Parquet files."""
-        df = self.spark.read \
-            .schema(self.RAW_SALES_SCHEMA) \
-            .parquet(path)
-        
-        # Apply date filter
-        df = df.filter(
-            (df.trans_date >= from_date) & 
-            (df.trans_date <= to_date) &
-            (df.status == "N")
-        )
-        
-        return df
-    
-    def _read_csv(
-        self, 
-        path: str, 
-        from_date: str, 
-        to_date: str
-    ) -> DataFrame:
-        """Read from CSV files."""
-        df = self.spark.read \
-            .schema(self.RAW_SALES_SCHEMA) \
-            .option("header", "true") \
-            .option("dateFormat", "yyyy-MM-dd") \
-            .csv(path)
-        
-        # Apply date filter
-        df = df.filter(
-            (df.trans_date >= from_date) & 
-            (df.trans_date <= to_date) &
-            (df.status == "N")
-        )
-        
-        return df
-    
-    def _validate_schema(self, df: DataFrame) -> None:
+    def _generate_sample_data(self, from_date: str, to_date: str) -> DataFrame:
         """
-        Validate DataFrame schema matches expected structure.
+        Generate sample data for testing
+        
+        Args:
+            from_date: Start date (unused in sample)
+            to_date: End date (unused in sample)
+            
+        Returns:
+            DataFrame with sample data
+        """
+        sample_data = [
+            ("T000001", datetime.now().date(), "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N"),
+            ("T000002", datetime.now().date(), "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
+            ("T000003", datetime.now().date(), "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N"),
+            ("T000004", datetime.now().date(), "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N"),
+            ("T000005", datetime.now().date(), "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N")
+        ]
+        
+        df = self.spark.createDataFrame(sample_data, schema=self.raw_sales_schema)
+        return df
+    
+    def validate_extracted_data(self, df: DataFrame) -> bool:
+        """
+        Validate extracted data
         
         Args:
             df: DataFrame to validate
             
-        Raises:
-            ETLExtractionError: If schema is invalid
+        Returns:
+            True if valid, False otherwise
         """
-        expected_fields = {field.name for field in self.RAW_SALES_SCHEMA.fields}
-        actual_fields = {field.name for field in df.schema.fields}
-        
-        missing_fields = expected_fields - actual_fields
-        if missing_fields:
-            raise ETLExtractionError(
-                f"Missing required fields: {missing_fields}",
-                step="EXTRACT"
+        if df is None or df.count() == 0:
+            self.logger.log_message(
+                step="EXTRACT",
+                status="W",
+                message="No data extracted"
             )
+            return False
         
-        extra_fields = actual_fields - expected_fields
-        if extra_fields:
-            self.log.warning(f"Extra fields found (will be ignored): {extra_fields}")
+        # Check for required columns
+        required_columns = [field.name for field in self.raw_sales_schema.fields]
+        missing_columns = set(required_columns) - set(df.columns)
+        
+        if missing_columns:
+            self.logger.log_message(
+                step="EXTRACT",
+                status="E",
+                message=f"Missing required columns: {missing_columns}"
+            )
+            return False
+        
+        return True
