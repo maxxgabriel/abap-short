@@ -1,37 +1,157 @@
-# ETL Logger Configuration
-# Configuration for ETL logging and persistence
+# ETL Configuration
+# Sales Data ETL System Configuration
 
-# Logging settings
+etl:
+  # Process configuration
+  process:
+    batch_size: 1000
+    commit_interval: 500
+    retry_attempts: 3
+    timeout_seconds: 3600
+    parallel_jobs: 1
+    
+  # Date range configuration
+  date_range:
+    default_days_back: 7
+    max_date_range_days: 365
+    
+  # ID prefixes
+  prefixes:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
+
+# Business rules configuration
+business_rules:
+  # Discount thresholds
+  discount:
+    tier1:
+      quantity_threshold: 10
+      discount_rate: 0.05
+    tier2:
+      quantity_threshold: 15
+      discount_rate: 0.10
+  
+  # Tax configuration
+  tax:
+    default_rate: 0.08
+  
+  # Cost and profit
+  cost:
+    default_ratio: 0.60  # Cost is 60% of unit price
+  
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+
+# Extraction configuration
+extract:
+  # Source configuration
+  source:
+    table: "zsales_raw"
+    status_field: "status"
+    new_status: "N"
+    processed_status: "P"
+  
+  # Field mapping
+  fields:
+    - trans_id
+    - trans_date
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
+    - currency
+    - sales_rep
+    - region
+    - status
+
+# Transformation configuration
+transform:
+  # Calculation settings
+  calculations:
+    precision: 2
+    rounding_mode: "ROUND_HALF_UP"
+  
+  # Validation rules
+  validation:
+    required_fields:
+      - trans_id
+      - customer_id
+      - product_id
+      - quantity
+      - unit_price
+    
+    numeric_fields:
+      - quantity
+      - unit_price
+      - gross_amount
+      - net_amount
+    
+    min_values:
+      quantity: 1
+      unit_price: 0.01
+      gross_amount: 0.01
+
+# Load configuration
+load:
+  # Target configuration
+  target:
+    table: "zsales_analytics"
+    mode: "APPEND"  # APPEND, OVERWRITE, UPSERT
+  
+  # Validation before load
+  validate_before_load: true
+  skip_invalid_records: false
+  
+  # Field mapping
+  fields:
+    - analytics_id
+    - trans_date
+    - customer_id
+    - product_id
+    - total_quantity
+    - gross_amount
+    - net_amount
+    - discount_amount
+    - tax_amount
+    - currency
+    - sales_rep
+    - region
+    - profit_margin
+    - category
+    - etl_run_id
+
+# Logging configuration
 logging:
-  # Path to persist log entries (Delta table format)
-  log_table_path: "/mnt/etl/logs/etl_log_table"
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: "INFO"
   
-  # Console logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  console_log_level: "INFO"
+  # Log table
+  table: "zetl_log"
   
-  # Enable DataFrame persistence
-  enable_persistence: true
+  # Log retention
+  retention_days: 90
   
-  # Write mode for log persistence (append, overwrite)
-  write_mode: "append"
+  # Console output
+  console_output: true
+  
+  # Format
+  format: "[%(levelname)s] %(asctime)s - %(name)s - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
 
-# ETL Run settings
-etl_run:
-  # Prefix for ETL run IDs
-  run_id_prefix: "ETL"
-  
-  # Prefix for log entry IDs
-  log_id_prefix: "LOG"
-
-# Status codes (matching ABAP constants)
-status_codes:
-  success: "S"
+# Status codes
+status:
+  new: "N"
+  processed: "P"
   error: "E"
   warning: "W"
+  success: "S"
   info: "I"
 
-# Process steps (matching ABAP constants)
-process_steps:
+# ETL steps
+steps:
   init: "INIT"
   extract: "EXTRACT"
   transform: "TRANSFORM"
@@ -40,49 +160,22 @@ process_steps:
   complete: "COMPLETE"
   error: "ERROR"
 
-# Performance settings
-performance:
-  # Batch size for log persistence
-  log_batch_size: 1000
-  
-  # Auto-persist interval (number of logs before auto-persist)
-  auto_persist_threshold: 100
+# Categories
+categories:
+  high: "HIGH"
+  medium: "MEDIUM"
+  low: "LOW"
 
-# Storage format options
-storage:
-  # Format for log persistence (delta, parquet, json)
-  format: "delta"
+# Error handling
+error_handling:
+  # Continue on error
+  continue_on_error: false
   
-  # Partitioning columns for log table
-  partition_by:
-    - "execution_date"
-    - "etl_run_id"
+  # Maximum errors before stopping
+  max_errors: 100
   
-  # Compression codec (snappy, gzip, lz4, none)
-  compression: "snappy"
-
-# Retention settings
-retention:
-  # Enable log retention policy
-  enable_retention: true
+  # Error notification
+  notify_on_error: true
   
-  # Days to retain logs
-  retention_days: 90
-  
-  # Archive old logs instead of deleting
-  enable_archive: true
-  
-  # Archive path
-  archive_path: "/mnt/etl/logs/archive"
-
-# Message templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+  # Rollback on error
+  rollback_on_error: true
