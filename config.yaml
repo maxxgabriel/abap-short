@@ -1,85 +1,79 @@
-# ETL Configuration File
-# Converted from ABAP Constants (ZCL_ETL_CONSTANTS)
+# ETL Configuration
+# Converted from: ABAP ETL system configuration
 
-# Status Codes
-status_codes:
-  new: 'N'
-  processed: 'P'
-  error: 'E'
-  warning: 'W'
-  success: 'S'
-  info: 'I'
+etl:
+  # Batch processing configuration
+  batch_size: 1000
+  commit_interval: 500
+  parallel_jobs: 1
+  retry_attempts: 3
+  timeout_seconds: 3600
 
-# ETL Process Steps
-process_steps:
-  init: 'INIT'
-  extract: 'EXTRACT'
-  transform: 'TRANSFORM'
-  load: 'LOAD'
-  validate: 'VALIDATE'
-  complete: 'COMPLETE'
-  error: 'ERROR'
+  # Business rules - Discounts
+  discount:
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
 
-# Sale Categories
-categories:
-  high: 'HIGH'
-  medium: 'MEDIUM'
-  low: 'LOW'
+  # Business rules - Tax
+  tax:
+    rate: 0.08
 
-# Business Rules - Discount Thresholds
-discount:
-  quantity_tier1: 10
-  quantity_tier2: 15
-  rate_tier1: 0.05
-  rate_tier2: 0.10
+  # Business rules - Cost calculations
+  cost:
+    ratio: 0.60
 
-# Business Rules - Tax Rate
-tax:
-  rate: 0.08
+  # Business rules - Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# Business Rules - Cost Ratio
-cost:
-  ratio: 0.60
+  # ID prefixes
+  prefixes:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
 
-# Business Rules - Category Thresholds
-category_thresholds:
-  high: 2000.00
-  medium: 500.00
-
-# ETL Configuration Defaults
-etl_config:
-  default_batch_size: 1000
-  default_commit_interval: 500
-  default_retry_attempts: 3
-  default_timeout_seconds: 3600
-  parallel_jobs: 4
-
-# ID Prefixes
-id_prefixes:
-  etl_run: 'ETL'
-  log: 'LOG'
-  analytics: 'ANL'
-
-# Message Texts
-messages:
-  init_success: 'ETL process initialized successfully'
-  extract_start: 'Starting data extraction'
-  extract_complete: 'Data extraction completed'
-  transform_start: 'Starting data transformation'
-  transform_complete: 'Data transformation completed'
-  load_start: 'Starting data load'
-  load_complete: 'Data load completed'
-  etl_complete: 'ETL process completed successfully'
-  etl_error: 'ETL process failed'
-
-# Logging Configuration
-logging:
-  level: 'INFO'
-  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-  date_format: '%Y-%m-%d %H:%M:%S'
+# Spark configuration
+spark:
+  app_name: "Sales_ETL_Pipeline"
+  master: "local[*]"
+  log_level: "WARN"
   
-# Database Configuration (placeholder)
-database:
-  connection_timeout: 30
-  query_timeout: 300
-  max_retries: 3
+  # Memory settings
+  driver_memory: "4g"
+  executor_memory: "4g"
+  
+  # Shuffle settings
+  sql_shuffle_partitions: 200
+  
+  # Serialization
+  serializer: "org.apache.spark.serializer.KryoSerializer"
+
+# Data sources
+data_sources:
+  raw_sales:
+    format: "parquet"
+    path: "data/raw/sales"
+    
+  analytics:
+    format: "parquet"
+    path: "data/analytics/sales"
+    
+  logs:
+    format: "parquet"
+    path: "data/logs/etl"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/etl_process.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# Testing configuration
+testing:
+  test_mode: false
+  sample_data_size: 100
