@@ -1,210 +1,142 @@
 """
-Configuration loader for ETL system.
-Replaces ABAP ZCL_ETL_CONSTANTS class functionality.
+Configuration Loader Module
+
+Handles loading and validation of ETL configuration from YAML files.
 """
 
 import yaml
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
+from dataclasses import dataclass
+
+from src.exceptions import ConfigurationError
+from src.constants import ETLConstants
 
 
+@dataclass
 class ETLConfig:
-    """
-    Configuration manager for ETL system.
-    Migrated from ABAP ZCL_ETL_CONSTANTS.
-    """
+    """ETL configuration data structure"""
+    batch_size: int
+    commit_interval: int
+    retry_attempts: int
+    timeout_seconds: int
+    parallel_jobs: int = 1
+    source_path: Optional[str] = None
+    target_path: Optional[str] = None
+    log_level: str = "INFO"
+    log_file: Optional[str] = None
     
-    def __init__(self, config_path: str = "config.yaml"):
+    def validate(self) -> None:
+        """Validate configuration values"""
+        if self.batch_size <= 0:
+            raise ConfigurationError("batch_size must be positive", config_key="batch_size")
+        
+        if self.commit_interval <= 0:
+            raise ConfigurationError("commit_interval must be positive", config_key="commit_interval")
+        
+        if self.retry_attempts < 0:
+            raise ConfigurationError("retry_attempts must be non-negative", config_key="retry_attempts")
+        
+        if self.timeout_seconds <= 0:
+            raise ConfigurationError("timeout_seconds must be positive", config_key="timeout_seconds")
+        
+        if self.parallel_jobs <= 0:
+            raise ConfigurationError("parallel_jobs must be positive", config_key="parallel_jobs")
+        
+        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR"]
+        if self.log_level.upper() not in valid_log_levels:
+            raise ConfigurationError(
+                f"log_level must be one of {valid_log_levels}",
+                config_key="log_level"
+            )
+
+
+class ConfigLoader:
+    """Configuration loader and manager"""
+    
+    @staticmethod
+    def load_config(config_path: str) -> ETLConfig:
         """
-        Initialize configuration from YAML file.
+        Load configuration from YAML file
         
         Args:
-            config_path: Path to configuration YAML file
-        """
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
-        
-        with open(config_file, 'r') as f:
-            self._config: Dict[str, Any] = yaml.safe_load(f)
-    
-    # Status codes (replaces gc_status)
-    @property
-    def status_new(self) -> str:
-        return self._config['status_codes']['new']
-    
-    @property
-    def status_processed(self) -> str:
-        return self._config['status_codes']['processed']
-    
-    @property
-    def status_error(self) -> str:
-        return self._config['status_codes']['error']
-    
-    @property
-    def status_warning(self) -> str:
-        return self._config['status_codes']['warning']
-    
-    @property
-    def status_success(self) -> str:
-        return self._config['status_codes']['success']
-    
-    @property
-    def status_info(self) -> str:
-        return self._config['status_codes']['info']
-    
-    # Process steps (replaces gc_step)
-    @property
-    def step_init(self) -> str:
-        return self._config['process_steps']['init']
-    
-    @property
-    def step_extract(self) -> str:
-        return self._config['process_steps']['extract']
-    
-    @property
-    def step_transform(self) -> str:
-        return self._config['process_steps']['transform']
-    
-    @property
-    def step_load(self) -> str:
-        return self._config['process_steps']['load']
-    
-    @property
-    def step_validate(self) -> str:
-        return self._config['process_steps']['validate']
-    
-    @property
-    def step_complete(self) -> str:
-        return self._config['process_steps']['complete']
-    
-    @property
-    def step_error(self) -> str:
-        return self._config['process_steps']['error']
-    
-    # Categories (replaces gc_category)
-    @property
-    def category_high(self) -> str:
-        return self._config['categories']['high']
-    
-    @property
-    def category_medium(self) -> str:
-        return self._config['categories']['medium']
-    
-    @property
-    def category_low(self) -> str:
-        return self._config['categories']['low']
-    
-    # Business rules - Discount
-    @property
-    def discount_qty_tier1(self) -> int:
-        return self._config['business_rules']['discount']['quantity_tier1']
-    
-    @property
-    def discount_qty_tier2(self) -> int:
-        return self._config['business_rules']['discount']['quantity_tier2']
-    
-    @property
-    def discount_rate_tier1(self) -> float:
-        return self._config['business_rules']['discount']['rate_tier1']
-    
-    @property
-    def discount_rate_tier2(self) -> float:
-        return self._config['business_rules']['discount']['rate_tier2']
-    
-    # Business rules - Tax
-    @property
-    def tax_rate(self) -> float:
-        return self._config['business_rules']['tax_rate']
-    
-    # Business rules - Cost
-    @property
-    def cost_ratio(self) -> float:
-        return self._config['business_rules']['cost_ratio']
-    
-    # Business rules - Category thresholds
-    @property
-    def category_high_threshold(self) -> float:
-        return self._config['business_rules']['category']['high_threshold']
-    
-    @property
-    def category_medium_threshold(self) -> float:
-        return self._config['business_rules']['category']['medium_threshold']
-    
-    # ETL configuration
-    @property
-    def batch_size(self) -> int:
-        return self._config['etl']['batch_size']
-    
-    @property
-    def commit_interval(self) -> int:
-        return self._config['etl']['commit_interval']
-    
-    @property
-    def retry_attempts(self) -> int:
-        return self._config['etl']['retry_attempts']
-    
-    @property
-    def timeout_seconds(self) -> int:
-        return self._config['etl']['timeout_seconds']
-    
-    # ID Prefixes
-    @property
-    def prefix_etl_run(self) -> str:
-        return self._config['id_prefixes']['etl_run']
-    
-    @property
-    def prefix_log_id(self) -> str:
-        return self._config['id_prefixes']['log_id']
-    
-    @property
-    def prefix_analytics_id(self) -> str:
-        return self._config['id_prefixes']['analytics_id']
-    
-    # Data sources
-    @property
-    def raw_sales_path(self) -> str:
-        return self._config['data_sources']['raw_sales_path']
-    
-    @property
-    def analytics_output_path(self) -> str:
-        return self._config['data_sources']['analytics_output_path']
-    
-    @property
-    def log_output_path(self) -> str:
-        return self._config['data_sources']['log_output_path']
-    
-    # Spark configuration
-    @property
-    def spark_app_name(self) -> str:
-        return self._config['spark']['app_name']
-    
-    @property
-    def spark_master(self) -> str:
-        return self._config['spark']['master']
-    
-    @property
-    def spark_log_level(self) -> str:
-        return self._config['spark']['log_level']
-    
-    def get(self, key_path: str, default: Any = None) -> Any:
-        """
-        Get configuration value using dot notation.
-        
-        Args:
-            key_path: Path to config value (e.g., 'business_rules.tax_rate')
-            default: Default value if key not found
+            config_path: Path to configuration file
             
         Returns:
-            Configuration value
+            ETLConfig object with loaded configuration
+            
+        Raises:
+            ConfigurationError: If config file is invalid or missing
         """
-        keys = key_path.split('.')
-        value = self._config
+        config_file = Path(config_path)
         
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
-            else:
-                return default
+        if not config_file.exists():
+            raise ConfigurationError(f"Configuration file not found: {config_path}")
         
-        return value
+        try:
+            with open(config_file, 'r') as f:
+                config_data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ConfigurationError(
+                f"Failed to parse configuration file: {config_path}",
+                original_exception=e
+            )
+        except Exception as e:
+            raise ConfigurationError(
+                f"Failed to read configuration file: {config_path}",
+                original_exception=e
+            )
+        
+        # Build config object with defaults
+        config = ETLConfig(
+            batch_size=config_data.get('batch_size', ETLConstants.DEFAULTS.BATCH_SIZE),
+            commit_interval=config_data.get('commit_interval', ETLConstants.DEFAULTS.COMMIT_INTERVAL),
+            retry_attempts=config_data.get('retry_attempts', ETLConstants.DEFAULTS.RETRY_ATTEMPTS),
+            timeout_seconds=config_data.get('timeout_seconds', ETLConstants.DEFAULTS.TIMEOUT_SECONDS),
+            parallel_jobs=config_data.get('parallel_jobs', 1),
+            source_path=config_data.get('source_path'),
+            target_path=config_data.get('target_path'),
+            log_level=config_data.get('log_level', 'INFO'),
+            log_file=config_data.get('log_file')
+        )
+        
+        # Validate configuration
+        config.validate()
+        
+        return config
+    
+    @staticmethod
+    def create_default_config(output_path: str) -> None:
+        """
+        Create a default configuration file
+        
+        Args:
+            output_path: Path where config file should be created
+        """
+        default_config = {
+            'batch_size': ETLConstants.DEFAULTS.BATCH_SIZE,
+            'commit_interval': ETLConstants.DEFAULTS.COMMIT_INTERVAL,
+            'retry_attempts': ETLConstants.DEFAULTS.RETRY_ATTEMPTS,
+            'timeout_seconds': ETLConstants.DEFAULTS.TIMEOUT_SECONDS,
+            'parallel_jobs': 1,
+            'log_level': 'INFO',
+            'log_file': 'logs/etl.log',
+            'source_path': 'data/input',
+            'target_path': 'data/output',
+            'business_rules': {
+                'discount_qty_tier1': ETLConstants.RULES.DISCOUNT_QTY_TIER1,
+                'discount_qty_tier2': ETLConstants.RULES.DISCOUNT_QTY_TIER2,
+                'discount_rate_tier1': ETLConstants.RULES.DISCOUNT_RATE_TIER1,
+                'discount_rate_tier2': ETLConstants.RULES.DISCOUNT_RATE_TIER2,
+                'tax_rate': ETLConstants.RULES.TAX_RATE,
+                'cost_ratio': ETLConstants.RULES.COST_RATIO,
+                'category_high_threshold': ETLConstants.RULES.CATEGORY_HIGH_THRESHOLD,
+                'category_medium_threshold': ETLConstants.RULES.CATEGORY_MEDIUM_THRESHOLD
+            }
+        }
+        
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_file, 'w') as f:
+            yaml.dump(default_config, f, default_flow_style=False, sort_keys=False)
