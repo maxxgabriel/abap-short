@@ -1,83 +1,73 @@
-# Sales ETL System Configuration
-# This file contains all configurable parameters for the ETL process
+# ETL Logger Configuration
+# Migrated from ABAP ETL system configuration
 
-etl:
-  # Batch processing configuration
-  batch_size: 1000              # Number of records per batch
-  commit_interval: 500          # Records between commits
-  retry_attempts: 3             # Number of retry attempts on failure
-  timeout_seconds: 3600         # Maximum execution time (1 hour)
-  
-  # Run mode
-  test_mode: false              # Set to true to skip data commits
+# Logging Configuration
+logging:
+  log_level: INFO
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_output_path: "/data/etl_logs"
+  log_write_mode: "append"
+  enable_console_logging: true
 
-# Business rules configuration
-business_rules:
-  # Discount calculation rules
-  discount:
-    qty_tier1: 10               # First discount tier quantity threshold
-    qty_tier2: 15               # Second discount tier quantity threshold
-    rate_tier1: 0.05            # First tier discount rate (5%)
-    rate_tier2: 0.10            # Second tier discount rate (10%)
-  
-  # Tax configuration
-  tax_rate: 0.08                # Tax rate (8%)
-  
-  # Cost and profit calculation
-  cost_ratio: 0.60              # Cost as percentage of unit price (60%)
-  
-  # Sale categorization thresholds
-  category_thresholds:
-    high: 2000.00               # High value sale threshold
-    medium: 500.00              # Medium value sale threshold
-    # Below medium is considered LOW
-
-# Spark configuration
+# Spark Configuration
 spark:
-  app_name: "SalesETL"
-  master: "local[*]"            # Use all available cores
-  executor_memory: "2g"
-  driver_memory: "1g"
-  executor_cores: 2
-  sql_shuffle_partitions: 200
+  app_name: "ETL_Logger"
+  master: "local[*]"
+  log_level: "WARN"
   
-  # Advanced Spark settings
-  advanced:
+  # Spark SQL settings
+  sql:
+    shuffle_partitions: 200
     adaptive_enabled: true
-    broadcast_timeout: 300
-    network_timeout: 120
+    
+  # Memory settings
+  executor:
+    memory: "4g"
+    cores: 2
+  driver:
+    memory: "2g"
 
-# Data paths configuration
-paths:
-  # Input data location
-  input: "data/input"
-  input_format: "parquet"       # parquet, csv, json
+# ETL Process Configuration
+etl:
+  # Batch processing
+  default_batch_size: 1000
+  default_commit_interval: 500
   
-  # Output data location
-  output: "data/output"
-  output_format: "parquet"      # parquet, csv, json
-  output_mode: "append"         # append, overwrite
+  # Retry settings
+  default_retry_attempts: 3
+  default_timeout_seconds: 3600
   
-  # Logging location
-  logs: "logs"
-  log_level: "INFO"             # DEBUG, INFO, WARNING, ERROR
+  # ID prefixes (matching ABAP constants)
+  prefix_etl_run: "ETL"
+  prefix_log_id: "LOG"
+  prefix_analytics_id: "ANL"
 
-# Database connection (optional - for actual database integration)
-database:
-  enabled: false
-  host: "localhost"
-  port: 5432
-  database: "sales_etl"
-  user: "etl_user"
-  password: ""                  # Use environment variable in production
+# Business Rules (from ABAP constants)
+business_rules:
+  # Discount thresholds
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
   
-  # Table names
-  tables:
-    raw_sales: "zsales_raw"
-    analytics: "zsales_analytics"
-    etl_log: "zetl_log"
+  # Tax rate
+  tax_rate: 0.08
+  
+  # Cost ratio
+  cost_ratio: 0.60
+  
+  # Category thresholds
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
-# Status codes
+# Storage Paths
+storage:
+  raw_data_path: "/data/raw/sales"
+  analytics_data_path: "/data/analytics/sales"
+  log_data_path: "/data/logs/etl"
+  checkpoint_path: "/data/checkpoints"
+
+# Status Codes (matching ABAP)
 status_codes:
   new: "N"
   processed: "P"
@@ -86,7 +76,7 @@ status_codes:
   success: "S"
   info: "I"
 
-# Process step identifiers
+# Process Steps (matching ABAP)
 process_steps:
   init: "INIT"
   extract: "EXTRACT"
@@ -96,48 +86,8 @@ process_steps:
   complete: "COMPLETE"
   error: "ERROR"
 
-# Category definitions
+# Category Codes (matching ABAP)
 categories:
   high: "HIGH"
   medium: "MEDIUM"
   low: "LOW"
-
-# ID prefixes for generated identifiers
-id_prefixes:
-  etl_run: "ETL"
-  log: "LOG"
-  analytics: "ANL"
-
-# Message templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Validation rules
-validation:
-  required_fields:
-    - trans_id
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-  
-  field_constraints:
-    quantity_min: 1
-    quantity_max: 10000
-    unit_price_min: 0.01
-    unit_price_max: 999999.99
-
-# Performance tuning
-performance:
-  enable_cache: true
-  persist_level: "MEMORY_AND_DISK"
-  checkpoint_interval: 10
-  repartition_count: null       # null for auto-detect
