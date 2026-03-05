@@ -1,51 +1,47 @@
 """
 Data Extraction Module
-Extracts raw sales data from source (ZSALES_RAW equivalent).
+Extracts raw sales data from source with date range filtering and schema mapping.
 """
 
-from typing import Dict, Any, Optional
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, 
-    DecimalType, DateType, TimestampType
+    StructType, StructField, StringType, DateType, IntegerType, 
+    DecimalType, TimestampType
 )
-from pyspark.sql.functions import col, lit
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Optional, Tuple
 import logging
 
+from src.logger import ETLLogger
+from src.exceptions import ETLExtractionError
 
-class SalesDataExtractor:
+
+class DataExtractor:
     """
-    Extracts raw sales data from source system.
-    Implements extraction logic from ZCL_ETL_EXTRACTOR.
+    Extracts raw sales data from source systems.
+    Converts ABAP SELECT statements to PySpark read operations.
     """
     
-    def __init__(self, spark: SparkSession, config: Dict[str, Any], logger: Optional[logging.Logger] = None):
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
         """
-        Initialize extractor.
+        Initialize the data extractor.
         
         Args:
             spark: SparkSession instance
+            logger: ETLLogger instance for logging
             config: Configuration dictionary
-            logger: Optional logger instance
         """
         self.spark = spark
+        self.logger = logger
         self.config = config
-        self.logger = logger or logging.getLogger(__name__)
         
-        # Extract configuration
-        self.source_table = config['extract']['source_table']
-        self.source_format = config['extract']['source_format']
-        self.source_path = config['extract']['source_path']
-        self.date_column = config['extract']['date_column']
-        self.status_filter = config['extract']['status_filter']
-    
     def get_raw_sales_schema(self) -> StructType:
         """
-        Define schema for ZSALES_RAW table mapping.
+        Define schema for raw sales data.
+        Maps ABAP internal table structure to PySpark StructType.
         
         Returns:
-            StructType schema
+            StructType: Schema definition for raw sales data
         """
         return StructType([
             StructField("trans_id", StringType(), nullable=False),
@@ -62,132 +58,178 @@ class SalesDataExtractor:
             StructField("created_by", StringType(), nullable=True)
         ])
     
-    def extract_data(self, from_date: str, to_date: str) -> Optional[DataFrame]:
+    def extract_data(
+        self, 
+        from_date: str, 
+        to_date: str,
+        source_path: Optional[str] = None
+    ) -> Tuple[DataFrame, bool]:
         """
-        Extract raw sales data for the given date range.
+        Extract raw sales data with date range filtering.
+        Equivalent to ABAP: SELECT * FROM zsales_raw WHERE trans_date BETWEEN...
         
         Args:
-            from_date: Start date (YYYY-MM-DD)
-            to_date: End date (YYYY-MM-DD)
+            from_date: Start date in format 'YYYY-MM-DD'
+            to_date: End date in format 'YYYY-MM-DD'
+            source_path: Optional override for source data path
             
         Returns:
-            DataFrame with extracted data, or None on failure
+            Tuple of (DataFrame with extracted data, success boolean)
+            
+        Raises:
+            ETLExtractionError: If extraction fails
         """
         try:
-            self.logger.info(f"Starting extraction from {from_date} to {to_date}")
+            self.logger.log_message(
+                step="EXTRACT",
+                status="I",
+                message=f"Starting extraction from {from_date} to {to_date}"
+            )
             
-            # Read source data
-            df = self._read_source_data()
+            # Get source path from config or parameter
+            data_source = source_path or self.config.get("source_path")
+            source_format = self.config.get("source_format", "parquet")
             
-            if df is None:
-                self.logger.error("Failed to read source data")
-                return None
+            # Read data with schema
+            schema = self.get_raw_sales_schema()
             
-            # Apply filters
-            filtered_df = self._apply_filters(df, from_date, to_date)
-            
-            # Log statistics
-            count = filtered_df.count()
-            self.logger.info(f"Extracted {count} records successfully")
-            
-            return filtered_df
-            
-        except Exception as e:
-            self.logger.error(f"Extraction failed: {str(e)}", exc_info=True)
-            return None
-    
-    def _read_source_data(self) -> Optional[DataFrame]:
-        """
-        Read data from source based on configuration.
-        
-        Returns:
-            DataFrame with source data
-        """
-        try:
-            if self.source_format == "jdbc":
-                return self._read_from_jdbc()
-            elif self.source_format in ["parquet", "csv", "json"]:
-                return self._read_from_file()
+            if source_format == "jdbc":
+                df = self._read_from_jdbc(data_source, from_date, to_date)
+            elif source_format == "csv":
+                df = self._read_from_csv(data_source, schema)
+            elif source_format == "parquet":
+                df = self._read_from_parquet(data_source, schema)
             else:
-                raise ValueError(f"Unsupported source format: {self.source_format}")
-                
+                df = self._read_generic(data_source, source_format, schema)
+            
+            # Apply date range filter (equivalent to BETWEEN clause)
+            df_filtered = df.filter(
+                (df.trans_date >= from_date) & 
+                (df.trans_date <= to_date) &
+                (df.status == 'N')  # Only new records (not processed)
+            )
+            
+            # Cache for performance
+            df_filtered.cache()
+            record_count = df_filtered.count()
+            
+            self.logger.log_message(
+                step="EXTRACT",
+                status="S",
+                records_processed=record_count,
+                records_success=record_count,
+                message=f"Extracted {record_count} records successfully"
+            )
+            
+            return df_filtered, True
+            
         except Exception as e:
-            self.logger.error(f"Failed to read source data: {str(e)}", exc_info=True)
-            return None
+            error_msg = f"Extraction failed: {str(e)}"
+            self.logger.log_message(
+                step="EXTRACT",
+                status="E",
+                message=error_msg
+            )
+            raise ETLExtractionError(error_msg, step="EXTRACT") from e
     
-    def _read_from_jdbc(self) -> DataFrame:
+    def _read_from_jdbc(
+        self, 
+        connection_config: dict, 
+        from_date: str, 
+        to_date: str
+    ) -> DataFrame:
         """
-        Read data from database via JDBC.
-        
-        Returns:
-            DataFrame with database data
-        """
-        jdbc_config = self.config['extract']['jdbc']
-        
-        df = (self.spark.read
-              .format("jdbc")
-              .option("url", jdbc_config['url'])
-              .option("dbtable", self.source_table)
-              .option("driver", jdbc_config['driver'])
-              .option("user", jdbc_config['user'])
-              .option("password", jdbc_config['password'])
-              .option("fetchsize", jdbc_config['fetch_size'])
-              .load())
-        
-        return df
-    
-    def _read_from_file(self) -> DataFrame:
-        """
-        Read data from file system.
-        
-        Returns:
-            DataFrame with file data
-        """
-        schema = self.get_raw_sales_schema()
-        
-        df = (self.spark.read
-              .format(self.source_format)
-              .schema(schema)
-              .option("header", "true")
-              .load(self.source_path))
-        
-        return df
-    
-    def _apply_filters(self, df: DataFrame, from_date: str, to_date: str) -> DataFrame:
-        """
-        Apply date and status filters to DataFrame.
+        Read data from JDBC source (e.g., SAP HANA, Oracle).
         
         Args:
-            df: Input DataFrame
+            connection_config: JDBC connection configuration
             from_date: Start date
             to_date: End date
             
         Returns:
-            Filtered DataFrame
+            DataFrame with raw data
         """
-        # Date range filter
-        filtered_df = df.filter(
-            (col(self.date_column) >= lit(from_date)) &
-            (col(self.date_column) <= lit(to_date))
-        )
+        jdbc_url = connection_config.get("url")
+        table_name = connection_config.get("table", "zsales_raw")
         
-        # Status filter (only new records)
-        filtered_df = filtered_df.filter(col("status") == self.status_filter)
+        # Build query with date filter (pushdown predicate)
+        query = f"""
+            (SELECT * FROM {table_name} 
+             WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
+             AND status = 'N') AS raw_sales
+        """
         
-        return filtered_df
-
-
-def create_extractor(spark: SparkSession, config: Dict[str, Any], 
-                    logger: Optional[logging.Logger] = None) -> SalesDataExtractor:
-    """
-    Factory function to create SalesDataExtractor instance.
+        df = self.spark.read \
+            .format("jdbc") \
+            .option("url", jdbc_url) \
+            .option("dbtable", query) \
+            .option("user", connection_config.get("user")) \
+            .option("password", connection_config.get("password")) \
+            .option("driver", connection_config.get("driver", "com.sap.db.jdbc.Driver")) \
+            .load()
+        
+        return df
     
-    Args:
-        spark: SparkSession instance
-        config: Configuration dictionary
-        logger: Optional logger instance
+    def _read_from_csv(self, path: str, schema: StructType) -> DataFrame:
+        """Read data from CSV files."""
+        df = self.spark.read \
+            .format("csv") \
+            .option("header", "true") \
+            .option("dateFormat", "yyyy-MM-dd") \
+            .schema(schema) \
+            .load(path)
+        return df
+    
+    def _read_from_parquet(self, path: str, schema: StructType) -> DataFrame:
+        """Read data from Parquet files."""
+        df = self.spark.read \
+            .format("parquet") \
+            .schema(schema) \
+            .load(path)
+        return df
+    
+    def _read_generic(
+        self, 
+        path: str, 
+        format: str, 
+        schema: StructType
+    ) -> DataFrame:
+        """Read data from generic source format."""
+        df = self.spark.read \
+            .format(format) \
+            .schema(schema) \
+            .load(path)
+        return df
+    
+    def validate_extracted_data(self, df: DataFrame) -> Tuple[bool, str]:
+        """
+        Validate extracted data for completeness and quality.
         
-    Returns:
-        SalesDataExtractor instance
-    """
-    return SalesDataExtractor(spark, config, logger)
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple of (validation success boolean, validation message)
+        """
+        try:
+            # Check for null values in mandatory fields
+            mandatory_fields = ["trans_id", "trans_date", "customer_id", 
+                              "product_id", "quantity", "unit_price"]
+            
+            for field in mandatory_fields:
+                null_count = df.filter(df[field].isNull()).count()
+                if null_count > 0:
+                    return False, f"Found {null_count} null values in {field}"
+            
+            # Check for negative quantities or prices
+            invalid_count = df.filter(
+                (df.quantity <= 0) | (df.unit_price <= 0)
+            ).count()
+            
+            if invalid_count > 0:
+                return False, f"Found {invalid_count} records with invalid quantity/price"
+            
+            return True, "Data validation successful"
+            
+        except Exception as e:
+            return False, f"Validation error: {str(e)}"
