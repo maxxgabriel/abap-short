@@ -1,136 +1,90 @@
 """
-ETL Constants and Configuration
-Migrated from ZCL_ETL_CONSTANTS
+ETL Constants and configuration values.
+Migrated from ZCL_ETL_CONSTANTS ABAP class.
 """
 
-from typing import Dict, Any
-from dataclasses import dataclass
+from typing import Dict
 import yaml
 from pathlib import Path
 
 
-@dataclass(frozen=True)
-class StatusCodes:
-    """Status code constants"""
-    NEW = "N"
-    PROCESSED = "P"
-    ERROR = "E"
-    WARNING = "W"
-    SUCCESS = "S"
-    INFO = "I"
-
-
-@dataclass(frozen=True)
-class ProcessSteps:
-    """ETL process step constants"""
-    INIT = "INIT"
-    EXTRACT = "EXTRACT"
-    TRANSFORM = "TRANSFORM"
-    LOAD = "LOAD"
-    VALIDATE = "VALIDATE"
-    COMPLETE = "COMPLETE"
-    ERROR = "ERROR"
-
-
-@dataclass(frozen=True)
-class SaleCategories:
-    """Sale category constants"""
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
-
-
-@dataclass(frozen=True)
-class IDPrefixes:
-    """ID prefix constants"""
-    ETL_RUN = "ETL"
-    LOG_ID = "LOG"
-    ANALYTICS_ID = "ANL"
-
-
 class ETLConstants:
-    """Main constants class for ETL system"""
-    
-    STATUS = StatusCodes()
-    STEP = ProcessSteps()
-    CATEGORY = SaleCategories()
-    PREFIX = IDPrefixes()
-    
-    # Default Configuration Values
+    """Constants for ETL system (from ZCL_ETL_CONSTANTS)"""
+
+    # Status codes
+    class Status:
+        NEW = "N"
+        PROCESSED = "P"
+        ERROR = "E"
+        WARNING = "W"
+        SUCCESS = "S"
+        INFO = "I"
+
+    # ETL process steps
+    class Step:
+        INIT = "INIT"
+        EXTRACT = "EXTRACT"
+        TRANSFORM = "TRANSFORM"
+        LOAD = "LOAD"
+        VALIDATE = "VALIDATE"
+        COMPLETE = "COMPLETE"
+        ERROR = "ERROR"
+
+    # Sale categories
+    class Category:
+        HIGH = "HIGH"
+        MEDIUM = "MEDIUM"
+        LOW = "LOW"
+
+    # Business rules - Discount thresholds
+    DISCOUNT_QTY_TIER1 = 10
+    DISCOUNT_QTY_TIER2 = 15
+    DISCOUNT_RATE_TIER1 = 0.05
+    DISCOUNT_RATE_TIER2 = 0.10
+
+    # Business rules - Tax rate
+    TAX_RATE = 0.08
+
+    # Business rules - Cost ratio
+    COST_RATIO = 0.60
+
+    # Business rules - Category thresholds
+    CATEGORY_HIGH_THRESHOLD = 2000.00
+    CATEGORY_MEDIUM_THRESHOLD = 500.00
+
+    # ETL configuration defaults
     DEFAULT_BATCH_SIZE = 1000
     DEFAULT_COMMIT_INTERVAL = 500
     DEFAULT_RETRY_ATTEMPTS = 3
     DEFAULT_TIMEOUT_SECONDS = 3600
-    
-    def __init__(self, config_path: str = "config.yaml"):
-        """
-        Initialize constants from configuration file
-        
-        Args:
-            config_path: Path to YAML configuration file
-        """
-        self.config = self._load_config(config_path)
-        
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
+
+    # ID prefixes
+    PREFIX_ETL_RUN = "ETL"
+    PREFIX_LOG_ID = "LOG"
+    PREFIX_ANALYTICS_ID = "ANL"
+
+    # Message texts
+    MSG_INIT_SUCCESS = "ETL process initialized successfully"
+    MSG_EXTRACT_START = "Starting data extraction"
+    MSG_EXTRACT_COMPLETE = "Data extraction completed"
+    MSG_TRANSFORM_START = "Starting data transformation"
+    MSG_TRANSFORM_COMPLETE = "Data transformation completed"
+    MSG_LOAD_START = "Starting data load"
+    MSG_LOAD_COMPLETE = "Data load completed"
+    MSG_ETL_COMPLETE = "ETL process completed successfully"
+    MSG_ETL_ERROR = "ETL process failed"
+
+    @classmethod
+    def load_config(cls, config_path: str = "config.yaml") -> Dict:
         """Load configuration from YAML file"""
-        try:
-            config_file = Path(config_path)
-            if config_file.exists():
-                with open(config_file, 'r') as f:
-                    return yaml.safe_load(f)
-            else:
-                return self._get_default_config()
-        except Exception as e:
-            print(f"Warning: Could not load config from {config_path}: {e}")
-            return self._get_default_config()
-    
-    def _get_default_config(self) -> Dict[str, Any]:
-        """Return default configuration"""
-        return {
-            'etl': {
-                'batch_size': self.DEFAULT_BATCH_SIZE,
-                'commit_interval': self.DEFAULT_COMMIT_INTERVAL,
-                'retry_attempts': self.DEFAULT_RETRY_ATTEMPTS,
-                'timeout_seconds': self.DEFAULT_TIMEOUT_SECONDS,
-            },
-            'business_rules': {
-                'discount': {
-                    'tier1_quantity': 10,
-                    'tier2_quantity': 15,
-                    'tier1_rate': 0.05,
-                    'tier2_rate': 0.10,
-                },
-                'tax_rate': 0.08,
-                'cost_ratio': 0.60,
-                'category': {
-                    'high_threshold': 2000.00,
-                    'medium_threshold': 500.00,
-                }
-            }
-        }
-    
-    def get(self, key_path: str, default: Any = None) -> Any:
-        """
-        Get configuration value by dot-notation path
-        
-        Args:
-            key_path: Dot-separated path to config value (e.g., 'etl.batch_size')
-            default: Default value if key not found
-            
-        Returns:
-            Configuration value or default
-        """
-        keys = key_path.split('.')
-        value = self.config
-        
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
-            else:
-                return default
-                
-        return value
+        config_file = Path(config_path)
+        if config_file.exists():
+            with open(config_file, "r") as f:
+                return yaml.safe_load(f)
+        return {}
 
 
-# Module-level constants instance
-constants = ETLConstants()
+# Create singleton instances for easy access
+STATUS = ETLConstants.Status()
+STEP = ETLConstants.Step()
+CATEGORY = ETLConstants.Category()
