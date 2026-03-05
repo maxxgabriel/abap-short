@@ -2,7 +2,7 @@
 ETL Constants and Configuration Module
 
 This module provides centralized constants and configuration values
-for the ETL system, migrated from ABAP ZCL_ETL_CONSTANTS.
+for the Sales ETL system, migrated from ABAP ZCL_ETL_CONSTANTS.
 """
 
 from dataclasses import dataclass
@@ -42,15 +42,17 @@ class SaleCategories:
 
 @dataclass(frozen=True)
 class BusinessRules:
-    """Business rule constants for calculations"""
-    # Discount thresholds
+    """Business calculation rules and thresholds"""
+    # Discount thresholds and rates
     DISCOUNT_QTY_TIER1: Final[int] = 10
     DISCOUNT_QTY_TIER2: Final[int] = 15
     DISCOUNT_RATE_TIER1: Final[float] = 0.05
     DISCOUNT_RATE_TIER2: Final[float] = 0.10
     
-    # Tax and cost ratios
+    # Tax rate
     TAX_RATE: Final[float] = 0.08
+    
+    # Cost calculation
     COST_RATIO: Final[float] = 0.60
     
     # Category thresholds
@@ -69,7 +71,7 @@ class ETLDefaults:
 
 @dataclass(frozen=True)
 class IDPrefixes:
-    """Prefix constants for ID generation"""
+    """ID generation prefixes"""
     ETL_RUN: Final[str] = 'ETL'
     LOG_ID: Final[str] = 'LOG'
     ANALYTICS_ID: Final[str] = 'ANL'
@@ -77,7 +79,7 @@ class IDPrefixes:
 
 @dataclass(frozen=True)
 class Messages:
-    """Standard message templates"""
+    """Standard ETL messages"""
     INIT_SUCCESS: Final[str] = 'ETL process initialized successfully'
     EXTRACT_START: Final[str] = 'Starting data extraction'
     EXTRACT_COMPLETE: Final[str] = 'Data extraction completed'
@@ -90,10 +92,7 @@ class Messages:
 
 
 class ETLConstants:
-    """
-    Main constants class providing centralized access to all ETL constants.
-    Migrated from ABAP ZCL_ETL_CONSTANTS.
-    """
+    """Main constants container class"""
     
     STATUS = StatusCodes()
     STEP = ProcessSteps()
@@ -105,17 +104,13 @@ class ETLConstants:
     
     @classmethod
     def get_all_constants(cls) -> dict:
-        """Returns dictionary of all constant groups"""
+        """Return all constants as a dictionary for validation"""
         return {
-            'status': cls.STATUS,
-            'step': cls.STEP,
-            'category': cls.CATEGORY,
-            'rules': cls.RULES,
-            'defaults': cls.DEFAULTS,
-            'prefix': cls.PREFIX,
-            'messages': cls.MSG
+            'status': vars(cls.STATUS),
+            'steps': vars(cls.STEP),
+            'categories': vars(cls.CATEGORY),
+            'rules': vars(cls.RULES),
+            'defaults': vars(cls.DEFAULTS),
+            'prefixes': vars(cls.PREFIX),
+            'messages': vars(cls.MSG)
         }
-
-
-# Module-level constants instance for convenience
-CONSTANTS = ETLConstants()
