@@ -1,142 +1,166 @@
 """
-ETL Utility Functions
-Helper functions for ID generation, validation, and data conversion.
+Utility functions for ETL system
 """
-
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 import hashlib
 
-from src.config import ETLConstants
 
-
-def generate_etl_run_id() -> str:
+def generate_etl_run_id(prefix: str = "ETL") -> str:
     """
-    Generate unique ETL run ID.
-    Format: ETL + timestamp (YYYYMMDDHHMMSSffffff)
-    
-    Returns:
-        Unique ETL run ID string
-    """
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-    return f"{ETLConstants.ID_PREFIXES.ETL_RUN}{timestamp}"
-
-
-def generate_log_id() -> str:
-    """
-    Generate unique log entry ID.
-    Format: LOG + timestamp (YYYYMMDDHHMMSSffffff)
-    
-    Returns:
-        Unique log ID string
-    """
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-    return f"{ETLConstants.ID_PREFIXES.LOG_ID}{timestamp}"
-
-
-def generate_analytics_id(trans_id: str, timestamp: Optional[datetime] = None) -> str:
-    """
-    Generate unique analytics record ID.
-    Format: ANL + trans_id + timestamp
+    Generate unique ETL run ID
     
     Args:
-        trans_id: Original transaction ID
-        timestamp: Optional timestamp, uses current time if not provided
+        prefix: ID prefix
         
     Returns:
-        Unique analytics ID string
+        Unique ETL run ID
     """
-    if timestamp is None:
-        timestamp = datetime.now()
-    
-    ts_str = timestamp.strftime('%Y%m%d%H%M%S')
-    return f"{ETLConstants.ID_PREFIXES.ANALYTICS_ID}{trans_id}{ts_str}"
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[:14]
+    return f"{prefix}{timestamp}"
 
 
-def safe_decimal(value: any, default: Decimal = Decimal('0.00')) -> Decimal:
+def generate_log_id(prefix: str = "LOG") -> str:
     """
-    Safely convert value to Decimal with fallback.
+    Generate unique log ID
     
     Args:
-        value: Value to convert
-        default: Default value if conversion fails
+        prefix: ID prefix
         
     Returns:
-        Decimal value
+        Unique log ID
     """
-    try:
-        if value is None:
-            return default
-        return Decimal(str(value))
-    except (ValueError, TypeError):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[:14]
+    return f"{prefix}{timestamp}"
+
+
+def generate_analytics_id(trans_id: str, prefix: str = "ANL") -> str:
+    """
+    Generate unique analytics ID
+    
+    Args:
+        trans_id: Transaction ID
+        prefix: ID prefix
+        
+    Returns:
+        Unique analytics ID
+    """
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[8:14]
+    return f"{prefix}{trans_id}{timestamp}"
+
+
+def calculate_duration_seconds(start_time: datetime, end_time: datetime) -> int:
+    """
+    Calculate duration in seconds between two timestamps
+    
+    Args:
+        start_time: Start timestamp
+        end_time: End timestamp
+        
+    Returns:
+        Duration in seconds
+    """
+    if not start_time or not end_time:
+        return 0
+    
+    duration = end_time - start_time
+    return int(duration.total_seconds())
+
+
+def format_currency(amount: Decimal, currency: str = "USD") -> str:
+    """
+    Format currency amount
+    
+    Args:
+        amount: Amount to format
+        currency: Currency code
+        
+    Returns:
+        Formatted currency string
+    """
+    return f"{currency} {amount:,.2f}"
+
+
+def validate_required_fields(record: dict, required_fields: list) -> tuple[bool, Optional[str]]:
+    """
+    Validate that required fields are present and not empty
+    
+    Args:
+        record: Record dictionary
+        required_fields: List of required field names
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    for field in required_fields:
+        if field not in record or record[field] is None or record[field] == "":
+            return False, f"Missing or empty required field: {field}"
+    
+    return True, None
+
+
+def safe_divide(numerator: Decimal, denominator: Decimal, 
+                default: Decimal = Decimal('0.00')) -> Decimal:
+    """
+    Safe division with default value for zero denominator
+    
+    Args:
+        numerator: Numerator
+        denominator: Denominator
+        default: Default value if denominator is zero
+        
+    Returns:
+        Division result or default value
+    """
+    if denominator == 0 or denominator is None:
         return default
+    
+    return numerator / denominator
 
 
-def validate_currency(currency: str) -> bool:
+def calculate_percentage(part: Decimal, total: Decimal, 
+                        precision: int = 2) -> Decimal:
     """
-    Validate currency code.
+    Calculate percentage with specified precision
     
     Args:
-        currency: Currency code to validate
+        part: Part value
+        total: Total value
+        precision: Decimal precision
         
     Returns:
-        True if valid, False otherwise
+        Percentage value
     """
-    valid_currencies = ['USD', 'EUR', 'GBP', 'JPY', 'CNY']
-    return currency in valid_currencies
+    if total == 0:
+        return Decimal('0.00')
+    
+    percentage = (part / total) * Decimal('100')
+    return round(percentage, precision)
 
 
-def validate_quantity(quantity: int) -> bool:
+def hash_record(record: dict) -> str:
     """
-    Validate quantity is within acceptable range.
+    Generate hash for record (for deduplication)
     
     Args:
-        quantity: Quantity to validate
+        record: Record dictionary
         
     Returns:
-        True if valid, False otherwise
+        MD5 hash string
     """
-    return 1 <= quantity <= 10000
+    record_str = str(sorted(record.items()))
+    return hashlib.md5(record_str.encode()).hexdigest()
 
 
-def validate_unit_price(unit_price: Decimal) -> bool:
-    """
-    Validate unit price is within acceptable range.
-    
-    Args:
-        unit_price: Unit price to validate
-        
-    Returns:
-        True if valid, False otherwise
-    """
-    return Decimal('0.01') <= unit_price <= Decimal('999999.99')
-
-
-def calculate_checksum(data: str) -> str:
-    """
-    Calculate MD5 checksum for data validation.
-    
-    Args:
-        data: Data string to hash
-        
-    Returns:
-        MD5 checksum hex string
-    """
-    return hashlib.md5(data.encode()).hexdigest()
-
-
-def format_duration(seconds: float) -> str:
-    """
-    Format duration in human-readable format.
-    
-    Args:
-        seconds: Duration in seconds
-        
-    Returns:
-        Formatted duration string (HH:MM:SS)
-    """
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+__all__ = [
+    'generate_etl_run_id',
+    'generate_log_id',
+    'generate_analytics_id',
+    'calculate_duration_seconds',
+    'format_currency',
+    'validate_required_fields',
+    'safe_divide',
+    'calculate_percentage',
+    'hash_record'
+]
