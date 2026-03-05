@@ -1,108 +1,101 @@
 @echo off
-setlocal enabledelayedexpansion
+REM start.bat - Launch script for ABAP to PySpark Migration (Windows)
 
-echo ==========================================
-echo ABAP Short - PySpark Pipeline Launcher
-echo ==========================================
+echo ================================================
+echo ABAP to PySpark Migration - Startup Script
+echo ================================================
 echo.
 
-REM Check if Docker is running
-docker info >nul 2>&1
+REM Create necessary directories
+echo Creating necessary directories...
+if not exist "data" mkdir data
+if not exist "logs" mkdir logs
+if not exist "output" mkdir output
+if not exist "config" mkdir config
+
+REM Check if Docker is installed
+docker --version >nul 2>&1
 if errorlevel 1 (
-    echo Error: Docker is not running. Please start Docker and try again.
+    echo Error: Docker is not installed. Please install Docker Desktop first.
     pause
     exit /b 1
 )
 
-REM Check if docker-compose is available
+REM Check if Docker Compose is installed
 docker-compose --version >nul 2>&1
 if errorlevel 1 (
-    echo Error: docker-compose is not installed. Please install docker-compose and try again.
+    echo Error: Docker Compose is not installed. Please install Docker Compose first.
     pause
     exit /b 1
 )
 
-echo [32m✓ Docker is running[0m
-echo.
+REM Check if Docker daemon is running
+docker info >nul 2>&1
+if errorlevel 1 (
+    echo Error: Docker daemon is not running. Please start Docker Desktop first.
+    pause
+    exit /b 1
+)
 
-REM Start Docker Compose services
-echo Starting PySpark environment...
+REM Stop any existing containers
+echo Stopping any existing containers...
+docker-compose down 2>nul
+
+REM Build and start the Docker environment
+echo Starting Docker environment...
 docker-compose up -d
 
 if errorlevel 1 (
     echo Error: Failed to start Docker environment
-    docker-compose logs
     pause
     exit /b 1
 )
 
-REM Wait for container to be ready
-echo Waiting for container to be ready...
+REM Wait for the container to be ready
+echo Waiting for PySpark environment to be ready...
 timeout /t 10 /nobreak >nul
 
 REM Check if container is running
-docker ps | findstr "abap_short_pyspark" >nul
+docker ps | findstr pyspark_abap_migration >nul
 if errorlevel 1 (
-    echo Error: Container failed to start
+    echo Error: PySpark container failed to start
     docker-compose logs
     pause
     exit /b 1
 )
 
-echo [32m✓ PySpark environment is ready[0m
+echo PySpark environment is ready!
 echo.
 
-REM Install dependencies
-echo Installing dependencies...
-docker exec abap_short_pyspark bash -c "pip install --upgrade pip && pip install -r requirements.txt"
+REM Execute the main pipeline
+echo Running the migration pipeline...
+docker exec -it pyspark_abap_migration python main.py
 
 if errorlevel 1 (
-    echo Error: Failed to install dependencies
-    docker-compose logs
+    echo ================================================
+    echo Pipeline execution failed!
+    echo ================================================
+    echo Check logs in .\logs\ directory
     pause
     exit /b 1
-)
-
-echo [32m✓ Dependencies installed[0m
-echo.
-
-REM Run the pipeline
-echo ==========================================
-echo Running Pipeline
-echo ==========================================
-echo.
-
-docker exec -it abap_short_pyspark python main.py
-
-set PIPELINE_EXIT_CODE=%errorlevel%
-
-echo.
-echo ==========================================
-if %PIPELINE_EXIT_CODE% equ 0 (
-    echo [32m✓ Pipeline completed successfully[0m
 ) else (
-    echo [31m✗ Pipeline failed with exit code %PIPELINE_EXIT_CODE%[0m
-)
-echo ==========================================
-echo.
-
-REM Show logs location
-echo Logs are available in: .\logs
-echo Output is available in: .\output
-echo.
-
-REM Ask if user wants to stop the environment
-set /p STOP_ENV="Stop the Docker environment? (y/n): "
-if /i "!STOP_ENV!"=="y" (
-    echo Stopping Docker environment...
-    docker-compose down
-    echo [32m✓ Environment stopped[0m
-) else (
-    echo Environment is still running. To stop it later, run: docker-compose down
-    echo To view logs: docker-compose logs -f
-    echo To access container shell: docker exec -it abap_short_pyspark bash
+    echo ================================================
+    echo Pipeline completed successfully!
+    echo ================================================
 )
 
+echo.
+echo Logs available in: .\logs\
+echo Output available in: .\output\
+echo.
+
+echo Options:
+echo   - To view logs: docker-compose logs -f
+echo   - To stop environment: docker-compose down
+echo   - To access PySpark shell: docker exec -it pyspark_abap_migration pyspark
+echo   - To access container: docker exec -it pyspark_abap_migration bash
+echo.
+
+echo Container is still running for inspection. Use 'docker-compose down' to stop.
 echo.
 pause
-exit /b %PIPELINE_EXIT_CODE%
