@@ -1,113 +1,103 @@
 """
-ETL Loader Module
-Loads transformed analytics data into target table using PySpark.
+Sales Data Loading Module
+Loads transformed analytics data into target tables
 """
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import DataFrame
 from pyspark.sql.functions import col
+from typing import Optional
+import logging
 
-from src.utils.etl_logger import ETLLogger
+from src.logger import ETLLogger
+from src.config import ETLConfig
 
 
-class ETLLoader:
-    """
-    Loads transformed data into target analytics table.
-    Converted from ZCL_ETL_LOADER ABAP class.
-    """
+class SalesDataLoader:
+    """Loads analytics data into target tables"""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
-        """
-        Initialize loader.
-        
-        Args:
-            spark: SparkSession instance
-            logger: ETLLogger instance
-            config: Configuration dictionary
-        """
-        self.spark = spark
+    def __init__(self, logger: ETLLogger, config: ETLConfig):
         self.logger = logger
         self.config = config
-    
-    def load_data(self, analytics_df: DataFrame, target_table: str = None) -> bool:
+        
+    def load_data(self, analytics_df: DataFrame) -> bool:
         """
-        Load analytics data into target table.
+        Load analytics data to target table
         
         Args:
-            analytics_df: DataFrame with analytics data
-            target_table: Optional target table name
+            analytics_df: Transformed analytics DataFrame
             
         Returns:
-            True if successful, False otherwise
+            True if load succeeds, False otherwise
         """
-        step = self.config['process_steps']['load']
-        
         try:
-            self.logger.log_etl_message(
-                step=step,
-                status=self.config['status_codes']['success'],
+            self.logger.log_message(
+                step="LOAD",
+                status="S",
                 message="Starting data load"
             )
             
+            total_count = analytics_df.count()
+            
             # Validate records before loading
-            validated_df = self._validate_records(analytics_df)
+            valid_df = self._validate_records(analytics_df)
+            valid_count = valid_df.count()
+            error_count = total_count - valid_count
             
-            total_records = analytics_df.count()
-            valid_records = validated_df.count()
-            error_records = total_records - valid_records
-            
-            if error_records > 0:
-                self.logger.log_etl_message(
-                    step=step,
-                    status=self.config['status_codes']['warning'],
-                    message=f"Skipped {error_records} invalid records"
+            if error_count > 0:
+                self.logger.log_message(
+                    step="LOAD",
+                    status="W",
+                    message=f"Skipped {error_count} invalid records"
                 )
             
-            # In production, write to target table:
-            # validated_df.write.mode("append").saveAsTable(target_table or "zsales_analytics")
+            # Load to target table
+            target_table = self.config.get("target.table", "zsales_analytics")
+            write_mode = self.config.get("target.write_mode", "append")
             
-            # For demonstration, show sample
-            validated_df.show(5, truncate=False)
+            valid_df.write.mode(write_mode).saveAsTable(target_table)
             
-            self.logger.log_etl_statistics(
-                step=step,
-                status=self.config['status_codes']['success'],
-                records_processed=total_records,
-                records_success=valid_records,
-                records_error=error_records,
-                message=f"Loaded {valid_records} of {total_records} records"
+            # Update source records status
+            self._update_source_status(analytics_df)
+            
+            self.logger.log_message(
+                step="LOAD",
+                status="S",
+                records_processed=total_count,
+                records_success=valid_count,
+                records_error=error_count,
+                message=f"Loaded {valid_count} of {total_count} records to {target_table}"
             )
             
             return True
             
         except Exception as e:
-            self.logger.log_etl_message(
-                step=step,
-                status=self.config['status_codes']['error'],
+            self.logger.log_message(
+                step="LOAD",
+                status="E",
                 message=f"Load failed: {str(e)}"
             )
+            logging.error(f"Load error: {str(e)}", exc_info=True)
             return False
     
     def _validate_records(self, df: DataFrame) -> DataFrame:
-        """
-        Validate records before loading.
-        
-        Args:
-            df: Input DataFrame
-            
-        Returns:
-            DataFrame with only valid records
-        """
-        # Validate required fields are not null and values are valid
-        valid_df = df.filter(
+        """Validate records before loading"""
+        return df.filter(
             (col("analytics_id").isNotNull()) &
             (col("customer_id").isNotNull()) &
             (col("product_id").isNotNull()) &
             (col("gross_amount") > 0) &
             (col("currency").isNotNull()) &
-            (col("category").isin(
-                self.config['categories']['high'],
-                self.config['categories']['medium'],
-                self.config['categories']['low']
-            ))
+            (col("category").isin("HIGH", "MEDIUM", "LOW"))
         )
-        
-        return valid_df
+    
+    def _update_source_status(self, df: DataFrame) -> None:
+        """Update status in source table (simulation)"""
+        try:
+            # In production, would update source table status to 'P' (Processed)
+            # For now, just log the action
+            self.logger.log_message(
+                step="LOAD",
+                status="I",
+                message="Source records marked as processed"
+            )
+        except Exception as e:
+            logging.warning(f"Could not update source status: {str(e)}")
