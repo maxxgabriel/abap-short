@@ -1,80 +1,80 @@
 """
-Logging Utilities Module
-Provides standardized logging for ETL processes with structured output.
+ETL Logger Module
+
+This module provides comprehensive logging functionality for the ETL system,
+migrated from ABAP ZCL_ETL_LOGGER.
 """
 
 import logging
-import sys
-from typing import Optional, Dict, Any
 from datetime import datetime
-from pathlib import Path
-import json
+from typing import Optional
+from dataclasses import dataclass, asdict
+import uuid
+
+from src.constants import ETLConstants
+
+
+@dataclass
+class LogEntry:
+    """Data class representing a log entry"""
+    log_id: str
+    etl_run_id: str
+    execution_date: str
+    execution_time: str
+    process_step: str
+    status: str
+    records_processed: int = 0
+    records_success: int = 0
+    records_error: int = 0
+    message: str = ""
+    timestamp: Optional[str] = None
+    
+    def to_dict(self):
+        """Convert log entry to dictionary"""
+        return asdict(self)
 
 
 class ETLLogger:
     """
-    Standardized logger for ETL processes with structured logging support.
-    Handles console and file logging with configurable levels.
+    ETL Logger class for comprehensive logging functionality.
+    Migrated from ABAP ZCL_ETL_LOGGER.
     """
     
-    # Status constants
-    STATUS_SUCCESS = 'S'
-    STATUS_ERROR = 'E'
-    STATUS_WARNING = 'W'
-    STATUS_INFO = 'I'
-    
-    # Step constants
-    STEP_INIT = 'INIT'
-    STEP_EXTRACT = 'EXTRACT'
-    STEP_TRANSFORM = 'TRANSFORM'
-    STEP_LOAD = 'LOAD'
-    STEP_VALIDATE = 'VALIDATE'
-    STEP_COMPLETE = 'COMPLETE'
-    STEP_ERROR = 'ERROR'
-    
-    def __init__(self, etl_run_id: str, log_level: str = 'INFO', log_dir: str = 'logs'):
+    def __init__(
+        self,
+        etl_run_id: str,
+        log_level: str = "INFO",
+        log_format: Optional[str] = None
+    ):
         """
-        Initialize ETL logger.
+        Initialize ETL Logger
         
         Args:
-            etl_run_id: Unique identifier for the ETL run
+            etl_run_id: Unique identifier for this ETL run
             log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-            log_dir: Directory for log files
+            log_format: Custom log format string
         """
         self.etl_run_id = etl_run_id
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_entries = []
         
-        # Create logger
-        self.logger = logging.getLogger(f'etl.{etl_run_id}')
+        # Setup Python logger
+        self._setup_logger(log_level, log_format)
+    
+    def _setup_logger(self, log_level: str, log_format: Optional[str]):
+        """Setup Python logging configuration"""
+        if log_format is None:
+            log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        
+        self.logger = logging.getLogger(f"ETL.{self.etl_run_id}")
         self.logger.setLevel(getattr(logging, log_level.upper()))
         
-        # Remove existing handlers
-        self.logger.handlers.clear()
-        
         # Console handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
-        console_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        console_handler.setFormatter(console_formatter)
-        self.logger.addHandler(console_handler)
-        
-        # File handler
-        log_file = self.log_dir / f'etl_{etl_run_id}_{datetime.now():%Y%m%d_%H%M%S}.log'
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.DEBUG)
-        file_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        file_handler.setFormatter(file_formatter)
-        self.logger.addHandler(file_handler)
-        
-        # Structured log file (JSON)
-        self.structured_log_file = self.log_dir / f'etl_{etl_run_id}_structured.jsonl'
-        
-        self.logger.info(f"Logger initialized for ETL run: {etl_run_id}")
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(getattr(logging, log_level.upper()))
+            formatter = logging.Formatter(log_format)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
     
     def log_message(
         self,
@@ -83,146 +83,98 @@ class ETLLogger:
         message: str,
         records_processed: int = 0,
         records_success: int = 0,
-        records_error: int = 0,
-        additional_info: Optional[Dict[str, Any]] = None
-    ) -> None:
+        records_error: int = 0
+    ) -> LogEntry:
         """
-        Log a structured ETL message.
+        Log a message with ETL context
         
         Args:
-            step: ETL process step
+            step: Process step identifier
             status: Status code (S, E, W, I)
             message: Log message
             records_processed: Number of records processed
             records_success: Number of successful records
             records_error: Number of error records
-            additional_info: Additional information to log
-        """
-        # Create structured log entry
-        log_entry = {
-            'etl_run_id': self.etl_run_id,
-            'timestamp': datetime.now().isoformat(),
-            'step': step,
-            'status': status,
-            'message': message,
-            'records_processed': records_processed,
-            'records_success': records_success,
-            'records_error': records_error
-        }
-        
-        if additional_info:
-            log_entry['additional_info'] = additional_info
-        
-        # Write structured log
-        with open(self.structured_log_file, 'a') as f:
-            f.write(json.dumps(log_entry) + '\n')
-        
-        # Log to standard logger
-        log_level = self._get_log_level(status)
-        log_msg = self._format_log_message(step, message, records_processed, records_success, records_error)
-        self.logger.log(log_level, log_msg)
-    
-    def _get_log_level(self, status: str) -> int:
-        """Convert status code to logging level."""
-        status_map = {
-            self.STATUS_SUCCESS: logging.INFO,
-            self.STATUS_INFO: logging.INFO,
-            self.STATUS_WARNING: logging.WARNING,
-            self.STATUS_ERROR: logging.ERROR
-        }
-        return status_map.get(status, logging.INFO)
-    
-    def _format_log_message(
-        self,
-        step: str,
-        message: str,
-        records_processed: int,
-        records_success: int,
-        records_error: int
-    ) -> str:
-        """Format log message with statistics."""
-        if records_processed > 0:
-            return (f"[{step}] {message} - "
-                   f"Processed: {records_processed}, "
-                   f"Success: {records_success}, "
-                   f"Error: {records_error}")
-        return f"[{step}] {message}"
-    
-    def info(self, message: str, step: str = STEP_INFO) -> None:
-        """Log info message."""
-        self.log_message(step, self.STATUS_INFO, message)
-    
-    def warning(self, message: str, step: str = STEP_INFO) -> None:
-        """Log warning message."""
-        self.log_message(step, self.STATUS_WARNING, message)
-    
-    def error(self, message: str, step: str = STEP_ERROR, exception: Optional[Exception] = None) -> None:
-        """Log error message."""
-        if exception:
-            message = f"{message}: {str(exception)}"
-        self.log_message(step, self.STATUS_ERROR, message)
-    
-    def success(self, message: str, step: str) -> None:
-        """Log success message."""
-        self.log_message(step, self.STATUS_SUCCESS, message)
-    
-    def log_statistics(
-        self,
-        step: str,
-        total: int,
-        success: int,
-        error: int,
-        duration_seconds: Optional[float] = None
-    ) -> None:
-        """
-        Log processing statistics.
-        
-        Args:
-            step: ETL process step
-            total: Total records
-            success: Successful records
-            error: Error records
-            duration_seconds: Processing duration
-        """
-        message = f"Statistics - Total: {total}, Success: {success}, Error: {error}"
-        if duration_seconds:
-            message += f", Duration: {duration_seconds:.2f}s"
-        
-        status = self.STATUS_SUCCESS if error == 0 else self.STATUS_WARNING
-        self.log_message(
-            step=step,
-            status=status,
-            message=message,
-            records_processed=total,
-            records_success=success,
-            records_error=error
-        )
-    
-    def get_etl_run_id(self) -> str:
-        """Get the ETL run identifier."""
-        return self.etl_run_id
-
-
-class LoggerFactory:
-    """Factory for creating ETL loggers."""
-    
-    @staticmethod
-    def create_logger(etl_run_id: str, config: Optional[Dict[str, Any]] = None) -> ETLLogger:
-        """
-        Create a new ETL logger instance.
-        
-        Args:
-            etl_run_id: Unique ETL run identifier
-            config: Optional configuration dictionary
             
         Returns:
-            ETLLogger instance
+            LogEntry object
         """
-        if config is None:
-            from src.config_manager import config as cfg
-            config = cfg.get_logging_config()
+        now = datetime.now()
         
-        log_level = config.get('level', 'INFO')
-        log_dir = config.get('log_dir', 'logs')
+        log_entry = LogEntry(
+            log_id=self._generate_log_id(),
+            etl_run_id=self.etl_run_id,
+            execution_date=now.strftime('%Y-%m-%d'),
+            execution_time=now.strftime('%H:%M:%S'),
+            process_step=step,
+            status=status,
+            records_processed=records_processed,
+            records_success=records_success,
+            records_error=records_error,
+            message=message,
+            timestamp=now.isoformat()
+        )
         
-        return ETLLogger(etl_run_id, log_level, log_dir)
+        # Store log entry
+        self.log_entries.append(log_entry)
+        
+        # Log to Python logger
+        self._log_to_python_logger(log_entry)
+        
+        return log_entry
+    
+    def _log_to_python_logger(self, log_entry: LogEntry):
+        """Log entry to Python logging system"""
+        log_msg = (
+            f"[{log_entry.process_step}] {log_entry.message} "
+            f"(Processed: {log_entry.records_processed}, "
+            f"Success: {log_entry.records_success}, "
+            f"Error: {log_entry.records_error})"
+        )
+        
+        status_level_map = {
+            ETLConstants.STATUS.SUCCESS: logging.INFO,
+            ETLConstants.STATUS.INFO: logging.INFO,
+            ETLConstants.STATUS.WARNING: logging.WARNING,
+            ETLConstants.STATUS.ERROR: logging.ERROR,
+        }
+        
+        level = status_level_map.get(log_entry.status, logging.INFO)
+        self.logger.log(level, log_msg)
+    
+    @staticmethod
+    def _generate_log_id() -> str:
+        """Generate unique log ID"""
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        unique_part = str(uuid.uuid4())[:6]
+        return f"{ETLConstants.PREFIX.LOG_ID}{timestamp}{unique_part}"
+    
+    def get_etl_run_id(self) -> str:
+        """Get the ETL run ID"""
+        return self.etl_run_id
+    
+    def get_log_entries(self) -> list:
+        """Get all log entries for this run"""
+        return self.log_entries
+    
+    def get_statistics(self) -> dict:
+        """Get logging statistics"""
+        total_processed = sum(e.records_processed for e in self.log_entries)
+        total_success = sum(e.records_success for e in self.log_entries)
+        total_error = sum(e.records_error for e in self.log_entries)
+        
+        status_counts = {}
+        for entry in self.log_entries:
+            status_counts[entry.status] = status_counts.get(entry.status, 0) + 1
+        
+        return {
+            'total_log_entries': len(self.log_entries),
+            'total_records_processed': total_processed,
+            'total_records_success': total_success,
+            'total_records_error': total_error,
+            'status_counts': status_counts
+        }
+    
+    def clear_logs(self):
+        """Clear all stored log entries"""
+        self.log_entries.clear()
