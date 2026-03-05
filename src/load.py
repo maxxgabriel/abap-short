@@ -1,175 +1,141 @@
 """
-Data loading module for ETL pipeline.
-Loads transformed analytics data into target storage.
+Load module for Sales ETL System.
+Loads transformed analytics data into target destination.
 """
-
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col
-from typing import Optional, Dict
+from typing import Optional
 import logging
 
 
-class DataLoader:
-    """Handles loading of analytics data into target storage."""
+class SalesLoader:
+    """Loads transformed analytics data into target."""
     
-    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger):
+    def __init__(self, spark: SparkSession, logger: logging.Logger):
         """
-        Initialize the data loader.
+        Initialize the loader.
         
         Args:
             spark: SparkSession instance
-            config: Configuration dictionary
             logger: Logger instance
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
     
-    def load_data(self, analytics_df: DataFrame) -> bool:
+    def load_data(self, df_analytics: DataFrame, target_path: str, mode: str = "append") -> int:
         """
-        Load analytics data into target storage.
+        Load analytics data to target destination.
         
         Args:
-            analytics_df: DataFrame containing analytics data
-            
+            df_analytics: Analytics DataFrame to load
+            target_path: Target path for data
+            mode: Write mode (append, overwrite, etc.)
+        
         Returns:
-            True if load succeeds, False otherwise
+            Number of records loaded
+        
+        Raises:
+            Exception: If load fails
         """
         try:
-            self.logger.info("Starting data load")
+            self.logger.info(f"Starting data load to {target_path}")
             
-            # Get target configuration
-            target_path = self.config.get('target_path', 'data/analytics/sales')
-            target_format = self.config.get('target_format', 'parquet')
-            write_mode = self.config.get('write_mode', 'append')
-            partition_by = self.config.get('partition_by', ['trans_date'])
+            # Validate records before loading
+            df_valid = self._validate_records(df_analytics)
             
-            # Validate data before loading
-            if not self._validate_before_load(analytics_df):
-                raise ValueError("Data validation failed before load")
+            record_count = df_valid.count()
             
-            # Write to target
-            writer = analytics_df.write \
-                .format(target_format) \
-                .mode(write_mode)
+            # Write to target (Parquet format)
+            df_valid.write.mode(mode).parquet(target_path)
             
-            # Add partitioning if configured
-            if partition_by:
-                writer = writer.partitionBy(*partition_by)
+            self.logger.info(f"Loaded {record_count} records successfully")
             
-            writer.save(target_path)
-            
-            record_count = analytics_df.count()
-            self.logger.info(f"Loaded {record_count} records successfully to {target_path}")
-            
-            return True
+            return record_count
             
         except Exception as e:
             self.logger.error(f"Load failed: {str(e)}")
             raise
     
-    def _validate_before_load(self, df: DataFrame) -> bool:
+    def _validate_records(self, df: DataFrame) -> DataFrame:
         """
-        Validate data before loading.
+        Validate records before loading.
         
         Args:
             df: DataFrame to validate
-            
+        
         Returns:
-            True if validation passes
+            DataFrame with only valid records
         """
-        try:
-            # Check for required columns
-            required_cols = ["analytics_id", "customer_id", "product_id", "gross_amount"]
-            missing_cols = [c for c in required_cols if c not in df.columns]
-            
-            if missing_cols:
-                self.logger.error(f"Missing required columns: {missing_cols}")
-                return False
-            
-            # Check for empty DataFrame
-            if df.rdd.isEmpty():
-                self.logger.warning("DataFrame is empty")
-                return False
-            
-            # Check for invalid categories
-            valid_categories = ['HIGH', 'MEDIUM', 'LOW']
-            invalid_category_count = df.filter(
-                ~col("category").isin(valid_categories)
-            ).count()
-            
-            if invalid_category_count > 0:
-                self.logger.error(f"Found {invalid_category_count} records with invalid category")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Validation error: {str(e)}")
-            return False
+        # Filter out invalid records
+        df_valid = df.filter(
+            (col("analytics_id").isNotNull()) &
+            (col("customer_id").isNotNull()) &
+            (col("product_id").isNotNull()) &
+            (col("gross_amount") > 0) &
+            (col("currency").isNotNull()) &
+            (col("category").isin("HIGH", "MEDIUM", "LOW"))
+        )
+        
+        invalid_count = df.count() - df_valid.count()
+        if invalid_count > 0:
+            self.logger.warning(f"Filtered out {invalid_count} invalid records")
+        
+        return df_valid
     
-    def update_source_status(self, trans_ids: list) -> bool:
+    def load_to_database(self, df_analytics: DataFrame, jdbc_url: str, 
+                        table_name: str, properties: dict, mode: str = "append") -> int:
         """
-        Update status of processed records in source.
+        Load analytics data to database via JDBC.
         
         Args:
-            trans_ids: List of transaction IDs to update
-            
+            df_analytics: Analytics DataFrame to load
+            jdbc_url: JDBC connection URL
+            table_name: Target table name
+            properties: JDBC connection properties
+            mode: Write mode (append, overwrite, etc.)
+        
         Returns:
-            True if update succeeds
+            Number of records loaded
+        
+        Raises:
+            Exception: If load fails
         """
         try:
-            self.logger.info(f"Updating status for {len(trans_ids)} records")
+            self.logger.info(f"Starting data load to database table {table_name}")
             
-            source_path = self.config.get('source_path', 'data/raw/sales')
+            # Validate records before loading
+            df_valid = self._validate_records(df_analytics)
             
-            # Read source data
-            df = self.spark.read.parquet(source_path)
+            record_count = df_valid.count()
             
-            # Update status for processed records
-            df_updated = df.withColumn(
-                "status",
-                col("status").when(col("trans_id").isin(trans_ids), "P").otherwise(col("status"))
+            # Write to database
+            df_valid.write.jdbc(
+                url=jdbc_url,
+                table=table_name,
+                mode=mode,
+                properties=properties
             )
             
-            # Write back (in production, use delta/merge)
-            df_updated.write \
-                .mode("overwrite") \
-                .parquet(source_path + "_temp")
+            self.logger.info(f"Loaded {record_count} records to database successfully")
             
-            self.logger.info("Source status updated successfully")
-            return True
+            return record_count
             
         except Exception as e:
-            self.logger.error(f"Status update failed: {str(e)}")
-            return False
+            self.logger.error(f"Database load failed: {str(e)}")
+            raise
+
+
+class LoaderInterface:
+    """Interface contract for all loader components."""
     
-    def get_load_statistics(self, analytics_df: DataFrame) -> Dict[str, int]:
-        """
-        Calculate statistics for loaded data.
-        
-        Args:
-            analytics_df: DataFrame containing loaded data
-            
-        Returns:
-            Dictionary with statistics
-        """
-        try:
-            total_records = analytics_df.count()
-            
-            category_counts = analytics_df.groupBy("category").count().collect()
-            category_stats = {row["category"]: row["count"] for row in category_counts}
-            
-            stats = {
-                "total_records": total_records,
-                "high_value_sales": category_stats.get("HIGH", 0),
-                "medium_value_sales": category_stats.get("MEDIUM", 0),
-                "low_value_sales": category_stats.get("LOW", 0)
-            }
-            
-            self.logger.info(f"Load statistics: {stats}")
-            return stats
-            
-        except Exception as e:
-            self.logger.error(f"Failed to calculate statistics: {str(e)}")
-            return {}
+    def load_data(self, df: DataFrame, target: str, **kwargs) -> int:
+        """Load data to target destination."""
+        raise NotImplementedError("Subclasses must implement load_data()")
+    
+    def get_component_name(self) -> str:
+        """Return component name."""
+        raise NotImplementedError("Subclasses must implement get_component_name()")
+    
+    def validate_target(self, target: str) -> bool:
+        """Validate target destination is accessible."""
+        raise NotImplementedError("Subclasses must implement validate_target()")
