@@ -1,16 +1,17 @@
 """
-ETL Logger Interface - Abstract Base Class
-Defines the contract for ETL logging implementations with integration to Python logging framework.
+ETL Logger Interface - Python Abstract Base Class
+Converted from ABAP interface ZIF_ETL_LOGGER
 """
-
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Optional
-from datetime import datetime
 
 
 class LogStatus(Enum):
-    """Log status codes for ETL operations"""
+    """
+    ETL log status codes.
+    Converted from ZIF_ETL_LOGGER=>gc_status
+    """
     SUCCESS = 'S'
     ERROR = 'E'
     WARNING = 'W'
@@ -18,7 +19,10 @@ class LogStatus(Enum):
 
 
 class ProcessStep(Enum):
-    """ETL process step identifiers"""
+    """
+    ETL process step identifiers.
+    Converted from ZIF_ETL_LOGGER=>gc_step
+    """
     INIT = 'INIT'
     EXTRACT = 'EXTRACT'
     TRANSFORM = 'TRANSFORM'
@@ -30,23 +34,12 @@ class ProcessStep(Enum):
 
 class ETLLoggerInterface(ABC):
     """
-    Abstract base class for ETL logging operations.
+    Abstract base class for ETL logging.
+    Defines the contract for all ETL logger implementations.
     
-    This interface defines the contract that all ETL logger implementations
-    must follow. It integrates with Python's logging framework and provides
-    structured logging for ETL operations.
+    Converted from ABAP interface: ZIF_ETL_LOGGER
     """
-    
-    @abstractmethod
-    def __init__(self, etl_run_id: str) -> None:
-        """
-        Initialize the logger with an ETL run ID.
-        
-        Args:
-            etl_run_id: Unique identifier for the ETL run
-        """
-        pass
-    
+
     @abstractmethod
     def log_message(
         self,
@@ -55,106 +48,27 @@ class ETLLoggerInterface(ABC):
         message: str,
         records_processed: int = 0,
         records_success: int = 0,
-        records_error: int = 0,
-        exception: Optional[Exception] = None
+        records_error: int = 0
     ) -> None:
         """
-        Log a message for an ETL process step.
+        Log an ETL process message.
         
         Args:
-            step: The ETL process step (from ProcessStep enum)
-            status: The log status (from LogStatus enum)
-            message: The log message text
-            records_processed: Total number of records processed (default: 0)
-            records_success: Number of successfully processed records (default: 0)
-            records_error: Number of records with errors (default: 0)
-            exception: Optional exception object for error logging
+            step: The ETL process step (e.g., EXTRACT, TRANSFORM)
+            status: Status code (SUCCESS, ERROR, WARNING, INFO)
+            message: Log message text (max 255 chars)
+            records_processed: Total number of records processed
+            records_success: Number of successfully processed records
+            records_error: Number of records with errors
         """
         pass
-    
+
     @abstractmethod
     def get_etl_run_id(self) -> str:
         """
         Get the current ETL run identifier.
         
         Returns:
-            str: The ETL run ID
+            Unique ETL run ID (20 character string)
         """
         pass
-    
-    @abstractmethod
-    def get_log_entries(self) -> list:
-        """
-        Retrieve all log entries for the current ETL run.
-        
-        Returns:
-            list: List of log entry dictionaries
-        """
-        pass
-    
-    @abstractmethod
-    def flush(self) -> None:
-        """
-        Flush any buffered log entries to the target storage.
-        """
-        pass
-
-
-class LogEntry:
-    """
-    Structured log entry data class.
-    """
-    
-    def __init__(
-        self,
-        log_id: str,
-        etl_run_id: str,
-        execution_date: datetime,
-        execution_time: datetime,
-        process_step: ProcessStep,
-        status: LogStatus,
-        records_processed: int = 0,
-        records_success: int = 0,
-        records_error: int = 0,
-        message: str = ""
-    ):
-        """
-        Initialize a log entry.
-        
-        Args:
-            log_id: Unique log entry identifier
-            etl_run_id: ETL run identifier
-            execution_date: Date of execution
-            execution_time: Time of execution
-            process_step: Process step enum
-            status: Log status enum
-            records_processed: Total records processed
-            records_success: Successful records
-            records_error: Error records
-            message: Log message
-        """
-        self.log_id = log_id
-        self.etl_run_id = etl_run_id
-        self.execution_date = execution_date
-        self.execution_time = execution_time
-        self.process_step = process_step
-        self.status = status
-        self.records_processed = records_processed
-        self.records_success = records_success
-        self.records_error = records_error
-        self.message = message
-    
-    def to_dict(self) -> dict:
-        """Convert log entry to dictionary format."""
-        return {
-            'log_id': self.log_id,
-            'etl_run_id': self.etl_run_id,
-            'execution_date': self.execution_date.strftime('%Y-%m-%d'),
-            'execution_time': self.execution_time.strftime('%H:%M:%S'),
-            'process_step': self.process_step.value,
-            'status': self.status.value,
-            'records_processed': self.records_processed,
-            'records_success': self.records_success,
-            'records_error': self.records_error,
-            'message': self.message
-        }
