@@ -1,231 +1,200 @@
 """
-Data Load Module
-Loads transformed analytics data into target storage.
+Data loading module for Sales ETL pipeline.
+Loads transformed data into target analytics table.
 """
-
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import col, lit
-from typing import Tuple
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col
 import logging
 
-from src.logger import ETLLogger
-from src.exceptions import ETLLoadError
+logger = logging.getLogger(__name__)
 
 
-class DataLoader:
-    """
-    Loads transformed data into target analytics table.
-    Handles validation, data quality checks, and status updates.
-    """
+class SalesLoader:
+    """Loads transformed analytics data into target table."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
+    def __init__(self, spark: SparkSession, config: dict):
         """
-        Initialize the data loader.
+        Initialize loader with Spark session and configuration.
         
         Args:
-            spark: SparkSession instance
-            logger: ETLLogger instance for logging
+            spark: Active SparkSession
             config: Configuration dictionary
         """
         self.spark = spark
-        self.logger = logger
         self.config = config
+        self.logger = logger
     
     def load_data(
         self, 
-        df_analytics: DataFrame,
-        target_path: str = None
-    ) -> Tuple[bool, int, int]:
+        analytics_df: DataFrame,
+        target_table: str = None,
+        write_mode: str = None
+    ) -> dict:
         """
-        Load transformed data into target storage.
+        Load analytics data into target table.
         
         Args:
-            df_analytics: Transformed analytics DataFrame
-            target_path: Optional override for target path
+            analytics_df: DataFrame containing transformed analytics data
+            target_table: Optional target table name override
+            write_mode: Write mode (append, overwrite, etc.)
             
         Returns:
-            Tuple of (success boolean, success count, error count)
-            
-        Raises:
-            ETLLoadError: If load operation fails
+            Dictionary containing load statistics
         """
+        table_name = target_table or self.config['target']['table_name']
+        mode = write_mode or self.config['target']['write_mode']
+        
+        self.logger.info(f"Starting data load to table {table_name} with mode {mode}")
+        
         try:
-            self.logger.log_message(
-                step="LOAD",
-                status="I",
-                message="Starting data load"
-            )
+            # Get initial count
+            initial_count = analytics_df.count()
             
-            total_count = df_analytics.count()
+            # Write to target table
+            analytics_df.write.mode(mode).saveAsTable(table_name)
             
-            # Validate all records before loading
-            df_valid, df_invalid = self._validate_records(df_analytics)
+            self.logger.info(f"Successfully loaded {initial_count} records to {table_name}")
             
-            valid_count = df_valid.count()
-            invalid_count = df_invalid.count()
-            
-            # Log invalid records if any
-            if invalid_count > 0:
-                self.logger.log_message(
-                    step="LOAD",
-                    status="W",
-                    message=f"Found {invalid_count} invalid records, will skip"
-                )
-                self._log_invalid_records(df_invalid)
-            
-            # Load valid records
-            if valid_count > 0:
-                self._write_to_target(df_valid, target_path)
-                
-                # Update source status (mark as processed)
-                self._update_source_status(df_valid)
-            
-            self.logger.log_message(
-                step="LOAD",
-                status="S",
-                records_processed=total_count,
-                records_success=valid_count,
-                records_error=invalid_count,
-                message=f"Loaded {valid_count} of {total_count} records"
-            )
-            
-            return True, valid_count, invalid_count
+            # Return statistics
+            return {
+                "success": True,
+                "records_loaded": initial_count,
+                "target_table": table_name,
+                "write_mode": mode
+            }
             
         except Exception as e:
-            error_msg = f"Load failed: {str(e)}"
-            self.logger.log_message(
-                step="LOAD",
-                status="E",
-                message=error_msg
-            )
-            raise ETLLoadError(error_msg, step="LOAD") from e
+            self.logger.error(f"Load failed: {str(e)}")
+            return {
+                "success": False,
+                "records_loaded": 0,
+                "error": str(e)
+            }
     
-    def _validate_records(
-        self, 
-        df: DataFrame
-    ) -> Tuple[DataFrame, DataFrame]:
+    def load_with_partitioning(
+        self,
+        analytics_df: DataFrame,
+        partition_columns: list,
+        target_table: str = None
+    ) -> dict:
         """
-        Validate records and separate valid from invalid.
+        Load data with partitioning for better query performance.
         
         Args:
-            df: DataFrame to validate
+            analytics_df: DataFrame containing analytics data
+            partition_columns: List of columns to partition by
+            target_table: Optional target table name
             
         Returns:
-            Tuple of (valid DataFrame, invalid DataFrame)
+            Dictionary containing load statistics
         """
-        # Define validation conditions
-        validation_condition = (
-            (col("analytics_id").isNotNull()) &
-            (col("customer_id").isNotNull()) &
-            (col("product_id").isNotNull()) &
-            (col("gross_amount") > 0) &
-            (col("currency").isNotNull()) &
-            (col("category").isin("HIGH", "MEDIUM", "LOW"))
-        )
+        table_name = target_table or self.config['target']['table_name']
         
-        # Split into valid and invalid
-        df_valid = df.filter(validation_condition)
-        df_invalid = df.filter(~validation_condition)
+        self.logger.info(f"Loading data with partitioning on {partition_columns}")
         
-        return df_valid, df_invalid
+        try:
+            initial_count = analytics_df.count()
+            
+            # Write with partitioning
+            analytics_df.write \
+                .mode("append") \
+                .partitionBy(*partition_columns) \
+                .saveAsTable(table_name)
+            
+            self.logger.info(f"Successfully loaded {initial_count} records with partitioning")
+            
+            return {
+                "success": True,
+                "records_loaded": initial_count,
+                "target_table": table_name,
+                "partitions": partition_columns
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Partitioned load failed: {str(e)}")
+            return {
+                "success": False,
+                "records_loaded": 0,
+                "error": str(e)
+            }
     
-    def _write_to_target(self, df: DataFrame, target_path: str = None) -> None:
+    def update_source_status(
+        self,
+        processed_ids: list,
+        source_table: str = None
+    ) -> bool:
         """
-        Write data to target storage.
+        Update status of processed records in source table.
         
         Args:
-            df: DataFrame to write
-            target_path: Optional override for target path
+            processed_ids: List of transaction IDs that were processed
+            source_table: Optional source table name
+            
+        Returns:
+            True if update successful, False otherwise
         """
-        target = target_path or self.config.get("target_path")
-        target_format = self.config.get("target_format", "parquet")
-        write_mode = self.config.get("write_mode", "append")
+        table_name = source_table or self.config['source']['table_name']
         
-        if target_format == "jdbc":
-            self._write_to_jdbc(df, target)
-        elif target_format == "delta":
-            self._write_to_delta(df, target, write_mode)
-        elif target_format == "parquet":
-            self._write_to_parquet(df, target, write_mode)
-        elif target_format == "csv":
-            self._write_to_csv(df, target, write_mode)
-        else:
-            raise ValueError(f"Unsupported target format: {target_format}")
-    
-    def _write_to_jdbc(self, df: DataFrame, connection_config: dict) -> None:
-        """Write data to JDBC target (e.g., SAP HANA, Oracle)."""
-        jdbc_url = connection_config.get("url")
-        table_name = connection_config.get("table", "zsales_analytics")
-        write_mode = connection_config.get("mode", "append")
+        self.logger.info(f"Updating status for {len(processed_ids)} records in {table_name}")
         
-        df.write \
-            .format("jdbc") \
-            .option("url", jdbc_url) \
-            .option("dbtable", table_name) \
-            .option("user", connection_config.get("user")) \
-            .option("password", connection_config.get("password")) \
-            .option("driver", connection_config.get("driver", "com.sap.db.jdbc.Driver")) \
-            .mode(write_mode) \
-            .save()
-    
-    def _write_to_delta(self, df: DataFrame, path: str, mode: str) -> None:
-        """Write data to Delta Lake format."""
-        df.write \
-            .format("delta") \
-            .mode(mode) \
-            .save(path)
-    
-    def _write_to_parquet(self, df: DataFrame, path: str, mode: str) -> None:
-        """Write data to Parquet format."""
-        df.write \
-            .format("parquet") \
-            .mode(mode) \
-            .partitionBy("trans_date") \
-            .save(path)
-    
-    def _write_to_csv(self, df: DataFrame, path: str, mode: str) -> None:
-        """Write data to CSV format."""
-        df.write \
-            .format("csv") \
-            .option("header", "true") \
-            .mode(mode) \
-            .save(path)
-    
-    def _update_source_status(self, df_loaded: DataFrame) -> None:
-        """
-        Update source records status to 'P' (processed).
-        In production, this would update the source table.
-        
-        Args:
-            df_loaded: DataFrame that was successfully loaded
-        """
-        # Get transaction IDs that were loaded
-        trans_ids = df_loaded.select("analytics_id").distinct()
-        
-        # Log status update
-        count = trans_ids.count()
-        self.logger.log_message(
-            step="LOAD",
-            status="I",
-            message=f"Marking {count} source records as processed"
-        )
-        
-        # In production: UPDATE zsales_raw SET status = 'P' WHERE trans_id IN (...)
-        # For now, just log the action
-    
-    def _log_invalid_records(self, df_invalid: DataFrame) -> None:
-        """
-        Log details about invalid records for debugging.
-        
-        Args:
-            df_invalid: DataFrame containing invalid records
-        """
-        # Sample a few invalid records for logging
-        invalid_sample = df_invalid.limit(10).collect()
-        
-        for idx, row in enumerate(invalid_sample):
-            self.logger.log_message(
-                step="LOAD",
-                status="W",
-                message=f"Invalid record {idx+1}: analytics_id={row.analytics_id}"
+        try:
+            # Read source table
+            source_df = self.spark.read.table(table_name)
+            
+            # Update status to 'P' (Processed) for matching IDs
+            updated_df = source_df.withColumn(
+                "status",
+                when(col("trans_id").isin(processed_ids), lit("P"))
+                .otherwise(col("status"))
             )
+            
+            # Write back (overwrite mode for status update)
+            updated_df.write.mode("overwrite").saveAsTable(table_name)
+            
+            self.logger.info("Source table status updated successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Status update failed: {str(e)}")
+            return False
+    
+    def validate_load(self, target_table: str, etl_run_id: str) -> bool:
+        """
+        Validate that data was loaded correctly.
+        
+        Args:
+            target_table: Target table name
+            etl_run_id: ETL run ID to validate
+            
+        Returns:
+            True if validation passes, False otherwise
+        """
+        self.logger.info(f"Validating load for ETL run {etl_run_id}")
+        
+        try:
+            # Read loaded data
+            loaded_df = self.spark.read.table(target_table)
+            
+            # Filter by ETL run ID
+            run_df = loaded_df.filter(col("etl_run_id") == etl_run_id)
+            
+            # Check record count
+            record_count = run_df.count()
+            
+            if record_count == 0:
+                self.logger.error(f"No records found for ETL run {etl_run_id}")
+                return False
+            
+            # Check for duplicates
+            distinct_count = run_df.select("analytics_id").distinct().count()
+            
+            if distinct_count != record_count:
+                self.logger.error(f"Duplicate analytics_id detected: {record_count - distinct_count} duplicates")
+                return False
+            
+            self.logger.info(f"Load validation passed: {record_count} records")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Load validation failed: {str(e)}")
+            return False
