@@ -1,175 +1,193 @@
-# ETL Configuration File
-# Sales Data ETL System Configuration
-
-# Database Configuration
-database:
-  source:
-    host: localhost
-    port: 5432
-    database: sales_source
-    schema: public
-    table: zsales_raw
-  
-  target:
-    host: localhost
-    port: 5432
-    database: sales_analytics
-    schema: public
-    table: zsales_analytics
-  
-  log:
-    host: localhost
-    port: 5432
-    database: sales_etl
-    schema: public
-    table: zetl_log
+# Sales ETL System Configuration
+# Converted from ABAP ETL system configuration
 
 # Spark Configuration
 spark:
-  app_name: "Sales ETL Pipeline"
+  app_name: "Sales ETL Process"
   master: "local[*]"
-  driver_memory: "2g"
-  executor_memory: "4g"
-  executor_cores: 2
-  log_level: "WARN"
+  # Use local[*] for testing, cluster URL for production
   
-  # Spark SQL settings
-  sql:
-    shuffle_partitions: 200
-    adaptive_enabled: true
-    
-  # Catalog settings (if using Delta Lake or Iceberg)
-  catalog:
-    type: "hive"  # Options: hive, delta, iceberg
-    warehouse_dir: "/user/hive/warehouse"
+  # Spark Session Configuration
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.legacy.timeParserPolicy: "LEGACY"
+    spark.sql.session.timeZone: "UTC"
 
-# ETL Processing Configuration
+# ETL Process Configuration
 etl:
+  # Batch processing settings
   batch_size: 1000
   commit_interval: 500
   parallel_jobs: 4
+  
+  # Retry and timeout settings
   retry_attempts: 3
+  retry_delay_seconds: 5
   timeout_seconds: 3600
+  
+  # Test mode (no commits to database)
   test_mode: false
-  
-  # Date range defaults
-  default_lookback_days: 7
-  
-  # Error handling
-  error_handling:
-    max_errors_per_batch: 10
-    continue_on_error: true
-    error_threshold_percent: 5.0
 
-# Business Rules
+# Data Source Configuration
+data_sources:
+  # Raw sales data source
+  raw_sales:
+    format: "parquet"  # or "jdbc", "csv", "delta"
+    path: "data/raw/sales"
+    # For JDBC connection:
+    # jdbc_url: "jdbc:postgresql://hostname:5432/database"
+    # table: "zsales_raw"
+    # user: "${DB_USER}"
+    # password: "${DB_PASSWORD}"
+    
+  # Analytics target
+  analytics:
+    format: "parquet"
+    path: "data/analytics/sales"
+    mode: "append"  # append, overwrite, errorifexists
+    
+  # ETL logs
+  etl_logs:
+    format: "parquet"
+    path: "data/logs/etl"
+    mode: "append"
+
+# Business Rules Configuration
 business_rules:
+  # Discount rules
   discount:
-    tier1_quantity: 10
-    tier1_rate: 0.05
-    tier2_quantity: 15
-    tier2_rate: 0.10
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05  # 5%
+    rate_tier2: 0.10  # 10%
   
+  # Tax configuration
   tax:
-    rate: 0.08
-  
+    rate: 0.08  # 8%
+    
+  # Cost calculation
   cost:
-    ratio: 0.60
-  
+    ratio: 0.60  # 60% of unit price
+    
+  # Category thresholds
   categories:
     high_threshold: 2000.00
     medium_threshold: 500.00
 
+# Date Range Configuration
+date_range:
+  # Default lookback days if not specified
+  default_lookback_days: 7
+  
+  # Maximum date range allowed
+  max_range_days: 365
+
 # Logging Configuration
 logging:
-  level: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"  # DEBUG, INFO, WARN, ERROR
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   
-  # File logging
+  # Log file configuration
   file:
     enabled: true
-    path: "logs/etl_execution.log"
+    path: "logs/etl.log"
     max_bytes: 10485760  # 10MB
     backup_count: 5
   
   # Console logging
   console:
     enabled: true
-    colored: true
 
-# Data Quality Checks
+# Data Quality Configuration
 data_quality:
-  enabled: true
-  
-  validation_rules:
-    - field: trans_id
-      type: not_null
-      required: true
+  # Validation rules
+  validation:
+    enable_schema_validation: true
+    enable_business_rule_validation: true
+    fail_on_validation_error: false
     
-    - field: customer_id
-      type: not_null
-      required: true
+  # Data quality thresholds
+  thresholds:
+    max_error_rate: 0.05  # 5%
+    min_record_count: 0
     
-    - field: product_id
-      type: not_null
-      required: true
-    
-    - field: quantity
-      type: range
-      min: 1
-      max: 10000
-    
-    - field: unit_price
-      type: range
-      min: 0.01
-      max: 999999.99
-    
-    - field: currency
-      type: in_list
-      values: ["USD", "EUR", "GBP", "JPY"]
-  
-  # Duplicate detection
-  duplicate_check:
-    enabled: true
-    key_fields: ["trans_id"]
-
 # Performance Tuning
 performance:
+  # Partition settings
+  repartition:
+    enabled: true
+    num_partitions: 10
+    
   # Caching
-  cache_enabled: true
-  cache_intermediate_results: true
-  
-  # Partitioning
-  partition_columns: ["trans_date", "region"]
-  num_partitions: 10
-  
-  # Broadcast join threshold (in bytes)
-  broadcast_threshold: 10485760  # 10MB
-  
-  # Compression
-  compression_codec: "snappy"  # Options: none, snappy, gzip, lz4
+  cache:
+    enabled: true
+    storage_level: "MEMORY_AND_DISK"
+    
+  # Broadcast joins
+  broadcast:
+    enabled: true
+    threshold: 10485760  # 10MB
 
-# Monitoring and Alerting
-monitoring:
-  enabled: true
+# Output Configuration
+output:
+  # Write modes
+  write_mode: "append"  # append, overwrite, ignore, errorifexists
   
+  # Partition columns for analytics output
+  partition_by:
+    - "trans_date"
+    - "region"
+    
+  # Compression
+  compression: "snappy"  # none, snappy, gzip, lzo, brotli, lz4, zstd
+  
+  # Coalesce output files
+  coalesce:
+    enabled: true
+    num_files: 1
+
+# Monitoring Configuration
+monitoring:
   # Metrics collection
   metrics:
     enabled: true
-    interval_seconds: 60
-  
-  # Health checks
-  health_check:
-    enabled: true
-    interval_seconds: 300
-  
-  # Alerting thresholds
-  alerts:
-    error_rate_threshold: 5.0  # percent
-    duration_threshold_seconds: 7200
-    memory_threshold_percent: 90
+    output_path: "metrics/etl"
+    
+  # Statistics collection
+  statistics:
+    collect_table_stats: true
+    collect_column_stats: true
 
-# Runtime Environment
-environment:
-  name: "development"  # Options: development, staging, production
-  timezone: "UTC"
-  locale: "en_US"
+# Environment-specific overrides
+environments:
+  development:
+    etl:
+      test_mode: true
+    spark:
+      master: "local[2]"
+    logging:
+      level: "DEBUG"
+      
+  staging:
+    etl:
+      test_mode: false
+      batch_size: 5000
+    spark:
+      master: "spark://staging-cluster:7077"
+    logging:
+      level: "INFO"
+      
+  production:
+    etl:
+      test_mode: false
+      batch_size: 10000
+      parallel_jobs: 8
+    spark:
+      master: "spark://prod-cluster:7077"
+    logging:
+      level: "WARN"
+    performance:
+      repartition:
+        num_partitions: 50
