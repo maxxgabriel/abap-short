@@ -1,98 +1,102 @@
-# PySpark ETL Configuration for Sales Data Processing
+# PySpark ETL Configuration
+# Migrated from ABAP Sales ETL System
+
+app:
+  name: "sales_etl_framework"
+  version: "1.0.0"
+  description: "Shared framework components for ETL operations"
+
 spark:
-  app_name: "SalesETLPipeline"
+  app_name: "SalesETLFramework"
   master: "local[*]"
   config:
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
+    spark.sql.shuffle.partitions: 200
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
 
-# Data sources
-sources:
-  raw_sales:
-    format: "parquet"
-    path: "data/raw/sales"
-    schema_validation: true
+database:
+  source:
+    jdbc_url: "jdbc:postgresql://localhost:5432/sales_source"
+    driver: "org.postgresql.Driver"
+    user: "${DB_SOURCE_USER}"
+    password: "${DB_SOURCE_PASSWORD}"
+    connection_properties:
+      fetchsize: 10000
+      batchsize: 1000
   
-  # Alternative sources for integration testing
-  test_raw_sales:
-    format: "parquet"
-    path: "tests/data/raw/sales"
+  target:
+    jdbc_url: "jdbc:postgresql://localhost:5432/sales_analytics"
+    driver: "org.postgresql.Driver"
+    user: "${DB_TARGET_USER}"
+    password: "${DB_TARGET_PASSWORD}"
+    connection_properties:
+      batchsize: 1000
+      isolationLevel: "READ_COMMITTED"
 
-# Data targets
-targets:
-  analytics:
-    format: "parquet"
-    path: "data/analytics/sales"
-    mode: "append"
-    partition_by: ["trans_date", "region"]
-  
-  etl_log:
-    format: "parquet"
-    path: "data/logs/etl"
-    mode: "append"
-  
-  # Test targets
-  test_analytics:
-    format: "parquet"
-    path: "tests/data/analytics/sales"
-    mode: "overwrite"
-
-# Business rules
-business_rules:
-  discount:
-    tier1_quantity: 10
-    tier1_rate: 0.05
-    tier2_quantity: 15
-    tier2_rate: 0.10
-  
-  tax:
-    rate: 0.08
-  
-  cost:
-    ratio: 0.60
-  
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
-# ETL configuration
 etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  test_mode: false
+  processing:
+    batch_size: 1000
+    commit_interval: 500
+    retry_attempts: 3
+    timeout_seconds: 3600
+    parallel_jobs: 4
+  
+  business_rules:
+    discount:
+      tier1_quantity_threshold: 10
+      tier1_rate: 0.05
+      tier2_quantity_threshold: 15
+      tier2_rate: 0.10
+    tax:
+      rate: 0.08
+    cost:
+      ratio: 0.60
+    category:
+      high_threshold: 2000.00
+      medium_threshold: 500.00
 
-# Status codes
-status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
+  status_codes:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+    info: "I"
 
-# Process steps
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+  process_steps:
+    init: "INIT"
+    extract: "EXTRACT"
+    transform: "TRANSFORM"
+    load: "LOAD"
+    validate: "VALIDATE"
+    complete: "COMPLETE"
+    error: "ERROR"
 
-# Categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-
-# Logging
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  handlers:
+    console:
+      enabled: true
+      level: "INFO"
+    file:
+      enabled: true
+      level: "DEBUG"
+      filename: "logs/etl_{run_id}.log"
+      max_bytes: 10485760  # 10MB
+      backup_count: 5
+    database:
+      enabled: true
+      table: "etl_log"
+      batch_size: 100
+
+monitoring:
+  metrics:
+    enabled: true
+    interval_seconds: 60
+  alerts:
+    enabled: true
+    error_threshold: 100
+    warning_threshold: 50
