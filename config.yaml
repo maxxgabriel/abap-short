@@ -1,58 +1,105 @@
-# ETL Integration Test Configuration
-spark:
-  app_name: "Sales_ETL_Integration_Tests"
-  master: "local[*]"
-  config:
-    spark.sql.shuffle.partitions: 4
-    spark.sql.adaptive.enabled: true
-    spark.driver.memory: "2g"
-    spark.executor.memory: "2g"
+# Sales ETL System Configuration
+# Migrated from ABAP $ZETL Package
 
 etl:
-  # Business Rules
-  discount:
-    tier1_quantity: 10
-    tier2_quantity: 15
-    tier1_rate: 0.05
-    tier2_rate: 0.10
-  
-  tax_rate: 0.08
-  cost_ratio: 0.60
-  
-  # Category Thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-  
-  # Processing Configuration
+  # ETL process configuration
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
+  parallel_jobs: 4
+  
+  # Date range defaults (days)
+  default_lookback_days: 7
 
-# Test Data Configuration
-test_data:
-  sample_size: 100
-  date_range_days: 30
-  regions:
-    - "NORTH"
-    - "SOUTH"
-    - "EAST"
-    - "WEST"
-  currencies:
-    - "USD"
-    - "EUR"
-    - "GBP"
+business_rules:
+  # Discount rules
+  discount:
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: "0.05"  # 5%
+    rate_tier2: "0.10"  # 10%
+  
+  # Tax configuration
+  tax:
+    rate: "0.08"  # 8%
+  
+  # Cost and profit
+  cost:
+    ratio: "0.60"  # 60% of unit price
+  
+  # Category thresholds
+  category:
+    high_threshold: "2000.00"
+    medium_threshold: "500.00"
 
-# Database Configuration (for integration tests)
 database:
-  raw_sales_table: "raw_sales"
-  analytics_table: "analytics"
-  log_table: "etl_log"
-  checkpoint_location: "/tmp/etl_checkpoint"
+  # Source table
+  source_table: "zsales_raw"
+  
+  # Target table
+  target_table: "zsales_analytics"
+  
+  # Log table
+  log_table: "zetl_log"
 
-# Logging Configuration
 logging:
+  # Logging configuration
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_integration_tests.log"
+  
+  # Log file settings
+  file:
+    enabled: true
+    path: "logs/etl.log"
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+
+spark:
+  # Spark configuration
+  app_name: "SalesETL"
+  master: "local[*]"
+  
+  # Memory settings
+  driver_memory: "2g"
+  executor_memory: "4g"
+  
+  # Shuffle partitions
+  sql_shuffle_partitions: 200
+  
+  # Checkpoint directory
+  checkpoint_dir: "/tmp/spark-checkpoint"
+
+validation:
+  # Data validation rules
+  required_fields:
+    - trans_id
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
+  
+  # Field constraints
+  constraints:
+    quantity:
+      min: 1
+      max: 10000
+    unit_price:
+      min: "0.01"
+      max: "999999.99"
+
+error_handling:
+  # Error handling configuration
+  fail_on_validation_error: false
+  max_error_percentage: 5.0
+  
+  # Error notification
+  notification:
+    enabled: false
+    email_to: []
+
+test_mode:
+  # Test mode settings
+  enabled: false
+  sample_size: 100
+  skip_commit: true
