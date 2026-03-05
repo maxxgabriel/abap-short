@@ -1,196 +1,102 @@
-# ETL Framework Configuration
-# Sales Data Processing System
+# PySpark ETL Configuration for Sales Data Pipeline
+app_name: "Sales ETL Integration Pipeline"
+environment: "production"
 
 # Spark Configuration
 spark:
-  app_name: "SalesETLProcess"
-  master: "local[*]"  # Use local[*] for local mode, or yarn/spark://host:port for cluster
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.default.parallelism: 100
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
-    spark.executor.cores: 4
-    spark.sql.sources.partitionOverwriteMode: "dynamic"
+  master: "local[*]"
+  executor_memory: "4g"
+  driver_memory: "2g"
+  sql_shuffle_partitions: 200
+  log_level: "WARN"
 
 # Database Configuration
 database:
-  host: "localhost"
-  port: 5432
-  database: "sales_etl"
-  username: "etl_user"
-  password: "${DB_PASSWORD}"  # Use environment variable
-  driver: "org.postgresql.Driver"
-  schema: "public"
+  source:
+    format: "jdbc"
+    url: "jdbc:postgresql://localhost:5432/sales_db"
+    driver: "org.postgresql.Driver"
+    table: "zsales_raw"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+    fetch_size: 10000
   
-  # Connection Pool Settings
-  connection_pool:
-    max_connections: 10
-    min_connections: 2
-    connection_timeout: 30000
-    idle_timeout: 600000
+  target:
+    format: "jdbc"
+    url: "jdbc:postgresql://localhost:5432/analytics_db"
+    driver: "org.postgresql.Driver"
+    table: "zsales_analytics"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+    batch_size: 5000
+    mode: "append"
   
-  # SSL Configuration
-  ssl: false
-  ssl_mode: "require"
-  
-  # Table Names
-  tables:
-    raw_sales: "zsales_raw"
-    analytics: "zsales_analytics"
-    etl_log: "zetl_log"
+  log:
+    format: "jdbc"
+    url: "jdbc:postgresql://localhost:5432/etl_db"
+    driver: "org.postgresql.Driver"
+    table: "zetl_log"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
 
-# ETL Configuration
-etl:
-  # Processing Parameters
+# ETL Business Rules
+business_rules:
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  discount:
+    tier1_quantity: 10
+    tier1_rate: 0.05
+    tier2_quantity: 15
+    tier2_rate: 0.10
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+
+# ETL Processing Configuration
+processing:
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
-  
-  # Parallel Processing
   parallel_jobs: 4
-  partition_column: "trans_date"
-  
-  # Status Codes
-  status_codes:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
-  
-  # Process Steps
-  steps:
-    init: "INIT"
-    extract: "EXTRACT"
-    transform: "TRANSFORM"
-    load: "LOAD"
-    validate: "VALIDATE"
-    complete: "COMPLETE"
-    error: "ERROR"
-  
-  # Business Rules
-  business_rules:
-    # Discount Rules
-    discount:
-      tier1_quantity: 10
-      tier1_rate: 0.05
-      tier2_quantity: 15
-      tier2_rate: 0.10
-    
-    # Tax Rules
-    tax:
-      rate: 0.08
-    
-    # Cost Calculation
-    cost:
-      ratio: 0.60
-    
-    # Category Thresholds
-    categories:
-      high_threshold: 2000.00
-      medium_threshold: 500.00
-      labels:
-        high: "HIGH"
-        medium: "MEDIUM"
-        low: "LOW"
-  
-  # ID Prefixes
-  id_prefixes:
-    etl_run: "ETL"
-    log: "LOG"
-    analytics: "ANL"
-  
-  # Data Quality Rules
-  data_quality:
-    required_fields:
-      - customer_id
-      - product_id
-      - quantity
-      - unit_price
-    
-    validation_rules:
-      quantity_min: 1
-      unit_price_min: 0.01
-      gross_amount_min: 0.01
+
+# Date Range Configuration
+date_range:
+  default_days_back: 7
+  date_format: "yyyy-MM-dd"
+
+# Status Codes
+status_codes:
+  new: "N"
+  processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
+
+# Process Steps
+process_steps:
+  init: "INIT"
+  extract: "EXTRACT"
+  transform: "TRANSFORM"
+  load: "LOAD"
+  validate: "VALIDATE"
+  complete: "COMPLETE"
+  error: "ERROR"
 
 # Logging Configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  directory: "logs"
-  enable_console: true
-  enable_file: true
-  
-  # Log Rotation
-  max_bytes: 10485760  # 10MB
-  backup_count: 5
-  
-  # Log Format
+  level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
+  console: true
+  file:
+    enabled: true
+    path: "logs/etl_pipeline.log"
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
 
-# Error Handling
-error_handling:
-  # Continue processing on errors
-  continue_on_error: false
-  
-  # Maximum errors before stopping
-  max_errors: 100
-  
-  # Error notification
-  enable_alerts: false
-  alert_email: "etl-admin@company.com"
-  
-  # Dead Letter Queue
-  dead_letter_table: "etl_errors"
-
-# Performance Tuning
-performance:
-  # Cache intermediate results
-  cache_enabled: true
-  
-  # Broadcast join threshold (bytes)
-  broadcast_threshold: 10485760  # 10MB
-  
-  # Shuffle partitions
-  shuffle_partitions: 200
-  
-  # Adaptive query execution
-  adaptive_enabled: true
-
-# Monitoring
-monitoring:
-  # Enable metrics collection
-  enable_metrics: true
-  
-  # Metrics storage
-  metrics_table: "etl_metrics"
-  
-  # Performance thresholds
-  thresholds:
-    max_duration_seconds: 7200  # 2 hours
-    min_throughput_records_per_second: 100
-
-# Environment-specific overrides
-environments:
-  development:
-    database:
-      host: "localhost"
-    spark:
-      master: "local[*]"
-    logging:
-      level: "DEBUG"
-  
-  production:
-    database:
-      host: "prod-db-host"
-    spark:
-      master: "yarn"
-    logging:
-      level: "INFO"
-    error_handling:
-      enable_alerts: true
+# Testing Configuration
+testing:
+  test_mode: false
+  sample_size: 100
+  mock_data: false
