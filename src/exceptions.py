@@ -1,59 +1,36 @@
-"""
-Exception Handling Module
-Custom exceptions for ETL error handling.
-"""
-
-
 class ETLError(Exception):
-    """Base exception for all ETL errors."""
+    """Base exception for ETL errors"""
     
-    def __init__(
-        self,
-        message: str,
-        error_step: str = "",
-        record_id: str = "",
-        previous: Exception = None
-    ):
+    def __init__(self, message: str, step: str = None, record_id: str = None):
         self.message = message
-        self.error_step = error_step
+        self.step = step
         self.record_id = record_id
-        self.previous = previous
         super().__init__(self.message)
     
     def __str__(self):
-        details = [f"ETLError: {self.message}"]
-        if self.error_step:
-            details.append(f"Step: {self.error_step}")
+        error_parts = [self.message]
+        if self.step:
+            error_parts.append(f"Step: {self.step}")
         if self.record_id:
-            details.append(f"Record ID: {self.record_id}")
-        if self.previous:
-            details.append(f"Caused by: {str(self.previous)}")
-        return " | ".join(details)
+            error_parts.append(f"Record: {self.record_id}")
+        return " | ".join(error_parts)
 
 
 class ExtractError(ETLError):
-    """Exception raised during data extraction."""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_step="EXTRACT", **kwargs)
+    """Exception raised during data extraction"""
+    pass
 
 
 class TransformError(ETLError):
-    """Exception raised during data transformation."""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_step="TRANSFORM", **kwargs)
+    """Exception raised during data transformation"""
+    pass
 
 
 class LoadError(ETLError):
-    """Exception raised during data loading."""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_step="LOAD", **kwargs)
+    """Exception raised during data loading"""
+    pass
 
 
 class ValidationError(ETLError):
-    """Exception raised during data validation."""
-    
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_step="VALIDATE", **kwargs)
+    """Exception raised during data validation"""
+    pass
