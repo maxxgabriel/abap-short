@@ -1,110 +1,169 @@
-"""
-ETL Extraction module with integrated logging
-"""
-
-from typing import List, Dict, Any
-from datetime import datetime
+"""Data extraction module."""
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from pyspark.sql.functions import col, lit
+from typing import Optional
+from datetime import datetime
 
 from src.logger import ETLLogger
+from src.schemas import ETLSchemas
+from src.resilience import with_retry
 
 
-class SalesDataExtractor:
-    """
-    Extract sales data with correlation tracking
-    Replaces ZCL_ETL_EXTRACTOR from ABAP
-    """
+class DataExtractor:
+    """Extracts raw sales data from source."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger):
-        """
-        Initialize extractor
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
+        """Initialize data extractor.
         
         Args:
             spark: SparkSession instance
-            logger: ETL logger with correlation tracking
+            logger: ETL logger instance
+            config: Extractor configuration
         """
         self.spark = spark
         self.logger = logger
-        
-    def get_schema(self) -> StructType:
-        """Define schema for raw sales data"""
-        return StructType([
-            StructField("trans_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("quantity", IntegerType(), False),
-            StructField("unit_price", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("status", StringType(), False)
-        ])
+        self.config = config
+        self.source_config = config.get('sources', {}).get('raw_sales', {})
     
+    @with_retry
     def extract_data(
         self,
         from_date: str,
         to_date: str,
-        source_path: str
+        checkpoint_path: Optional[str] = None
     ) -> DataFrame:
-        """
-        Extract raw sales data
+        """Extract raw sales data for date range.
         
         Args:
             from_date: Start date (YYYY-MM-DD)
             to_date: End date (YYYY-MM-DD)
-            source_path: Source data path
+            checkpoint_path: Optional checkpoint path to save data
             
         Returns:
-            DataFrame with extracted data
+            DataFrame containing raw sales data
         """
         try:
-            self.logger.log_extract(
-                message=f"Starting extraction from {from_date} to {to_date}",
-                source_path=source_path
+            self.logger.log_message(
+                step='EXTRACT',
+                status='I',
+                message=f'Starting extraction from {from_date} to {to_date}'
             )
             
-            # Read data with schema
+            # Read raw data
+            source_path = self.source_config.get('path')
+            source_format = self.source_config.get('format', 'parquet')
+            
             df = self.spark.read \
-                .schema(self.get_schema()) \
-                .option("header", "true") \
-                .csv(source_path)
+                .format(source_format) \
+                .schema(ETLSchemas.raw_sales_schema()) \
+                .load(source_path)
             
             # Filter by date range and status
             df_filtered = df.filter(
-                (df.trans_date >= from_date) &
-                (df.trans_date <= to_date) &
-                (df.status == 'N')
-            )
-            
-            # Add correlation context
-            df_with_context = df_filtered.withColumn(
-                "correlation_id",
-                self.spark.sql.functions.lit(self.logger.get_correlation_id())
-            ).withColumn(
-                "etl_run_id",
-                self.spark.sql.functions.lit(self.logger.get_etl_run_id())
+                (col('trans_date') >= lit(from_date)) &
+                (col('trans_date') <= lit(to_date)) &
+                (col('status') == lit('N'))
             )
             
             # Cache for performance
-            df_with_context.cache()
-            record_count = df_with_context.count()
+            df_filtered.cache()
             
-            self.logger.log_extract(
-                message=f"Extracted {record_count} records successfully",
-                records=record_count,
-                success=True,
-                date_range={'from': from_date, 'to': to_date}
+            record_count = df_filtered.count()
+            
+            # Save checkpoint if requested
+            if checkpoint_path:
+                df_filtered.write.mode('overwrite').parquet(checkpoint_path)
+            
+            self.logger.log_message(
+                step='EXTRACT',
+                status='S',
+                message=f'Extracted {record_count} records successfully',
+                records_processed=record_count,
+                records_success=record_count,
+                records_error=0
             )
             
-            return df_with_context
+            return df_filtered
             
         except Exception as e:
-            self.logger.log_error(
+            self.logger.log_message(
                 step='EXTRACT',
-                message=f"Extraction failed: {str(e)}",
-                exception=e,
-                source_path=source_path
+                status='E',
+                message=f'Extraction failed: {str(e)}',
+                error_details=str(e)
             )
             raise
+    
+    def create_sample_data(self) -> DataFrame:
+        """Create sample data for testing.
+        
+        Returns:
+            DataFrame containing sample sales data
+        """
+        from pyspark.sql.types import Row
+        from datetime import date
+        
+        sample_data = [
+            Row(
+                trans_id='T000001',
+                trans_date=date.today(),
+                customer_id='CUST001',
+                product_id='PROD001',
+                quantity=10,
+                unit_price=99.99,
+                currency='USD',
+                sales_rep='John Doe',
+                region='NORTH',
+                status='N'
+            ),
+            Row(
+                trans_id='T000002',
+                trans_date=date.today(),
+                customer_id='CUST002',
+                product_id='PROD002',
+                quantity=5,
+                unit_price=149.99,
+                currency='USD',
+                sales_rep='Jane Smith',
+                region='SOUTH',
+                status='N'
+            ),
+            Row(
+                trans_id='T000003',
+                trans_date=date.today(),
+                customer_id='CUST003',
+                product_id='PROD001',
+                quantity=20,
+                unit_price=99.99,
+                currency='USD',
+                sales_rep='John Doe',
+                region='EAST',
+                status='N'
+            ),
+            Row(
+                trans_id='T000004',
+                trans_date=date.today(),
+                customer_id='CUST001',
+                product_id='PROD003',
+                quantity=3,
+                unit_price=299.99,
+                currency='USD',
+                sales_rep='Bob Wilson',
+                region='WEST',
+                status='N'
+            ),
+            Row(
+                trans_id='T000005',
+                trans_date=date.today(),
+                customer_id='CUST004',
+                product_id='PROD002',
+                quantity=15,
+                unit_price=149.99,
+                currency='USD',
+                sales_rep='Jane Smith',
+                region='SOUTH',
+                status='N'
+            ),
+        ]
+        
+        return self.spark.createDataFrame(sample_data, ETLSchemas.raw_sales_schema())
