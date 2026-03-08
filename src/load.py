@@ -1,240 +1,225 @@
 """
-Data Loading Module
-Loads transformed analytics data to target destination
+Load module for Sales ETL process.
+Loads transformed analytics data into target table.
 """
 
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import current_timestamp, lit
-from typing import Dict, Any, Optional
 import logging
+from typing import Tuple
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col
+
+from src.logger import ETLLogger
 
 
-class DataLoader:
-    """
-    PySpark data loading component supporting multiple target types.
-    """
+logger = logging.getLogger(__name__)
 
-    def __init__(self, spark: SparkSession, config: Dict[str, Any]):
+
+class Loader:
+    """Handles data loading to target analytics table."""
+    
+    def __init__(self, spark: SparkSession, etl_logger: ETLLogger, config: dict):
         """
-        Initialize the DataLoader.
-
+        Initialize loader.
+        
         Args:
-            spark: Active SparkSession instance
-            config: Configuration dictionary with target parameters
+            spark: SparkSession instance
+            etl_logger: ETL logging instance
+            config: Configuration dictionary
         """
         self.spark = spark
+        self.etl_logger = etl_logger
         self.config = config
-        self.logger = logging.getLogger(__name__)
-
-    def load_to_jdbc(
-        self,
-        df: DataFrame,
-        table_name: Optional[str] = None,
+        
+    def load_data(
+        self, 
+        df_analytics: DataFrame,
+        target_table: str = None,
         mode: str = "append"
-    ) -> int:
+    ) -> bool:
         """
-        Load data to SAP database via JDBC connection.
-
+        Load analytics data to target table.
+        
         Args:
-            df: DataFrame to load
-            table_name: Optional target table name override
-            mode: Write mode ('append', 'overwrite')
-
+            df_analytics: Analytics DataFrame to load
+            target_table: Optional override for target table name
+            mode: Write mode (append, overwrite)
+            
         Returns:
-            int: Number of records loaded
-
-        Raises:
-            ValueError: If JDBC configuration is missing
+            Success flag
         """
-        jdbc_config = self.config.get("jdbc", {})
-        if not jdbc_config.get("url"):
-            raise ValueError("JDBC URL not configured")
-
-        table = table_name or jdbc_config.get("target_table", "ZSALES_ANALYTICS")
-
-        self.logger.info(f"Loading {df.count()} records to JDBC target: {table}")
-
-        jdbc_options = {
-            "url": jdbc_config["url"],
-            "dbtable": table,
-            "driver": jdbc_config.get("driver", "com.sap.db.jdbc.Driver"),
-            "batchsize": str(jdbc_config.get("batch_size", 1000)),
-        }
-
-        # Add authentication credentials
-        if jdbc_config.get("user"):
-            jdbc_options["user"] = jdbc_config["user"]
-        if jdbc_config.get("password"):
-            jdbc_options["password"] = jdbc_config["password"]
-
+        step = "LOAD"
+        
         try:
-            df.write \
-                .format("jdbc") \
-                .options(**jdbc_options) \
-                .mode(mode) \
-                .save()
-
-            record_count = df.count()
-            self.logger.info(f"Successfully loaded {record_count} records to JDBC")
-            return record_count
-
+            self.etl_logger.log_message(
+                step=step,
+                status="S",
+                message="Starting data load"
+            )
+            
+            record_count = df_analytics.count()
+            
+            # Get target table name
+            table_name = target_table or self.config.get("target_table", "zsales_analytics")
+            
+            # Validate records before load
+            df_valid = self._validate_records(df_analytics)
+            valid_count = df_valid.count()
+            error_count = record_count - valid_count
+            
+            if error_count > 0:
+                self.etl_logger.log_message(
+                    step=step,
+                    status="W",
+                    records_error=error_count,
+                    message=f"Skipped {error_count} invalid records"
+                )
+            
+            # Write to target table
+            df_valid.write.mode(mode).saveAsTable(table_name)
+            
+            # Update source table status
+            self._update_source_status(df_valid)
+            
+            self.etl_logger.log_message(
+                step=step,
+                status="S",
+                records_processed=record_count,
+                records_success=valid_count,
+                records_error=error_count,
+                message=f"Loaded {valid_count} of {record_count} records to {table_name}"
+            )
+            
+            logger.info(f"Loaded {valid_count} records to {table_name}")
+            
+            return True
+            
         except Exception as e:
-            self.logger.error(f"JDBC load failed: {str(e)}")
-            raise
-
-    def load_to_delta(
+            error_msg = f"Load failed: {str(e)}"
+            self.etl_logger.log_message(
+                step=step,
+                status="E",
+                message=error_msg
+            )
+            logger.error(error_msg, exc_info=True)
+            return False
+            
+    def load_to_path(
         self,
-        df: DataFrame,
-        path: Optional[str] = None,
-        mode: str = "append"
-    ) -> int:
+        df_analytics: DataFrame,
+        output_path: str,
+        format: str = "parquet",
+        partition_by: list = None
+    ) -> bool:
         """
-        Load data to Delta Lake table.
-
+        Load analytics data to file path.
+        
         Args:
-            df: DataFrame to load
-            path: Optional Delta table path override
-            mode: Write mode ('append', 'overwrite')
-
-        Returns:
-            int: Number of records loaded
-        """
-        delta_path = path or self.config.get("delta", {}).get("target_path")
-        if not delta_path:
-            raise ValueError("Delta target path not configured")
-
-        self.logger.info(f"Loading {df.count()} records to Delta target: {delta_path}")
-
-        try:
-            df.write \
-                .format("delta") \
-                .mode(mode) \
-                .save(delta_path)
-
-            record_count = df.count()
-            self.logger.info(f"Successfully loaded {record_count} records to Delta")
-            return record_count
-
-        except Exception as e:
-            self.logger.error(f"Delta load failed: {str(e)}")
-            raise
-
-    def load_to_parquet(
-        self,
-        df: DataFrame,
-        path: Optional[str] = None,
-        mode: str = "append",
-        partition_by: Optional[list] = None
-    ) -> int:
-        """
-        Load data to Parquet files.
-
-        Args:
-            df: DataFrame to load
-            path: Optional Parquet path override
-            mode: Write mode ('append', 'overwrite')
+            df_analytics: Analytics DataFrame to load
+            output_path: Output path for data
+            format: Output format (parquet, csv, json)
             partition_by: Optional list of columns to partition by
-
+            
         Returns:
-            int: Number of records loaded
+            Success flag
         """
-        parquet_path = path or self.config.get("parquet", {}).get("target_path")
-        if not parquet_path:
-            raise ValueError("Parquet target path not configured")
-
-        self.logger.info(f"Loading {df.count()} records to Parquet target: {parquet_path}")
-
+        step = "LOAD"
+        
         try:
-            writer = df.write.mode(mode)
-
+            self.etl_logger.log_message(
+                step=step,
+                status="S",
+                message=f"Starting data load to {output_path}"
+            )
+            
+            record_count = df_analytics.count()
+            
+            # Validate records
+            df_valid = self._validate_records(df_analytics)
+            valid_count = df_valid.count()
+            
+            # Write to path
+            writer = df_valid.write.mode("overwrite")
+            
             if partition_by:
                 writer = writer.partitionBy(*partition_by)
-
-            writer.parquet(parquet_path)
-
-            record_count = df.count()
-            self.logger.info(f"Successfully loaded {record_count} records to Parquet")
-            return record_count
-
-        except Exception as e:
-            self.logger.error(f"Parquet load failed: {str(e)}")
-            raise
-
-    def update_source_status(
-        self,
-        processed_ids: list,
-        status: str = "P"
-    ) -> None:
-        """
-        Update status of processed records in source table.
-
-        Args:
-            processed_ids: List of transaction IDs to update
-            status: New status value ('P' for processed)
-        """
-        jdbc_config = self.config.get("jdbc", {})
-        source_table = jdbc_config.get("source_table", "ZSALES_RAW")
-
-        if not processed_ids:
-            self.logger.warning("No transaction IDs to update")
-            return
-
-        self.logger.info(f"Updating status for {len(processed_ids)} records in {source_table}")
-
-        # In production, implement proper SQL UPDATE logic
-        # This is a placeholder for the update operation
-        self.logger.info(f"Status update would mark records as '{status}'")
-
-    def load(
-        self,
-        df: DataFrame,
-        target_type: Optional[str] = None
-    ) -> int:
-        """
-        Main loading method that routes to appropriate target handler.
-
-        Args:
-            df: DataFrame to load
-            target_type: Optional target type override ('jdbc', 'delta', 'parquet')
-
-        Returns:
-            int: Number of records loaded
-
-        Raises:
-            ValueError: If target type is invalid or not configured
-        """
-        target = target_type or self.config.get("target_type", "jdbc")
-
-        self.logger.info(f"Starting load with target type: {target}")
-
-        if target == "jdbc":
-            return self.load_to_jdbc(df)
-        elif target == "delta":
-            return self.load_to_delta(df)
-        elif target == "parquet":
-            partition_cols = self.config.get("parquet", {}).get("partition_by", ["trans_date"])
-            return self.load_to_parquet(df, partition_by=partition_cols)
-        else:
-            raise ValueError(f"Unsupported target type: {target}")
-
-    def validate_load(self, df: DataFrame, records_loaded: int) -> bool:
-        """
-        Validate loaded data count matches expected count.
-
-        Args:
-            df: Source DataFrame
-            records_loaded: Number of records reported as loaded
-
-        Returns:
-            bool: True if validation passes
-        """
-        expected_count = df.count()
-
-        if records_loaded != expected_count:
-            self.logger.error(
-                f"Load count mismatch: expected {expected_count}, loaded {records_loaded}"
+                
+            if format.lower() == "csv":
+                writer.csv(output_path, header=True)
+            elif format.lower() == "json":
+                writer.json(output_path)
+            else:  # Default to parquet
+                writer.parquet(output_path)
+            
+            self.etl_logger.log_message(
+                step=step,
+                status="S",
+                records_processed=record_count,
+                records_success=valid_count,
+                message=f"Loaded {valid_count} records to {output_path}"
             )
+            
+            logger.info(f"Loaded {valid_count} records to {output_path}")
+            
+            return True
+            
+        except Exception as e:
+            error_msg = f"Load to path failed: {str(e)}"
+            self.etl_logger.log_message(
+                step=step,
+                status="E",
+                message=error_msg
+            )
+            logger.error(error_msg, exc_info=True)
             return False
-
-        self.logger.info("Load validation passed")
-        return True
+            
+    def _validate_records(self, df: DataFrame) -> DataFrame:
+        """
+        Validate records before loading.
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Validated DataFrame
+        """
+        # Check required fields
+        df_valid = df.filter(
+            (col("analytics_id").isNotNull()) &
+            (col("customer_id").isNotNull()) &
+            (col("product_id").isNotNull()) &
+            (col("gross_amount") > 0) &
+            (col("currency").isNotNull()) &
+            (col("category").isin(["HIGH", "MEDIUM", "LOW"]))
+        )
+        
+        return df_valid
+        
+    def _update_source_status(self, df: DataFrame):
+        """
+        Update status in source table for processed records.
+        
+        Args:
+            df: DataFrame with processed analytics records
+        """
+        try:
+            source_table = self.config.get("source_table", "zsales_raw")
+            
+            # In production, this would execute an UPDATE statement
+            # For now, we log the intent
+            record_count = df.count()
+            
+            self.etl_logger.log_message(
+                step="LOAD",
+                status="I",
+                records_processed=record_count,
+                message=f"Source status update required for {record_count} records in {source_table}"
+            )
+            
+            # Example UPDATE (would be executed via JDBC or Delta Lake merge):
+            # UPDATE zsales_raw SET status = 'P' 
+            # WHERE trans_id IN (SELECT trans_id FROM processed_records)
+            
+            logger.info(f"Status update logged for {record_count} source records")
+            
+        except Exception as e:
+            logger.warning(f"Source status update failed: {str(e)}")
