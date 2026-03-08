@@ -1,66 +1,83 @@
-# ETL Logging System Configuration
+# PySpark ETL Pipeline Configuration
+pipeline:
+  name: "sales_etl_pipeline"
+  version: "1.0.0"
+  description: "Sales data ETL pipeline with resilience"
+
+spark:
+  app_name: "SalesETLPipeline"
+  master: "local[*]"
+  log_level: "WARN"
+  config:
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+
+sources:
+  raw_sales:
+    format: "parquet"
+    path: "data/input/sales_raw"
+    options:
+      mergeSchema: "true"
+
+targets:
+  analytics:
+    format: "parquet"
+    path: "data/output/sales_analytics"
+    mode: "append"
+    partitionBy: ["trans_date"]
+  
+  logs:
+    format: "parquet"
+    path: "data/logs/etl_logs"
+    mode: "append"
+
+checkpoints:
+  enabled: true
+  base_path: "data/checkpoints"
+  stages:
+    - extract
+    - transform
+    - load
+
+retry:
+  max_attempts: 3
+  initial_backoff_seconds: 2
+  max_backoff_seconds: 60
+  backoff_multiplier: 2.0
+  retryable_exceptions:
+    - "AnalysisException"
+    - "IOException"
+    - "TimeoutException"
+
+business_rules:
+  discount:
+    tier1_quantity: 10
+    tier2_quantity: 15
+    tier1_rate: 0.05
+    tier2_rate: 0.10
+  
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  
+  category_thresholds:
+    high: 2000.00
+    medium: 500.00
+
+processing:
+  batch_size: 1000
+  commit_interval: 500
+  timeout_seconds: 3600
+  
+validation:
+  enabled: true
+  fail_on_error: false
+  error_threshold_percent: 5.0
 
 logging:
-  # Log format configuration
-  format:
-    structured: true  # Use JSON structured logging
-    include_correlation: true  # Include correlation IDs
-    
-  # Output configuration
-  console:
-    enabled: true
-    level: INFO
-    
-  file:
-    enabled: true
-    path: "logs/etl_{etl_run_id}.log"
-    level: DEBUG
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
-    
-  # Log rotation
-  rotation:
-    when: "midnight"
-    interval: 1
-    backup_count: 30
-
-# ABAP status code mapping
-status_mapping:
-  S: INFO     # Success
-  I: INFO     # Info
-  W: WARNING  # Warning
-  E: ERROR    # Error
-  N: INFO     # New
-
-# ETL process steps
-process_steps:
-  - INIT
-  - EXTRACT
-  - TRANSFORM
-  - LOAD
-  - VALIDATE
-  - COMPLETE
-  - ERROR
-
-# Correlation tracking
-correlation:
-  generate_uuid: true
-  propagate_to_spark: true
-  include_in_metrics: true
-
-# Performance monitoring
-monitoring:
-  log_execution_time: true
-  log_memory_usage: true
-  log_record_counts: true
-  
-# Error handling
-error_handling:
-  max_retries: 3
-  retry_delay_seconds: 5
-  log_stack_trace: true
-
-# Batch processing
-batch:
-  log_interval: 1000  # Log progress every N records
-  commit_interval: 500
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  output:
+    console: true
+    file: true
+    file_path: "logs/etl_pipeline.log"
