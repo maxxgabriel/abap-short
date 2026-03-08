@@ -1,367 +1,366 @@
 """
-Unit tests for ETL Logger Interface and Implementation
+Unit tests for ETL Logger Interface and Enums
 """
-
 import pytest
 from datetime import datetime
+from unittest.mock import Mock, patch
+
 from src.logger_interface import (
-    ETLStatus,
-    ETLStep,
-    ETLLogEntry,
-    ETLLoggerInterface
+    LogStatus,
+    ProcessStep,
+    ETLComponentStatus,
+    SaleCategory,
+    ETLConstants,
+    IETLLogger,
+    ETLLoggerProtocol
 )
-from src.logger import ETLLogger
+from src.logger_impl import ETLLogger, verify_logger_protocol
 
 
-class TestETLStatus:
-    """Test cases for ETLStatus enum."""
+class TestEnums:
+    """Test enum definitions"""
+    
+    def test_log_status_values(self):
+        """Test LogStatus enum values match ABAP constants"""
+        assert LogStatus.SUCCESS.value == "S"
+        assert LogStatus.ERROR.value == "E"
+        assert LogStatus.WARNING.value == "W"
+        assert LogStatus.INFO.value == "I"
+    
+    def test_process_step_values(self):
+        """Test ProcessStep enum values match ABAP constants"""
+        assert ProcessStep.INIT.value == "INIT"
+        assert ProcessStep.EXTRACT.value == "EXTRACT"
+        assert ProcessStep.TRANSFORM.value == "TRANSFORM"
+        assert ProcessStep.LOAD.value == "LOAD"
+        assert ProcessStep.VALIDATE.value == "VALIDATE"
+        assert ProcessStep.COMPLETE.value == "COMPLETE"
+        assert ProcessStep.ERROR.value == "ERROR"
+    
+    def test_component_status_values(self):
+        """Test ETLComponentStatus enum values"""
+        assert ETLComponentStatus.NEW.value == "N"
+        assert ETLComponentStatus.PROCESSED.value == "P"
+        assert ETLComponentStatus.ERROR.value == "E"
+        assert ETLComponentStatus.WARNING.value == "W"
+        assert ETLComponentStatus.SUCCESS.value == "S"
+        assert ETLComponentStatus.INFO.value == "I"
+    
+    def test_sale_category_values(self):
+        """Test SaleCategory enum values"""
+        assert SaleCategory.HIGH.value == "HIGH"
+        assert SaleCategory.MEDIUM.value == "MEDIUM"
+        assert SaleCategory.LOW.value == "LOW"
+    
+    def test_enum_membership(self):
+        """Test enum membership checks"""
+        assert LogStatus.SUCCESS in LogStatus
+        assert ProcessStep.EXTRACT in ProcessStep
+        assert SaleCategory.HIGH in SaleCategory
 
-    def test_status_values(self):
-        """Test that status enum has correct values."""
-        assert ETLStatus.SUCCESS.value == 'S'
-        assert ETLStatus.ERROR.value == 'E'
-        assert ETLStatus.WARNING.value == 'W'
-        assert ETLStatus.INFO.value == 'I'
 
-    def test_status_members(self):
-        """Test that all expected status members exist."""
-        expected_members = {'SUCCESS', 'ERROR', 'WARNING', 'INFO'}
-        actual_members = {member.name for member in ETLStatus}
-        assert actual_members == expected_members
+class TestETLConstants:
+    """Test ETL constants class"""
+    
+    def test_discount_constants(self):
+        """Test discount-related constants"""
+        assert ETLConstants.DISCOUNT_QTY_TIER1 == 10
+        assert ETLConstants.DISCOUNT_QTY_TIER2 == 15
+        assert ETLConstants.DISCOUNT_RATE_TIER1 == 0.05
+        assert ETLConstants.DISCOUNT_RATE_TIER2 == 0.10
+    
+    def test_tax_constants(self):
+        """Test tax constants"""
+        assert ETLConstants.TAX_RATE == 0.08
+    
+    def test_cost_constants(self):
+        """Test cost constants"""
+        assert ETLConstants.COST_RATIO == 0.60
+    
+    def test_category_thresholds(self):
+        """Test category threshold constants"""
+        assert ETLConstants.CATEGORY_HIGH_THRESHOLD == 2000.00
+        assert ETLConstants.CATEGORY_MEDIUM_THRESHOLD == 500.00
+    
+    def test_etl_config_defaults(self):
+        """Test ETL configuration defaults"""
+        assert ETLConstants.DEFAULT_BATCH_SIZE == 1000
+        assert ETLConstants.DEFAULT_COMMIT_INTERVAL == 500
+        assert ETLConstants.DEFAULT_RETRY_ATTEMPTS == 3
+        assert ETLConstants.DEFAULT_TIMEOUT_SECONDS == 3600
+    
+    def test_id_prefixes(self):
+        """Test ID prefix constants"""
+        assert ETLConstants.PREFIX_ETL_RUN == "ETL"
+        assert ETLConstants.PREFIX_LOG_ID == "LOG"
+        assert ETLConstants.PREFIX_ANALYTICS_ID == "ANL"
+    
+    def test_message_texts(self):
+        """Test message text constants"""
+        assert ETLConstants.MSG_INIT_SUCCESS == "ETL process initialized successfully"
+        assert ETLConstants.MSG_EXTRACT_START == "Starting data extraction"
+        assert ETLConstants.MSG_ETL_COMPLETE == "ETL process completed successfully"
 
 
-class TestETLStep:
-    """Test cases for ETLStep enum."""
-
-    def test_step_values(self):
-        """Test that step enum has correct values."""
-        assert ETLStep.INIT.value == 'INIT'
-        assert ETLStep.EXTRACT.value == 'EXTRACT'
-        assert ETLStep.TRANSFORM.value == 'TRANSFORM'
-        assert ETLStep.LOAD.value == 'LOAD'
-        assert ETLStep.VALIDATE.value == 'VALIDATE'
-        assert ETLStep.COMPLETE.value == 'COMPLETE'
-        assert ETLStep.ERROR.value == 'ERROR'
-
-    def test_step_members(self):
-        """Test that all expected step members exist."""
-        expected_members = {
-            'INIT', 'EXTRACT', 'TRANSFORM', 'LOAD',
-            'VALIDATE', 'COMPLETE', 'ERROR'
-        }
-        actual_members = {member.name for member in ETLStep}
-        assert actual_members == expected_members
-
-
-class TestETLLogEntry:
-    """Test cases for ETLLogEntry data class."""
-
-    @pytest.fixture
-    def sample_log_entry(self):
-        """Create a sample log entry for testing."""
-        now = datetime.now()
-        return ETLLogEntry(
-            log_id='LOG20231215120000',
-            etl_run_id='ETL20231215120000',
-            execution_date=now,
-            execution_time=now,
-            process_step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            records_processed=100,
-            records_success=95,
-            records_error=5,
-            message='Extraction completed'
-        )
-
-    def test_log_entry_creation(self, sample_log_entry):
-        """Test that log entry is created with correct attributes."""
-        assert sample_log_entry.log_id == 'LOG20231215120000'
-        assert sample_log_entry.etl_run_id == 'ETL20231215120000'
-        assert sample_log_entry.process_step == ETLStep.EXTRACT
-        assert sample_log_entry.status == ETLStatus.SUCCESS
-        assert sample_log_entry.records_processed == 100
-        assert sample_log_entry.records_success == 95
-        assert sample_log_entry.records_error == 5
-
-    def test_log_entry_to_dict(self, sample_log_entry):
-        """Test conversion of log entry to dictionary."""
-        log_dict = sample_log_entry.to_dict()
+class TestETLLoggerInterface:
+    """Test ETL logger interface and protocol"""
+    
+    def test_abstract_methods(self):
+        """Test that interface defines abstract methods"""
+        with pytest.raises(TypeError):
+            # Cannot instantiate abstract class
+            IETLLogger()
+    
+    def test_protocol_verification(self):
+        """Test protocol verification function"""
+        # Mock logger that implements protocol
+        mock_logger = Mock(spec=ETLLoggerProtocol)
+        mock_logger.log_message = Mock()
+        mock_logger.get_etl_run_id = Mock(return_value="ETL123")
         
-        assert isinstance(log_dict, dict)
-        assert log_dict['log_id'] == 'LOG20231215120000'
-        assert log_dict['etl_run_id'] == 'ETL20231215120000'
-        assert log_dict['process_step'] == 'EXTRACT'
-        assert log_dict['status'] == 'S'
-        assert log_dict['records_processed'] == 100
-        assert log_dict['records_success'] == 95
-        assert log_dict['records_error'] == 5
-
-    def test_log_entry_repr(self, sample_log_entry):
-        """Test string representation of log entry."""
-        repr_str = repr(sample_log_entry)
-        assert 'ETLLogEntry' in repr_str
-        assert 'LOG20231215120000' in repr_str
-        assert 'EXTRACT' in repr_str
-        assert 'SUCCESS' in repr_str
+        assert verify_logger_protocol(mock_logger)
+    
+    def test_protocol_method_signatures(self):
+        """Test protocol method signatures"""
+        mock_logger = Mock(spec=ETLLoggerProtocol)
+        
+        # Verify method exists
+        assert hasattr(mock_logger, 'log_message')
+        assert hasattr(mock_logger, 'get_etl_run_id')
 
 
-class TestETLLogger:
-    """Test cases for ETLLogger implementation."""
-
+class TestETLLoggerImplementation:
+    """Test concrete ETL logger implementation"""
+    
     @pytest.fixture
-    def etl_logger(self):
-        """Create an ETL logger instance for testing."""
-        return ETLLogger(etl_run_id='TEST_RUN_001')
-
-    def test_logger_initialization(self, etl_logger):
-        """Test that logger initializes correctly."""
-        assert etl_logger.get_etl_run_id() == 'TEST_RUN_001'
-        assert len(etl_logger.get_log_entries()) == 0
-
-    def test_log_message_basic(self, etl_logger):
-        """Test basic message logging."""
-        etl_logger.log_message(
-            step=ETLStep.INIT,
-            status=ETLStatus.SUCCESS,
-            message='ETL process initialized'
+    def etl_run_id(self):
+        """Fixture for ETL run ID"""
+        return "ETL20240101120000"
+    
+    @pytest.fixture
+    def logger(self, etl_run_id):
+        """Fixture for logger instance"""
+        return ETLLogger(etl_run_id=etl_run_id, spark=None)
+    
+    def test_logger_initialization(self, logger, etl_run_id):
+        """Test logger initialization"""
+        assert logger.get_etl_run_id() == etl_run_id
+        assert logger.get_log_entries() == []
+    
+    def test_log_message_basic(self, logger):
+        """Test basic log message creation"""
+        logger.log_message(
+            step=ProcessStep.INIT,
+            status=LogStatus.SUCCESS,
+            message="Test message"
         )
-
-        entries = etl_logger.get_log_entries()
+        
+        entries = logger.get_log_entries()
         assert len(entries) == 1
-        assert entries[0]['process_step'] == 'INIT'
-        assert entries[0]['status'] == 'S'
-        assert entries[0]['message'] == 'ETL process initialized'
-
-    def test_log_message_with_counts(self, etl_logger):
-        """Test logging with record counts."""
-        etl_logger.log_message(
-            step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            message='Data extracted',
+        assert entries[0]["process_step"] == "INIT"
+        assert entries[0]["status"] == "S"
+        assert entries[0]["message"] == "Test message"
+    
+    def test_log_message_with_counts(self, logger):
+        """Test log message with record counts"""
+        logger.log_message(
+            step=ProcessStep.EXTRACT,
+            status=LogStatus.SUCCESS,
+            message="Extraction complete",
             records_processed=100,
             records_success=95,
             records_error=5
         )
-
-        entries = etl_logger.get_log_entries()
-        assert len(entries) == 1
-        assert entries[0]['records_processed'] == 100
-        assert entries[0]['records_success'] == 95
-        assert entries[0]['records_error'] == 5
-
-    def test_multiple_log_messages(self, etl_logger):
-        """Test logging multiple messages."""
-        etl_logger.log_message(
-            step=ETLStep.INIT,
-            status=ETLStatus.SUCCESS,
-            message='Initialized'
-        )
-        etl_logger.log_message(
-            step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            message='Extracted'
-        )
-        etl_logger.log_message(
-            step=ETLStep.TRANSFORM,
-            status=ETLStatus.WARNING,
-            message='Transformed with warnings'
-        )
-
-        entries = etl_logger.get_log_entries()
-        assert len(entries) == 3
-        assert entries[0]['process_step'] == 'INIT'
-        assert entries[1]['process_step'] == 'EXTRACT'
-        assert entries[2]['process_step'] == 'TRANSFORM'
-        assert entries[2]['status'] == 'W'
-
-    def test_log_error_status(self, etl_logger):
-        """Test logging error status."""
-        etl_logger.log_message(
-            step=ETLStep.LOAD,
-            status=ETLStatus.ERROR,
-            message='Load failed: Database connection error',
-            records_processed=100,
-            records_success=0,
-            records_error=100
-        )
-
-        entries = etl_logger.get_log_entries()
-        assert len(entries) == 1
-        assert entries[0]['status'] == 'E'
-        assert 'failed' in entries[0]['message']
-
-    def test_set_etl_run_id(self, etl_logger):
-        """Test changing ETL run ID."""
-        original_id = etl_logger.get_etl_run_id()
-        new_id = 'TEST_RUN_002'
         
-        etl_logger.set_etl_run_id(new_id)
-        assert etl_logger.get_etl_run_id() == new_id
-        assert etl_logger.get_etl_run_id() != original_id
-
-    def test_clear_logs(self, etl_logger):
-        """Test clearing log entries."""
-        # Add some log entries
-        for i in range(5):
-            etl_logger.log_message(
-                step=ETLStep.EXTRACT,
-                status=ETLStatus.SUCCESS,
-                message=f'Message {i}'
+        entries = logger.get_log_entries()
+        assert len(entries) == 1
+        assert entries[0]["records_processed"] == 100
+        assert entries[0]["records_success"] == 95
+        assert entries[0]["records_error"] == 5
+    
+    def test_log_id_generation(self, logger):
+        """Test unique log ID generation"""
+        logger.log_message(
+            step=ProcessStep.EXTRACT,
+            status=LogStatus.SUCCESS,
+            message="Message 1"
+        )
+        
+        logger.log_message(
+            step=ProcessStep.TRANSFORM,
+            status=LogStatus.SUCCESS,
+            message="Message 2"
+        )
+        
+        entries = logger.get_log_entries()
+        assert len(entries) == 2
+        assert entries[0]["log_id"] != entries[1]["log_id"]
+        assert entries[0]["log_id"].startswith("LOG")
+        assert entries[1]["log_id"].startswith("LOG")
+    
+    def test_multiple_log_entries(self, logger):
+        """Test multiple log entries accumulation"""
+        steps = [
+            ProcessStep.INIT,
+            ProcessStep.EXTRACT,
+            ProcessStep.TRANSFORM,
+            ProcessStep.LOAD,
+            ProcessStep.COMPLETE
+        ]
+        
+        for step in steps:
+            logger.log_message(
+                step=step,
+                status=LogStatus.SUCCESS,
+                message=f"{step.value} completed"
             )
         
-        assert len(etl_logger.get_log_entries()) == 5
-        
-        etl_logger.clear_logs()
-        assert len(etl_logger.get_log_entries()) == 0
-
-    def test_get_statistics(self, etl_logger):
-        """Test getting logging statistics."""
-        # Log messages with different statuses
-        etl_logger.log_message(
-            step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            message='Success 1'
-        )
-        etl_logger.log_message(
-            step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            message='Success 2'
-        )
-        etl_logger.log_message(
-            step=ETLStep.TRANSFORM,
-            status=ETLStatus.WARNING,
-            message='Warning 1'
-        )
-        etl_logger.log_message(
-            step=ETLStep.LOAD,
-            status=ETLStatus.ERROR,
-            message='Error 1'
-        )
-
-        stats = etl_logger.get_statistics()
-        assert stats['total_entries'] == 4
-        assert stats['status_counts']['success'] == 2
-        assert stats['status_counts']['warning'] == 1
-        assert stats['status_counts']['error'] == 1
-        assert stats['status_counts']['info'] == 0
-        assert stats['etl_run_id'] == 'TEST_RUN_001'
-
-    def test_generate_unique_log_ids(self, etl_logger):
-        """Test that each log entry gets a unique ID."""
-        for i in range(10):
-            etl_logger.log_message(
-                step=ETLStep.EXTRACT,
-                status=ETLStatus.SUCCESS,
-                message=f'Message {i}'
-            )
-
-        entries = etl_logger.get_log_entries()
-        log_ids = [entry['log_id'] for entry in entries]
-        
-        # All IDs should be unique
-        assert len(log_ids) == len(set(log_ids))
-        
-        # All IDs should start with 'LOG'
-        assert all(log_id.startswith('LOG') for log_id in log_ids)
-
-    def test_logger_interface_compliance(self, etl_logger):
-        """Test that ETLLogger implements the interface correctly."""
-        assert isinstance(etl_logger, ETLLoggerInterface)
-        
-        # Verify all interface methods are implemented
-        assert hasattr(etl_logger, 'log_message')
-        assert hasattr(etl_logger, 'get_etl_run_id')
-        assert hasattr(etl_logger, 'set_etl_run_id')
-        assert hasattr(etl_logger, 'get_log_entries')
-        assert hasattr(etl_logger, 'clear_logs')
-
-    def test_timestamp_format_in_log_entries(self, etl_logger):
-        """Test that timestamps are properly formatted."""
-        etl_logger.log_message(
-            step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            message='Test message'
-        )
-
-        entries = etl_logger.get_log_entries()
-        entry = entries[0]
-        
-        # Check date format (YYYY-MM-DD)
-        assert len(entry['execution_date']) == 10
-        assert entry['execution_date'][4] == '-'
-        assert entry['execution_date'][7] == '-'
-        
-        # Check time format (HH:MM:SS)
-        assert len(entry['execution_time']) == 8
-        assert entry['execution_time'][2] == ':'
-        assert entry['execution_time'][5] == ':'
-
-
-class TestETLLoggerIntegration:
-    """Integration tests for ETL logger."""
-
-    def test_complete_etl_workflow_logging(self):
-        """Test logging throughout a complete ETL workflow."""
-        logger = ETLLogger(etl_run_id='ETL_INTEGRATION_TEST')
-
-        # Initialize
-        logger.log_message(
-            step=ETLStep.INIT,
-            status=ETLStatus.SUCCESS,
-            message='ETL process initialized'
-        )
-
-        # Extract
-        logger.log_message(
-            step=ETLStep.EXTRACT,
-            status=ETLStatus.SUCCESS,
-            message='Data extracted from source',
-            records_processed=1000,
-            records_success=1000,
-            records_error=0
-        )
-
-        # Transform
-        logger.log_message(
-            step=ETLStep.TRANSFORM,
-            status=ETLStatus.WARNING,
-            message='Data transformed with some warnings',
-            records_processed=1000,
-            records_success=980,
-            records_error=20
-        )
-
-        # Load
-        logger.log_message(
-            step=ETLStep.LOAD,
-            status=ETLStatus.SUCCESS,
-            message='Data loaded to target',
-            records_processed=980,
-            records_success=980,
-            records_error=0
-        )
-
-        # Complete
-        logger.log_message(
-            step=ETLStep.COMPLETE,
-            status=ETLStatus.SUCCESS,
-            message='ETL process completed successfully'
-        )
-
-        # Verify workflow
         entries = logger.get_log_entries()
         assert len(entries) == 5
+        assert [e["process_step"] for e in entries] == [s.value for s in steps]
+    
+    def test_timestamp_fields(self, logger):
+        """Test timestamp field population"""
+        logger.log_message(
+            step=ProcessStep.INIT,
+            status=LogStatus.SUCCESS,
+            message="Test"
+        )
+        
+        entry = logger.get_log_entries()[0]
+        assert "execution_date" in entry
+        assert "execution_time" in entry
+        assert "timestamp" in entry
+        
+        # Verify format
+        assert len(entry["execution_date"]) == 10  # YYYY-MM-DD
+        assert len(entry["execution_time"]) == 8   # HH:MM:SS
+    
+    def test_etl_run_id_consistency(self, logger, etl_run_id):
+        """Test ETL run ID is consistent across log entries"""
+        for i in range(3):
+            logger.log_message(
+                step=ProcessStep.EXTRACT,
+                status=LogStatus.SUCCESS,
+                message=f"Message {i}"
+            )
+        
+        entries = logger.get_log_entries()
+        for entry in entries:
+            assert entry["etl_run_id"] == etl_run_id
+    
+    def test_error_logging(self, logger):
+        """Test error status logging"""
+        logger.log_message(
+            step=ProcessStep.TRANSFORM,
+            status=LogStatus.ERROR,
+            message="Transformation failed",
+            records_processed=100,
+            records_success=50,
+            records_error=50
+        )
+        
+        entry = logger.get_log_entries()[0]
+        assert entry["status"] == "E"
+        assert entry["records_error"] == 50
+    
+    def test_warning_logging(self, logger):
+        """Test warning status logging"""
+        logger.log_message(
+            step=ProcessStep.VALIDATE,
+            status=LogStatus.WARNING,
+            message="Validation warning",
+            records_processed=10,
+            records_success=9,
+            records_error=1
+        )
+        
+        entry = logger.get_log_entries()[0]
+        assert entry["status"] == "W"
+        assert entry["message"] == "Validation warning"
+    
+    @patch('builtins.print')
+    def test_console_output(self, mock_print, logger):
+        """Test console output is generated"""
+        logger.log_message(
+            step=ProcessStep.INIT,
+            status=LogStatus.SUCCESS,
+            message="Test message"
+        )
+        
+        # Verify print was called
+        assert mock_print.called
+    
+    def test_protocol_compliance(self, logger):
+        """Test logger implements protocol"""
+        assert isinstance(logger, IETLLogger)
+        assert verify_logger_protocol(logger)
 
-        steps = [entry['process_step'] for entry in entries]
-        expected_steps = ['INIT', 'EXTRACT', 'TRANSFORM', 'LOAD', 'COMPLETE']
-        assert steps == expected_steps
 
-        # Verify statistics
-        stats = logger.get_statistics()
-        assert stats['total_entries'] == 5
-        assert stats['status_counts']['success'] == 4
-        assert stats['status_counts']['warning'] == 1
+class TestLoggerWithSpark:
+    """Test logger with Spark integration"""
+    
+    @pytest.fixture
+    def mock_spark(self):
+        """Fixture for mock Spark session"""
+        spark = Mock()
+        spark.createDataFrame = Mock(return_value=Mock())
+        return spark
+    
+    def test_logger_with_spark_session(self, mock_spark):
+        """Test logger initialization with Spark"""
+        logger = ETLLogger(
+            etl_run_id="ETL123",
+            spark=mock_spark
+        )
+        
+        assert logger._spark is not None
+    
+    @patch('src.logger_impl.ETLLogger._persist_log')
+    def test_persistence_called_with_spark(self, mock_persist, mock_spark):
+        """Test log persistence is called when Spark is available"""
+        logger = ETLLogger(
+            etl_run_id="ETL123",
+            spark=mock_spark
+        )
+        
+        logger.log_message(
+            step=ProcessStep.INIT,
+            status=LogStatus.SUCCESS,
+            message="Test"
+        )
+        
+        assert mock_persist.called
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+class TestEnumUsage:
+    """Test enum usage in practical scenarios"""
+    
+    def test_status_iteration(self):
+        """Test iterating over status enum"""
+        statuses = [status for status in LogStatus]
+        assert len(statuses) == 4
+        assert LogStatus.SUCCESS in statuses
+    
+    def test_process_step_comparison(self):
+        """Test process step comparison"""
+        step1 = ProcessStep.EXTRACT
+        step2 = ProcessStep.EXTRACT
+        step3 = ProcessStep.TRANSFORM
+        
+        assert step1 == step2
+        assert step1 != step3
+    
+    def test_enum_value_access(self):
+        """Test accessing enum values"""
+        assert LogStatus.SUCCESS.value == "S"
+        assert ProcessStep.LOAD.value == "LOAD"
+        assert SaleCategory.HIGH.value == "HIGH"
+    
+    def test_enum_from_value(self):
+        """Test creating enum from value"""
+        status = LogStatus("S")
+        assert status == LogStatus.SUCCESS
+        
+        step = ProcessStep("EXTRACT")
+        assert step == ProcessStep.EXTRACT
