@@ -1,119 +1,87 @@
-# ETL Exception Configuration
-# Configuration for exception handling and error management
+# ETL Component Configuration
+# Configuration for ETL component framework and implementations
 
-etl:
-  # Exception handling settings
-  exceptions:
-    # Enable detailed error context
-    detailed_context: true
-    
-    # Include stack traces in error logs
-    include_stacktrace: true
-    
-    # Maximum error context size (characters)
-    max_context_size: 5000
-    
-    # Error code prefix
-    error_code_prefix: "ZETL"
-    
-  # Error phases
-  phases:
-    init: "INIT"
-    extract: "EXTRACT"
-    transform: "TRANSFORM"
-    load: "LOAD"
-    validate: "VALIDATE"
-    complete: "COMPLETE"
-    error: "ERROR"
-    
-  # Status codes (mirrors ABAP gc_status)
-  status:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
-    
-  # Error handling behavior
-  error_handling:
-    # Continue processing after errors
-    continue_on_error: false
-    
-    # Maximum errors before stopping
-    max_errors_before_stop: 100
-    
-    # Retry configuration
-    retry:
-      enabled: true
-      max_attempts: 3
-      backoff_seconds: 5
-      exponential_backoff: true
-      
-    # Error notification
-    notification:
-      enabled: false
-      email_recipients: []
-      slack_webhook: null
-      
+component:
+  # Default component settings
+  default_timeout_seconds: 3600
+  default_retry_attempts: 3
+  enable_validation: true
+  fail_fast: false
+
+execution:
+  # Execution behavior settings
+  parallel_execution: false
+  max_workers: 4
+  batch_size: 1000
+  commit_interval: 500
+
+logging:
   # Logging configuration
-  logging:
-    # Log level for exceptions
-    exception_log_level: "ERROR"
+  log_level: INFO
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_to_console: true
+  log_to_file: true
+  log_file_path: "logs/etl_component.log"
+  log_rotation: daily
+  log_retention_days: 30
+
+monitoring:
+  # Monitoring and metrics
+  enable_metrics: true
+  metrics_port: 9090
+  enable_health_checks: true
+  health_check_interval_seconds: 60
+
+error_handling:
+  # Error handling strategy
+  retry_on_failure: true
+  max_retries: 3
+  retry_delay_seconds: 5
+  exponential_backoff: true
+  backoff_multiplier: 2
+  max_retry_delay_seconds: 300
+
+validation:
+  # Validation rules
+  validate_prerequisites: true
+  validate_input_data: true
+  validate_output_data: true
+  strict_mode: false
+
+performance:
+  # Performance optimization
+  enable_caching: false
+  cache_ttl_seconds: 3600
+  enable_profiling: false
+  profile_output_path: "profiles/"
+
+thresholds:
+  # Quality thresholds
+  min_success_rate_percent: 95.0
+  max_error_rate_percent: 5.0
+  max_duration_seconds: 7200
+  max_memory_mb: 4096
+
+components:
+  # Component-specific configurations
+  extractor:
+    timeout_seconds: 1800
+    batch_size: 5000
+    parallel_reads: true
     
-    # Log level for warnings
-    warning_log_level: "WARNING"
+  transformer:
+    timeout_seconds: 3600
+    batch_size: 1000
+    enable_caching: true
     
-    # Include error context in logs
-    log_context: true
-    
-    # Error log file
-    error_log_file: "logs/etl_errors.log"
-    
-    # Log format
-    log_format: "[%(asctime)s] [%(levelname)s] [%(error_code)s] %(message)s"
-    
-  # Message templates (mirrors ABAP constants)
-  messages:
-    init_success: "ETL process initialized successfully"
-    extract_start: "Starting data extraction"
-    extract_complete: "Data extraction completed"
-    extract_error: "Data extraction failed: {error}"
-    transform_start: "Starting data transformation"
-    transform_complete: "Data transformation completed"
-    transform_error: "Data transformation failed: {error}"
-    load_start: "Starting data load"
-    load_complete: "Data load completed"
-    load_error: "Data load failed: {error}"
-    validate_start: "Starting data validation"
-    validate_complete: "Data validation completed"
-    validate_error: "Data validation failed: {error}"
-    etl_complete: "ETL process completed successfully"
-    etl_error: "ETL process failed: {error}"
-    
-  # Error context fields
-  context_fields:
-    # Fields to always include in error context
-    required:
-      - error_step
-      - timestamp
-      - error_code
-      
-    # Optional fields based on error type
-    optional:
-      extract:
-        - source_table
-        - query
-        - connection_string
-      transform:
-        - field_name
-        - field_value
-        - transformation_rule
-      load:
-        - target_table
-        - operation
-        - constraint_violated
-      validate:
-        - validation_rule
-        - expected_value
-        - actual_value
+  loader:
+    timeout_seconds: 1800
+    batch_size: 500
+    upsert_mode: false
+
+metadata:
+  # Metadata tracking
+  track_lineage: true
+  track_execution_stats: true
+  store_sample_data: false
+  sample_size: 100
