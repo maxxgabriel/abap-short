@@ -1,91 +1,122 @@
-# ETL Logger Configuration
-# Converted from ABAP $ZETL package configuration
+# ETL Configuration File
+# Converted from ABAP ETL system configuration
 
-etl_config:
-  # Process identification
-  prefix:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+# Spark Configuration
+spark:
+  app_name: "Sales ETL System"
+  master: "local[*]"  # Change to yarn or cluster mode for production
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.executor.memory: "4g"
+    spark.driver.memory: "2g"
+    spark.sql.legacy.timeParserPolicy: "LEGACY"
+
+# Data Source Configuration
+data_sources:
+  raw_sales:
+    format: "parquet"  # Change to jdbc, csv, etc. as needed
+    path: "data/raw/sales"
+    options:
+      header: "true"
+      inferSchema: "false"  # Use explicit schema
   
-  # Batch processing
-  batch:
-    default_size: 1000
-    commit_interval: 500
-    retry_attempts: 3
-    timeout_seconds: 3600
+  analytics:
+    format: "parquet"
+    path: "data/analytics/sales"
+    mode: "overwrite"  # append, overwrite, ignore, error
+    partition_by:
+      - "trans_date"
+      - "region"
+
+# ETL Configuration
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  parallel_jobs: 4
+  retry_attempts: 3
+  timeout_seconds: 3600
   
-  # Business rules - Discounts
+  # Date range for extraction (defaults)
+  date_range:
+    from_days_ago: 7
+    to_days_ago: 0
+
+# Business Rules
+business_rules:
   discount:
     qty_tier1: 10
     qty_tier2: 15
     rate_tier1: 0.05
     rate_tier2: 0.10
   
-  # Business rules - Tax
   tax:
     rate: 0.08
   
-  # Business rules - Costs
   cost:
     ratio: 0.60
   
-  # Business rules - Categorization
   category:
     high_threshold: 2000.00
     medium_threshold: 500.00
 
-# Logging configuration
+# Logging Configuration
 logging:
-  # Log output destinations
-  destinations:
-    console: true
-    file: true
-    delta_table: true
-  
-  # Log storage paths
-  paths:
-    delta_table: "s3://etl-logs/etl_log"
-    file_path: "/tmp/etl_logs"
-  
-  # Log levels
-  levels:
-    default: "INFO"
-    error: "ERROR"
-    warning: "WARNING"
-  
-  # Log retention
-  retention:
-    days: 30
-    max_entries: 1000000
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "parquet"
+  path: "data/logs/etl"
+  console_output: true
+  file_output: true
 
-# Status codes mapping
+# Test Mode
+test_mode:
+  enabled: false
+  sample_size: 100
+  mock_data: false
+
+# ID Prefixes
+id_prefixes:
+  etl_run: "ETL"
+  log_id: "LOG"
+  analytics_id: "ANL"
+
+# Status Codes
 status_codes:
-  success: "S"
-  error: "E"
-  warning: "W"
-  info: "I"
   new: "N"
   processed: "P"
+  error: "E"
+  warning: "W"
+  success: "S"
+  info: "I"
 
-# Process steps
+# Process Steps
 process_steps:
-  - INIT
-  - EXTRACT
-  - TRANSFORM
-  - LOAD
-  - VALIDATE
-  - COMPLETE
-  - ERROR
+  - "INIT"
+  - "EXTRACT"
+  - "TRANSFORM"
+  - "LOAD"
+  - "VALIDATE"
+  - "COMPLETE"
 
-# Messages
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+# Categories
+categories:
+  - "HIGH"
+  - "MEDIUM"
+  - "LOW"
+
+# Database Configuration (if using JDBC)
+database:
+  jdbc_url: "jdbc:postgresql://localhost:5432/etl_db"
+  driver: "org.postgresql.Driver"
+  user: "${DB_USER:etl_user}"
+  password: "${DB_PASSWORD:changeme}"
+  connection_properties:
+    ssl: "false"
+    applicationName: "SalesETL"
+
+# Table Names
+tables:
+  raw_sales: "zsales_raw"
+  analytics: "zsales_analytics"
+  etl_log: "zetl_log"
