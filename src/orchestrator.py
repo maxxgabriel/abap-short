@@ -1,202 +1,140 @@
 """
-ETL Orchestrator - Main coordination module
-Orchestrates the complete ETL pipeline
+ETL Orchestrator
+Replaces ZCL_ETL_ORCHESTRATOR class
 """
-from pyspark.sql import SparkSession
 from datetime import datetime
-import logging
-from typing import Dict, Optional
-import uuid
+from typing import Optional
 
-from src.extract import SalesDataExtractor
-from src.transform import SalesDataTransformer
-from src.load import SalesDataLoader
-from src.logger import ETLLogger
+from pyspark.sql import SparkSession, DataFrame
 
-logger = logging.getLogger(__name__)
+from src.extract import DataExtractor
+from src.transform import DataTransformer
+from src.load import DataLoader
+from src.utils.logger import ETLLogger
+from src.utils.exceptions import ETLError
 
 
 class ETLOrchestrator:
-    """Orchestrates the complete ETL pipeline"""
+    """
+    Main ETL orchestrator that coordinates the ETL process
+    Replaces ZCL_ETL_ORCHESTRATOR
+    """
     
-    def __init__(self, spark: SparkSession, config: dict):
-        """
-        Initialize orchestrator
-        
-        Args:
-            spark: Active SparkSession
-            config: Configuration dictionary
-        """
+    def __init__(
+        self,
+        spark: SparkSession,
+        config: dict,
+        test_mode: bool = False
+    ):
+        """Initialize orchestrator with Spark session and configuration"""
         self.spark = spark
         self.config = config
+        self.test_mode = test_mode
+        
+        # Generate unique ETL run ID
         self.etl_run_id = self._generate_etl_run_id()
+        
+        # Initialize logger
+        self.logger = ETLLogger(
+            etl_run_id=self.etl_run_id,
+            config=config
+        )
+        
+        # Initialize ETL components
+        self.extractor = DataExtractor(spark, config, self.logger)
+        self.transformer = DataTransformer(spark, config, self.logger)
+        self.loader = DataLoader(spark, config, self.logger)
+        
+        # Initialize timing
         self.start_time: Optional[datetime] = None
         self.end_time: Optional[datetime] = None
         
-        # Initialize logger
-        self.logger = ETLLogger(spark, self.etl_run_id, config)
-        
-        # Initialize ETL components
-        self.extractor = SalesDataExtractor(spark, config)
-        self.transformer = SalesDataTransformer(spark, config)
-        self.loader = SalesDataLoader(spark, config)
+        # Log initialization
+        self.logger.log_message(
+            step='INIT',
+            status='S',
+            message=f"ETL process initialized with run ID: {self.etl_run_id}"
+        )
     
-    @staticmethod
-    def _generate_etl_run_id() -> str:
+    def _generate_etl_run_id(self) -> str:
         """Generate unique ETL run ID"""
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        return f"ETL_{timestamp}_{str(uuid.uuid4())[:8]}"
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        prefix = self.config.get('id_prefixes', {}).get('etl_run', 'ETL')
+        return f"{prefix}{timestamp}"
     
-    def run_etl(
-        self, 
-        from_date: str, 
-        to_date: str,
-        use_sample_data: bool = False
-    ) -> Dict[str, any]:
+    def run_etl(self, from_date: str, to_date: str) -> bool:
         """
-        Execute complete ETL pipeline
+        Execute complete ETL process
+        Replaces run_etl method from ABAP
         
         Args:
             from_date: Start date (YYYY-MM-DD)
             to_date: End date (YYYY-MM-DD)
-            use_sample_data: Use sample data instead of reading from source
             
         Returns:
-            Dictionary with execution results
+            True if successful, False otherwise
         """
-        self.start_time = datetime.now()
-        
-        self.logger.log_message(
-            step="START",
-            status="S",
-            message=f"ETL process started at {self.start_time}"
-        )
-        
-        results = {
-            "etl_run_id": self.etl_run_id,
-            "success": False,
-            "start_time": self.start_time,
-            "end_time": None,
-            "duration_seconds": None,
-            "statistics": {}
-        }
-        
         try:
-            # Phase 1: Extract
-            logger.info("=== EXTRACT Phase ===")
+            # Capture start time
+            self.start_time = datetime.now()
+            
             self.logger.log_message(
-                step="EXTRACT",
-                status="S",
-                message=f"Starting extraction from {from_date} to {to_date}"
+                step='START',
+                status='S',
+                message=f"ETL process started at {self.start_time}"
             )
             
-            if use_sample_data:
-                df_raw = self.extractor.create_sample_data()
+            # Step 1: Extract
+            print("=== EXTRACT Phase ===")
+            raw_data = self.extractor.extract_data(from_date, to_date)
+            
+            if raw_data is None or raw_data.count() == 0:
+                raise ETLError("Extraction failed or returned no data")
+            
+            # Step 2: Transform
+            print("\n=== TRANSFORM Phase ===")
+            analytics_data = self.transformer.transform_data(raw_data)
+            
+            if analytics_data is None or analytics_data.count() == 0:
+                raise ETLError("Transformation failed or returned no data")
+            
+            # Step 3: Load
+            print("\n=== LOAD Phase ===")
+            if not self.test_mode:
+                success = self.loader.load_data(analytics_data)
+                if not success:
+                    raise ETLError("Load failed")
             else:
-                df_raw = self.extractor.extract_data(
-                    from_date, 
-                    to_date, 
-                    self.etl_run_id
-                )
+                print("Test mode - skipping actual data load")
+                # Show sample data in test mode
+                print("\nSample transformed data (first 5 rows):")
+                analytics_data.show(5, truncate=False)
             
-            extract_count = df_raw.count()
-            self.logger.log_message(
-                step="EXTRACT",
-                status="S",
-                records_processed=extract_count,
-                records_success=extract_count,
-                message=f"Extracted {extract_count} records"
-            )
-            
-            results["statistics"]["extracted"] = extract_count
-            
-            # Phase 2: Transform
-            logger.info("=== TRANSFORM Phase ===")
-            self.logger.log_message(
-                step="TRANSFORM",
-                status="S",
-                message="Starting data transformation"
-            )
-            
-            df_analytics = self.transformer.transform_data(
-                df_raw, 
-                self.etl_run_id
-            )
-            
-            transform_count = df_analytics.count()
-            self.logger.log_message(
-                step="TRANSFORM",
-                status="S",
-                records_processed=transform_count,
-                records_success=transform_count,
-                message=f"Transformed {transform_count} records"
-            )
-            
-            results["statistics"]["transformed"] = transform_count
-            
-            # Phase 3: Load
-            logger.info("=== LOAD Phase ===")
-            self.logger.log_message(
-                step="LOAD",
-                status="S",
-                message="Starting data load"
-            )
-            
-            load_success, load_stats = self.loader.load_data(
-                df_analytics,
-                self.etl_run_id
-            )
-            
-            self.logger.log_message(
-                step="LOAD",
-                status="S" if load_success else "E",
-                records_processed=load_stats["total_count"],
-                records_success=load_stats["valid_count"],
-                records_error=load_stats["invalid_count"],
-                message=f"Loaded {load_stats['valid_count']} records"
-            )
-            
-            results["statistics"]["loaded"] = load_stats["valid_count"]
-            results["statistics"]["load_errors"] = load_stats["invalid_count"]
-            
-            # Completion
+            # Capture end time
             self.end_time = datetime.now()
-            duration = (self.end_time - self.start_time).total_seconds()
-            
-            results["success"] = load_success
-            results["end_time"] = self.end_time
-            results["duration_seconds"] = duration
             
             self.logger.log_message(
-                step="COMPLETE",
-                status="S",
-                message=f"ETL process completed in {duration:.2f} seconds"
+                step='COMPLETE',
+                status='S',
+                message=f"ETL process completed successfully at {self.end_time}"
             )
             
-            # Save logs
-            self.logger.save_logs()
-            
-            return results
+            return True
             
         except Exception as e:
             self.end_time = datetime.now()
             
             self.logger.log_message(
-                step="ERROR",
-                status="E",
+                step='ERROR',
+                status='E',
                 message=f"ETL process failed: {str(e)}"
             )
             
-            results["success"] = False
-            results["end_time"] = self.end_time
-            results["error"] = str(e)
-            
-            logger.error(f"ETL failed: {str(e)}", exc_info=True)
-            
-            # Save error logs
-            self.logger.save_logs()
-            
-            raise
+            return False
+    
+    def get_etl_run_id(self) -> str:
+        """Get ETL run ID"""
+        return self.etl_run_id
     
     def display_summary(self) -> None:
         """Display execution summary"""
