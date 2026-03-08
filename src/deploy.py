@@ -1,404 +1,361 @@
 """
 Deployment automation module for ETL pipeline.
-Handles deployment to production environment with configuration management.
+Handles configuration validation, environment setup, and rollout orchestration.
 """
+
 import os
 import sys
 import yaml
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
+from datetime import datetime
 import subprocess
-import json
+import shutil
 
 from pyspark.sql import SparkSession
 
 
-class DeploymentManager:
-    """Manages deployment of ETL pipeline to production environment."""
+class DeploymentError(Exception):
+    """Custom exception for deployment failures"""
+    pass
+
+
+class ETLDeployment:
+    """Orchestrates ETL deployment and rollout to production"""
     
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str, environment: str):
         """
-        Initialize deployment manager.
+        Initialize deployment manager
         
         Args:
-            config_path: Path to configuration file
+            config_path: Path to deployment configuration file
+            environment: Target environment (dev/staging/prod)
         """
         self.config_path = config_path
+        self.environment = environment
         self.config = self._load_config()
         self.logger = self._setup_logging()
         self.deployment_id = self._generate_deployment_id()
         
     def _load_config(self) -> Dict[str, Any]:
-        """Load deployment configuration from YAML file."""
+        """Load deployment configuration"""
         try:
             with open(self.config_path, 'r') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            print(f"Error loading config: {e}")
-            sys.exit(1)
-            
+                config = yaml.safe_load(f)
+            return config.get('deployment', {}).get(self.environment, {})
+        except FileNotFoundError:
+            raise DeploymentError(f"Configuration file not found: {self.config_path}")
+        except yaml.YAMLError as e:
+            raise DeploymentError(f"Invalid YAML configuration: {str(e)}")
+    
     def _setup_logging(self) -> logging.Logger:
-        """Setup logging for deployment process."""
-        log_config = self.config.get('logging', {})
-        log_level = getattr(logging, log_config.get('level', 'INFO'))
+        """Configure deployment logging"""
+        log_dir = Path('logs/deployment')
+        log_dir.mkdir(parents=True, exist_ok=True)
         
-        logger = logging.getLogger('deployment')
-        logger.setLevel(log_level)
+        logger = logging.getLogger(f'etl_deployment_{self.environment}')
+        logger.setLevel(logging.INFO)
+        
+        # File handler
+        log_file = log_dir / f"deployment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        fh = logging.FileHandler(log_file)
+        fh.setLevel(logging.INFO)
         
         # Console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(log_level)
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        
+        # Formatter
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
         
-        # File handler
-        log_dir = Path(log_config.get('directory', 'logs'))
-        log_dir.mkdir(exist_ok=True)
-        file_handler = logging.FileHandler(
-            log_dir / f"deployment_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        )
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        logger.addHandler(fh)
+        logger.addHandler(ch)
         
         return logger
-        
+    
     def _generate_deployment_id(self) -> str:
-        """Generate unique deployment ID."""
-        return f"DEPLOY_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        """Generate unique deployment identifier"""
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        return f"DEPLOY_{self.environment.upper()}_{timestamp}"
+    
+    def validate_configuration(self) -> bool:
+        """Validate deployment configuration"""
+        self.logger.info(f"Validating configuration for {self.environment}")
         
-    def validate_environment(self) -> bool:
-        """
-        Validate production environment prerequisites.
+        required_keys = ['spark_config', 'paths', 'validation']
+        missing_keys = [key for key in required_keys if key not in self.config]
         
-        Returns:
-            True if environment is valid
-        """
-        self.logger.info("Validating production environment...")
-        
-        env_config = self.config.get('deployment', {}).get('environment', {})
-        
-        # Check Python version
-        required_python = env_config.get('python_version', '3.8')
-        current_python = f"{sys.version_info.major}.{sys.version_info.minor}"
-        
-        if current_python < required_python:
-            self.logger.error(
-                f"Python version {required_python} or higher required. "
-                f"Found: {current_python}"
-            )
+        if missing_keys:
+            self.logger.error(f"Missing required configuration keys: {missing_keys}")
             return False
-            
-        # Check required packages
-        required_packages = env_config.get('required_packages', [])
-        for package in required_packages:
-            try:
-                __import__(package)
-                self.logger.info(f"✓ Package {package} found")
-            except ImportError:
-                self.logger.error(f"✗ Required package {package} not found")
-                return False
-                
-        # Check Spark availability
-        try:
-            spark = SparkSession.builder.appName("validation").getOrCreate()
-            spark_version = spark.version
-            self.logger.info(f"✓ Spark {spark_version} available")
-            spark.stop()
-        except Exception as e:
-            self.logger.error(f"✗ Spark validation failed: {e}")
-            return False
-            
-        # Check directory permissions
-        required_dirs = [
-            'logs',
-            'data',
-            'checkpoints',
-            'metrics'
-        ]
         
-        for dir_name in required_dirs:
-            dir_path = Path(dir_name)
-            dir_path.mkdir(exist_ok=True)
-            
-            if not os.access(dir_path, os.W_OK):
-                self.logger.error(f"✗ No write permission for {dir_path}")
-                return False
-            else:
-                self.logger.info(f"✓ Directory {dir_name} accessible")
-                
-        self.logger.info("Environment validation completed successfully")
+        # Validate paths exist
+        paths = self.config.get('paths', {})
+        for path_key, path_value in paths.items():
+            path = Path(path_value)
+            if not path.exists():
+                self.logger.warning(f"Path does not exist: {path_key}={path_value}")
+        
+        self.logger.info("Configuration validation passed")
         return True
-        
-    def run_tests(self) -> bool:
-        """
-        Run test suite before deployment.
-        
-        Returns:
-            True if all tests pass
-        """
-        self.logger.info("Running test suite...")
+    
+    def run_pre_deployment_tests(self) -> bool:
+        """Execute pre-deployment validation tests"""
+        self.logger.info("Running pre-deployment tests")
         
         try:
+            # Run pytest with coverage
             result = subprocess.run(
-                ['pytest', 'tests/', '-v', '--tb=short'],
+                ['pytest', 'tests/', '-v', '--cov=src', '--cov-report=term-missing'],
                 capture_output=True,
                 text=True,
                 timeout=300
             )
             
-            self.logger.info(result.stdout)
-            
             if result.returncode == 0:
-                self.logger.info("✓ All tests passed")
+                self.logger.info("All tests passed successfully")
+                self.logger.info(result.stdout)
                 return True
             else:
-                self.logger.error("✗ Tests failed")
+                self.logger.error("Tests failed")
+                self.logger.error(result.stdout)
                 self.logger.error(result.stderr)
                 return False
                 
         except subprocess.TimeoutExpired:
-            self.logger.error("Test suite timed out")
+            self.logger.error("Tests timed out after 5 minutes")
             return False
-        except Exception as e:
-            self.logger.error(f"Error running tests: {e}")
+        except FileNotFoundError:
+            self.logger.error("pytest not found. Install with: pip install pytest pytest-cov")
             return False
-            
-    def deploy_configuration(self) -> bool:
-        """
-        Deploy configuration files to production.
+    
+    def backup_existing_deployment(self) -> Optional[str]:
+        """Backup current production deployment"""
+        self.logger.info("Creating backup of existing deployment")
         
-        Returns:
-            True if deployment successful
-        """
-        self.logger.info("Deploying configuration files...")
+        backup_dir = Path(self.config['paths'].get('backup_dir', 'backups'))
+        backup_dir.mkdir(parents=True, exist_ok=True)
         
-        deploy_config = self.config.get('deployment', {})
-        target_env = deploy_config.get('target_environment', 'production')
-        config_dir = Path(deploy_config.get('config_directory', '/etc/etl'))
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = backup_dir / f"backup_{self.deployment_id}_{timestamp}"
         
         try:
-            # Create configuration directory
-            config_dir.mkdir(parents=True, exist_ok=True)
+            # Backup source code
+            src_path = Path('src')
+            if src_path.exists():
+                shutil.copytree(src_path, backup_path / 'src')
             
-            # Copy main configuration
-            target_config = config_dir / 'config.yaml'
-            with open(self.config_path, 'r') as src:
-                config_data = yaml.safe_load(src)
-                
-            # Update environment-specific settings
-            config_data['environment'] = target_env
-            config_data['deployment_id'] = self.deployment_id
-            config_data['deployed_at'] = datetime.now().isoformat()
+            # Backup config
+            config_path = Path('config.yaml')
+            if config_path.exists():
+                shutil.copy(config_path, backup_path / 'config.yaml')
             
-            with open(target_config, 'w') as dst:
-                yaml.dump(config_data, dst, default_flow_style=False)
-                
-            self.logger.info(f"✓ Configuration deployed to {target_config}")
-            
-            # Deploy additional config files
-            additional_configs = deploy_config.get('additional_configs', [])
-            for config_file in additional_configs:
-                src_path = Path(config_file)
-                if src_path.exists():
-                    dst_path = config_dir / src_path.name
-                    with open(src_path, 'r') as src, open(dst_path, 'w') as dst:
-                        dst.write(src.read())
-                    self.logger.info(f"✓ Deployed {config_file}")
-                    
-            return True
+            self.logger.info(f"Backup created at: {backup_path}")
+            return str(backup_path)
             
         except Exception as e:
-            self.logger.error(f"Configuration deployment failed: {e}")
-            return False
-            
-    def deploy_application(self) -> bool:
-        """
-        Deploy application code to production.
-        
-        Returns:
-            True if deployment successful
-        """
-        self.logger.info("Deploying application code...")
-        
-        deploy_config = self.config.get('deployment', {})
-        app_dir = Path(deploy_config.get('application_directory', '/opt/etl'))
+            self.logger.error(f"Backup failed: {str(e)}")
+            return None
+    
+    def deploy_artifacts(self) -> bool:
+        """Deploy ETL artifacts to target environment"""
+        self.logger.info(f"Deploying artifacts to {self.environment}")
         
         try:
-            # Create application directory
-            app_dir.mkdir(parents=True, exist_ok=True)
+            target_path = Path(self.config['paths']['deployment_dir'])
+            target_path.mkdir(parents=True, exist_ok=True)
             
             # Copy source files
-            src_dir = Path('src')
-            for py_file in src_dir.glob('*.py'):
-                dst_path = app_dir / py_file.name
-                with open(py_file, 'r') as src, open(dst_path, 'w') as dst:
-                    dst.write(src.read())
-                self.logger.info(f"✓ Deployed {py_file.name}")
-                
-            # Create deployment manifest
-            manifest = {
-                'deployment_id': self.deployment_id,
-                'deployed_at': datetime.now().isoformat(),
-                'version': self.config.get('version', '1.0.0'),
-                'files': [f.name for f in src_dir.glob('*.py')]
-            }
+            src_files = ['extract.py', 'transform.py', 'load.py', 'monitor.py']
+            for src_file in src_files:
+                src_path = Path('src') / src_file
+                if src_path.exists():
+                    shutil.copy(src_path, target_path / src_file)
+                    self.logger.info(f"Deployed: {src_file}")
             
-            manifest_path = app_dir / 'deployment_manifest.json'
-            with open(manifest_path, 'w') as f:
-                json.dump(manifest, f, indent=2)
-                
-            self.logger.info("✓ Application deployment completed")
+            # Copy configuration
+            config_src = Path('config.yaml')
+            config_dst = target_path / 'config.yaml'
+            shutil.copy(config_src, config_dst)
+            self.logger.info("Deployed: config.yaml")
+            
             return True
             
         except Exception as e:
-            self.logger.error(f"Application deployment failed: {e}")
+            self.logger.error(f"Deployment failed: {str(e)}")
             return False
-            
-    def setup_monitoring(self) -> bool:
-        """
-        Setup monitoring and alerting for production.
+    
+    def validate_deployment(self) -> bool:
+        """Validate deployed artifacts"""
+        self.logger.info("Validating deployment")
         
-        Returns:
-            True if setup successful
-        """
-        self.logger.info("Setting up monitoring...")
+        target_path = Path(self.config['paths']['deployment_dir'])
         
-        monitoring_config = self.config.get('monitoring', {})
+        # Check required files exist
+        required_files = [
+            'extract.py', 'transform.py', 'load.py', 
+            'monitor.py', 'config.yaml'
+        ]
+        
+        for filename in required_files:
+            filepath = target_path / filename
+            if not filepath.exists():
+                self.logger.error(f"Missing required file: {filename}")
+                return False
+        
+        self.logger.info("Deployment validation passed")
+        return True
+    
+    def run_smoke_tests(self) -> bool:
+        """Execute smoke tests on deployed environment"""
+        self.logger.info("Running smoke tests")
         
         try:
-            # Create metrics directory
-            metrics_dir = Path(monitoring_config.get('metrics_directory', 'metrics'))
-            metrics_dir.mkdir(exist_ok=True)
+            # Initialize Spark session with deployed config
+            spark = SparkSession.builder \
+                .appName(f"ETL_SmokeTest_{self.deployment_id}") \
+                .config("spark.sql.shuffle.partitions", "2") \
+                .getOrCreate()
             
-            # Initialize metrics file
-            metrics_file = metrics_dir / 'etl_metrics.json'
-            if not metrics_file.exists():
-                initial_metrics = {
-                    'deployment_id': self.deployment_id,
-                    'initialized_at': datetime.now().isoformat(),
-                    'metrics': []
-                }
-                with open(metrics_file, 'w') as f:
-                    json.dump(initial_metrics, f, indent=2)
-                    
-            self.logger.info(f"✓ Metrics file initialized: {metrics_file}")
+            # Test basic Spark functionality
+            test_data = [(1, "test1"), (2, "test2")]
+            df = spark.createDataFrame(test_data, ["id", "value"])
             
-            # Setup alerting configuration
-            alert_config = monitoring_config.get('alerting', {})
-            if alert_config.get('enabled', False):
-                alert_file = metrics_dir / 'alert_config.json'
-                with open(alert_file, 'w') as f:
-                    json.dump(alert_config, f, indent=2)
-                self.logger.info(f"✓ Alerting configured: {alert_file}")
-                
-            self.logger.info("Monitoring setup completed")
+            if df.count() != 2:
+                self.logger.error("Smoke test failed: DataFrame count mismatch")
+                return False
+            
+            spark.stop()
+            self.logger.info("Smoke tests passed")
             return True
             
         except Exception as e:
-            self.logger.error(f"Monitoring setup failed: {e}")
+            self.logger.error(f"Smoke tests failed: {str(e)}")
             return False
-            
-    def deploy(self) -> bool:
-        """
-        Execute full deployment process.
+    
+    def rollback_deployment(self, backup_path: str) -> bool:
+        """Rollback to previous deployment"""
+        self.logger.warning(f"Rolling back deployment from: {backup_path}")
         
-        Returns:
-            True if deployment successful
-        """
+        try:
+            target_path = Path(self.config['paths']['deployment_dir'])
+            backup_src = Path(backup_path)
+            
+            # Remove current deployment
+            if target_path.exists():
+                shutil.rmtree(target_path)
+            
+            # Restore from backup
+            shutil.copytree(backup_src / 'src', target_path)
+            shutil.copy(backup_src / 'config.yaml', target_path / 'config.yaml')
+            
+            self.logger.info("Rollback completed successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Rollback failed: {str(e)}")
+            return False
+    
+    def execute_deployment(self) -> bool:
+        """Execute full deployment pipeline"""
         self.logger.info(f"Starting deployment {self.deployment_id}")
-        self.logger.info("=" * 70)
+        self.logger.info(f"Target environment: {self.environment}")
         
-        # Validation
-        if not self.validate_environment():
-            self.logger.error("Environment validation failed")
+        backup_path = None
+        
+        try:
+            # Step 1: Validate configuration
+            if not self.validate_configuration():
+                raise DeploymentError("Configuration validation failed")
+            
+            # Step 2: Run pre-deployment tests
+            if not self.run_pre_deployment_tests():
+                raise DeploymentError("Pre-deployment tests failed")
+            
+            # Step 3: Backup existing deployment
+            if self.environment == 'prod':
+                backup_path = self.backup_existing_deployment()
+                if not backup_path:
+                    self.logger.warning("Backup failed, but continuing deployment")
+            
+            # Step 4: Deploy artifacts
+            if not self.deploy_artifacts():
+                raise DeploymentError("Artifact deployment failed")
+            
+            # Step 5: Validate deployment
+            if not self.validate_deployment():
+                raise DeploymentError("Deployment validation failed")
+            
+            # Step 6: Run smoke tests
+            if not self.run_smoke_tests():
+                raise DeploymentError("Smoke tests failed")
+            
+            self.logger.info(f"Deployment {self.deployment_id} completed successfully")
+            return True
+            
+        except DeploymentError as e:
+            self.logger.error(f"Deployment failed: {str(e)}")
+            
+            # Attempt rollback for production
+            if self.environment == 'prod' and backup_path:
+                self.logger.info("Attempting automatic rollback")
+                if self.rollback_deployment(backup_path):
+                    self.logger.info("Rollback successful")
+                else:
+                    self.logger.error("Rollback failed - manual intervention required")
+            
             return False
-            
-        # Run tests
-        if self.config.get('deployment', {}).get('run_tests', True):
-            if not self.run_tests():
-                self.logger.error("Test suite failed")
-                return False
-                
-        # Deploy configuration
-        if not self.deploy_configuration():
-            self.logger.error("Configuration deployment failed")
+        
+        except Exception as e:
+            self.logger.error(f"Unexpected error during deployment: {str(e)}")
             return False
-            
-        # Deploy application
-        if not self.deploy_application():
-            self.logger.error("Application deployment failed")
-            return False
-            
-        # Setup monitoring
-        if not self.setup_monitoring():
-            self.logger.error("Monitoring setup failed")
-            return False
-            
-        self.logger.info("=" * 70)
-        self.logger.info(f"Deployment {self.deployment_id} completed successfully")
-        
-        return True
-        
-    def rollback(self, previous_deployment_id: Optional[str] = None) -> bool:
-        """
-        Rollback to previous deployment.
-        
-        Args:
-            previous_deployment_id: ID of deployment to rollback to
-            
-        Returns:
-            True if rollback successful
-        """
-        self.logger.warning(f"Initiating rollback to {previous_deployment_id}")
-        
-        # Implementation would restore previous configuration and code
-        # This is a placeholder for the rollback logic
-        
-        self.logger.info("Rollback completed")
-        return True
 
 
 def main():
-    """Main deployment entry point."""
+    """Main deployment entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='ETL Pipeline Deployment')
+    parser = argparse.ArgumentParser(description='ETL Deployment Automation')
     parser.add_argument(
-        '--config',
-        default='config.yaml',
-        help='Configuration file path'
+        '--environment',
+        choices=['dev', 'staging', 'prod'],
+        required=True,
+        help='Target deployment environment'
     )
     parser.add_argument(
-        '--validate-only',
-        action='store_true',
-        help='Only validate environment without deploying'
+        '--config',
+        default='deployment_config.yaml',
+        help='Path to deployment configuration file'
     )
     parser.add_argument(
         '--skip-tests',
         action='store_true',
-        help='Skip test suite execution'
+        help='Skip pre-deployment tests (not recommended for production)'
     )
     
     args = parser.parse_args()
     
-    # Create deployment manager
-    manager = DeploymentManager(config_path=args.config)
+    # Confirm production deployment
+    if args.environment == 'prod':
+        response = input("⚠️  Deploy to PRODUCTION? Type 'yes' to confirm: ")
+        if response.lower() != 'yes':
+            print("Deployment cancelled")
+            sys.exit(0)
     
-    if args.validate_only:
-        success = manager.validate_environment()
-        sys.exit(0 if success else 1)
-        
-    # Override test config if requested
-    if args.skip_tests:
-        manager.config['deployment']['run_tests'] = False
-        
     # Execute deployment
-    success = manager.deploy()
+    deployer = ETLDeployment(args.config, args.environment)
+    
+    if args.skip_tests:
+        deployer.logger.warning("Skipping pre-deployment tests")
+        # Override test method
+        deployer.run_pre_deployment_tests = lambda: True
+    
+    success = deployer.execute_deployment()
     
     sys.exit(0 if success else 1)
 
