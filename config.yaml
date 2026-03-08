@@ -1,59 +1,57 @@
-# ETL Configuration File
-# Sales Data Processing Pipeline
+# ETL System Configuration
+# Migrated from ABAP ETL Constants
+
+# Processing Configuration
+processing:
+  batch_size: 1000
+  commit_interval: 500
+  parallel_jobs: 4
+  retry_attempts: 3
+  timeout_seconds: 3600
+
+# Business Rules Configuration
+business_rules:
+  # Discount thresholds and rates
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
+  
+  # Tax and cost calculations
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  
+  # Sale categorization thresholds
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
+
+# Data Sources Configuration
+data_sources:
+  source_table: zsales_raw
+  target_table: zsales_analytics
+  log_table: zetl_log
+
+# File Paths Configuration
+paths:
+  data_path: data/
+  log_path: logs/
+  checkpoint_path: checkpoints/
 
 # Spark Configuration
 spark:
-  app_name: "SalesETLPipeline"
-  master: "local[*]"
-  config:
-    spark.sql.shuffle.partitions: 10
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-
-# Data Source Configuration
-source_path: "data/raw/sales"
-source_format: "parquet"
-
-# Data Target Configuration
-target_path: "data/analytics/sales"
-target_format: "parquet"
-write_mode: "append"
-partition_by:
-  - "trans_date"
-
-# Business Rules - Discount Thresholds
-discount_qty_tier1: 10
-discount_qty_tier2: 15
-discount_rate_tier1: 0.05
-discount_rate_tier2: 0.10
-
-# Business Rules - Tax and Cost
-tax_rate: 0.08
-cost_ratio: 0.60
-
-# Business Rules - Category Thresholds
-category_high_threshold: 2000.00
-category_medium_threshold: 500.00
-
-# ETL Configuration
-batch_size: 1000
-commit_interval: 500
-max_retries: 3
-timeout_seconds: 3600
+  app_name: SalesETL
+  master: local[*]
+  sql_shuffle_partitions: 200
+  executor_memory: 4g
+  driver_memory: 2g
 
 # Logging Configuration
-log_level: "INFO"
-log_path: "logs/etl"
+logging:
+  level: INFO
+  enable_console: true
+  enable_file: true
 
-# Validation Rules
-validation:
-  check_nulls: true
-  check_amounts: true
-  check_categories: true
-  min_records: 1
-
-# Performance Tuning
-performance:
-  cache_intermediate_results: true
-  broadcast_threshold: "10MB"
-  parallel_jobs: 4
+# Test Mode Configuration
+test_mode:
+  enabled: false
+  record_limit: 100
