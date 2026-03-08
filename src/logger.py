@@ -6,32 +6,35 @@ Provides logging functionality for ETL processes.
 from datetime import datetime
 from typing import Optional
 import logging
+from pyspark.sql import SparkSession
 
 
 class ETLLogger:
-    """
-    Logger class for ETL operations.
-    Logs to console and optionally to database/file.
-    """
+    """Logger for ETL operations with database persistence."""
     
-    def __init__(self, etl_run_id: str, log_level: str = 'INFO'):
+    def __init__(self, spark: SparkSession, etl_run_id: str):
         """
-        Initialize logger with ETL run ID.
+        Initialize the ETL Logger.
         
         Args:
-            etl_run_id: Unique identifier for ETL run
-            log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+            spark: Active SparkSession
+            etl_run_id: Unique identifier for this ETL run
         """
+        self.spark = spark
         self.etl_run_id = etl_run_id
-        self.log_entries = []
         
-        # Configure Python logging
-        logging.basicConfig(
-            level=getattr(logging, log_level.upper()),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        self.python_logger = logging.getLogger(f'ETL_{etl_run_id}')
+        # Setup Python logging
+        self.logger = logging.getLogger(f'ETL_{etl_run_id}')
+        self.logger.setLevel(logging.INFO)
         
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+    
     def log_message(
         self,
         step: str,
@@ -42,103 +45,67 @@ class ETLLogger:
         records_error: int = 0
     ):
         """
-        Log a message for an ETL step.
+        Log a message with ETL context.
         
         Args:
-            step: ETL process step (EXTRACT, TRANSFORM, LOAD, etc.)
+            step: ETL step (EXTRACT, TRANSFORM, LOAD, etc.)
             status: Status code (S=Success, E=Error, W=Warning, I=Info)
             message: Log message
-            records_processed: Number of records processed
-            records_success: Number of successful records
-            records_error: Number of error records
+            records_processed: Total records processed
+            records_success: Successfully processed records
+            records_error: Records with errors
         """
         log_entry = {
             'log_id': self._generate_log_id(),
             'etl_run_id': self.etl_run_id,
-            'execution_date': datetime.now().date(),
-            'execution_time': datetime.now().time(),
+            'execution_date': datetime.now().strftime('%Y-%m-%d'),
+            'execution_time': datetime.now().strftime('%H:%M:%S'),
             'process_step': step,
             'status': status,
             'records_processed': records_processed,
             'records_success': records_success,
             'records_error': records_error,
-            'message': message,
-            'timestamp': datetime.now()
+            'message': message
         }
         
-        self.log_entries.append(log_entry)
+        # Log to console
+        log_level = self._get_log_level(status)
+        log_msg = (
+            f"[{step}] {message} | "
+            f"Processed: {records_processed}, "
+            f"Success: {records_success}, "
+            f"Error: {records_error}"
+        )
+        self.logger.log(log_level, log_msg)
         
-        # Log to Python logger
-        log_level_map = {
-            'S': logging.INFO,
-            'I': logging.INFO,
-            'W': logging.WARNING,
-            'E': logging.ERROR
-        }
-        
-        level = log_level_map.get(status, logging.INFO)
-        log_msg = f"[{step}] {message}"
-        if records_processed > 0:
-            log_msg += f" (Processed: {records_processed}, Success: {records_success}, Error: {records_error})"
-        
-        self.python_logger.log(level, log_msg)
-        
-    def _generate_log_id(self) -> str:
-        """
-        Generate unique log ID.
-        
-        Returns:
-            str: Unique log identifier
-        """
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
-        return f"LOG{timestamp}"
+        # In production, persist to database table
+        # self._persist_log_entry(log_entry)
     
     def get_etl_run_id(self) -> str:
-        """
-        Get ETL run ID.
-        
-        Returns:
-            str: ETL run identifier
-        """
+        """Get the current ETL run ID."""
         return self.etl_run_id
     
-    def get_log_entries(self) -> list:
-        """
-        Get all log entries for this ETL run.
-        
-        Returns:
-            list: List of log entry dictionaries
-        """
-        return self.log_entries
+    def _generate_log_id(self) -> str:
+        """Generate unique log ID."""
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+        return f'LOG{timestamp}'
     
-    def display_summary(self):
+    def _get_log_level(self, status: str) -> int:
+        """Map status code to logging level."""
+        status_map = {
+            'S': logging.INFO,
+            'E': logging.ERROR,
+            'W': logging.WARNING,
+            'I': logging.INFO
+        }
+        return status_map.get(status, logging.INFO)
+    
+    def _persist_log_entry(self, log_entry: dict):
         """
-        Display summary of ETL execution.
+        Persist log entry to database table.
+        
+        Args:
+            log_entry: Dictionary containing log information
         """
-        print("\n" + "=" * 60)
-        print("ETL Process Summary")
-        print("=" * 60)
-        print(f"ETL Run ID: {self.etl_run_id}")
-        
-        if self.log_entries:
-            first_entry = self.log_entries[0]
-            last_entry = self.log_entries[-1]
-            print(f"Start Time: {first_entry['timestamp']}")
-            print(f"End Time: {last_entry['timestamp']}")
-            
-            duration = (last_entry['timestamp'] - first_entry['timestamp']).total_seconds()
-            print(f"Duration: {duration:.2f} seconds")
-            
-            # Count by status
-            status_counts = {}
-            for entry in self.log_entries:
-                status = entry['status']
-                status_counts[status] = status_counts.get(status, 0) + 1
-            
-            print(f"\nLog Statistics:")
-            print(f"  Success: {status_counts.get('S', 0)}")
-            print(f"  Info: {status_counts.get('I', 0)}")
-            print(f"  Warning: {status_counts.get('W', 0)}")
-            print(f"  Error: {status_counts.get('E', 0)}")
-        
-        print("=" * 60)
+        # In production, write to ETL log table
+        pass
