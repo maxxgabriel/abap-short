@@ -1,116 +1,101 @@
 """
-ETL Constants and Configuration Module
-
-This module provides centralized constants and configuration values
-for the Sales ETL system, migrated from ABAP ZCL_ETL_CONSTANTS.
+ETL Constants and Enumerations
+Migrated from ABAP ZCL_ETL_CONSTANTS class
 """
-
-from dataclasses import dataclass
-from typing import Final
-
-
-@dataclass(frozen=True)
-class StatusCodes:
-    """ETL process status codes"""
-    NEW: Final[str] = 'N'
-    PROCESSED: Final[str] = 'P'
-    ERROR: Final[str] = 'E'
-    WARNING: Final[str] = 'W'
-    SUCCESS: Final[str] = 'S'
-    INFO: Final[str] = 'I'
+from enum import Enum
+from decimal import Decimal
 
 
-@dataclass(frozen=True)
-class ProcessSteps:
-    """ETL process step identifiers"""
-    INIT: Final[str] = 'INIT'
-    EXTRACT: Final[str] = 'EXTRACT'
-    TRANSFORM: Final[str] = 'TRANSFORM'
-    LOAD: Final[str] = 'LOAD'
-    VALIDATE: Final[str] = 'VALIDATE'
-    COMPLETE: Final[str] = 'COMPLETE'
-    ERROR: Final[str] = 'ERROR'
+class StatusCode(str, Enum):
+    """ETL Status Codes"""
+    NEW = 'N'
+    PROCESSED = 'P'
+    ERROR = 'E'
+    WARNING = 'W'
+    SUCCESS = 'S'
+    INFO = 'I'
 
 
-@dataclass(frozen=True)
-class SaleCategories:
-    """Sale categorization values"""
-    HIGH: Final[str] = 'HIGH'
-    MEDIUM: Final[str] = 'MEDIUM'
-    LOW: Final[str] = 'LOW'
+class ProcessStep(str, Enum):
+    """ETL Process Steps"""
+    INIT = 'INIT'
+    EXTRACT = 'EXTRACT'
+    TRANSFORM = 'TRANSFORM'
+    LOAD = 'LOAD'
+    VALIDATE = 'VALIDATE'
+    COMPLETE = 'COMPLETE'
+    ERROR = 'ERROR'
 
 
-@dataclass(frozen=True)
-class BusinessRules:
-    """Business calculation rules and thresholds"""
-    # Discount thresholds and rates
-    DISCOUNT_QTY_TIER1: Final[int] = 10
-    DISCOUNT_QTY_TIER2: Final[int] = 15
-    DISCOUNT_RATE_TIER1: Final[float] = 0.05
-    DISCOUNT_RATE_TIER2: Final[float] = 0.10
-    
-    # Tax rate
-    TAX_RATE: Final[float] = 0.08
-    
-    # Cost calculation
-    COST_RATIO: Final[float] = 0.60
-    
-    # Category thresholds
-    CATEGORY_HIGH_THRESHOLD: Final[float] = 2000.00
-    CATEGORY_MEDIUM_THRESHOLD: Final[float] = 500.00
-
-
-@dataclass(frozen=True)
-class ETLDefaults:
-    """Default ETL configuration values"""
-    BATCH_SIZE: Final[int] = 1000
-    COMMIT_INTERVAL: Final[int] = 500
-    RETRY_ATTEMPTS: Final[int] = 3
-    TIMEOUT_SECONDS: Final[int] = 3600
-
-
-@dataclass(frozen=True)
-class IDPrefixes:
-    """ID generation prefixes"""
-    ETL_RUN: Final[str] = 'ETL'
-    LOG_ID: Final[str] = 'LOG'
-    ANALYTICS_ID: Final[str] = 'ANL'
-
-
-@dataclass(frozen=True)
-class Messages:
-    """Standard ETL messages"""
-    INIT_SUCCESS: Final[str] = 'ETL process initialized successfully'
-    EXTRACT_START: Final[str] = 'Starting data extraction'
-    EXTRACT_COMPLETE: Final[str] = 'Data extraction completed'
-    TRANSFORM_START: Final[str] = 'Starting data transformation'
-    TRANSFORM_COMPLETE: Final[str] = 'Data transformation completed'
-    LOAD_START: Final[str] = 'Starting data load'
-    LOAD_COMPLETE: Final[str] = 'Data load completed'
-    ETL_COMPLETE: Final[str] = 'ETL process completed successfully'
-    ETL_ERROR: Final[str] = 'ETL process failed'
+class SaleCategory(str, Enum):
+    """Sale Category Classifications"""
+    HIGH = 'HIGH'
+    MEDIUM = 'MEDIUM'
+    LOW = 'LOW'
 
 
 class ETLConstants:
-    """Main constants container class"""
+    """ETL System Constants"""
     
-    STATUS = StatusCodes()
-    STEP = ProcessSteps()
-    CATEGORY = SaleCategories()
-    RULES = BusinessRules()
-    DEFAULTS = ETLDefaults()
-    PREFIX = IDPrefixes()
-    MSG = Messages()
+    # Business Rules - Discount Thresholds
+    DISCOUNT_QTY_TIER1 = 10
+    DISCOUNT_QTY_TIER2 = 15
+    DISCOUNT_RATE_TIER1 = Decimal('0.05')
+    DISCOUNT_RATE_TIER2 = Decimal('0.10')
     
-    @classmethod
-    def get_all_constants(cls) -> dict:
-        """Return all constants as a dictionary for validation"""
-        return {
-            'status': vars(cls.STATUS),
-            'steps': vars(cls.STEP),
-            'categories': vars(cls.CATEGORY),
-            'rules': vars(cls.RULES),
-            'defaults': vars(cls.DEFAULTS),
-            'prefixes': vars(cls.PREFIX),
-            'messages': vars(cls.MSG)
-        }
+    # Business Rules - Tax Rate
+    TAX_RATE = Decimal('0.08')
+    
+    # Business Rules - Cost Ratio
+    COST_RATIO = Decimal('0.60')
+    
+    # Business Rules - Category Thresholds
+    CATEGORY_HIGH_THRESHOLD = Decimal('2000.00')
+    CATEGORY_MEDIUM_THRESHOLD = Decimal('500.00')
+    
+    # ETL Configuration Defaults
+    DEFAULT_BATCH_SIZE = 1000
+    DEFAULT_COMMIT_INTERVAL = 500
+    DEFAULT_RETRY_ATTEMPTS = 3
+    DEFAULT_TIMEOUT_SECONDS = 3600
+    
+    # ID Prefixes
+    PREFIX_ETL_RUN = 'ETL'
+    PREFIX_LOG_ID = 'LOG'
+    PREFIX_ANALYTICS_ID = 'ANL'
+    
+    # Message Templates
+    MSG_INIT_SUCCESS = 'ETL process initialized successfully'
+    MSG_EXTRACT_START = 'Starting data extraction'
+    MSG_EXTRACT_COMPLETE = 'Data extraction completed'
+    MSG_TRANSFORM_START = 'Starting data transformation'
+    MSG_TRANSFORM_COMPLETE = 'Data transformation completed'
+    MSG_LOAD_START = 'Starting data load'
+    MSG_LOAD_COMPLETE = 'Data load completed'
+    MSG_ETL_COMPLETE = 'ETL process completed successfully'
+    MSG_ETL_ERROR = 'ETL process failed'
+
+
+class IDGenerator:
+    """Utility class for generating unique IDs"""
+    
+    @staticmethod
+    def generate_etl_run_id() -> str:
+        """Generate unique ETL run ID"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        return f"{ETLConstants.PREFIX_ETL_RUN}{timestamp}"
+    
+    @staticmethod
+    def generate_log_id() -> str:
+        """Generate unique log ID"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        return f"{ETLConstants.PREFIX_LOG_ID}{timestamp}"
+    
+    @staticmethod
+    def generate_analytics_id(trans_id: str) -> str:
+        """Generate unique analytics ID"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%H%M%S')
+        return f"{ETLConstants.PREFIX_ANALYTICS_ID}{trans_id}{timestamp}"
