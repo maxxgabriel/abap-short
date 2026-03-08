@@ -1,57 +1,66 @@
-# ETL System Configuration
-# Migrated from ABAP ETL Constants
+# ETL Logging System Configuration
 
-# Processing Configuration
-processing:
-  batch_size: 1000
-  commit_interval: 500
-  parallel_jobs: 4
-  retry_attempts: 3
-  timeout_seconds: 3600
-
-# Business Rules Configuration
-business_rules:
-  # Discount thresholds and rates
-  discount_qty_tier1: 10
-  discount_qty_tier2: 15
-  discount_rate_tier1: 0.05
-  discount_rate_tier2: 0.10
-  
-  # Tax and cost calculations
-  tax_rate: 0.08
-  cost_ratio: 0.60
-  
-  # Sale categorization thresholds
-  category_high_threshold: 2000.00
-  category_medium_threshold: 500.00
-
-# Data Sources Configuration
-data_sources:
-  source_table: zsales_raw
-  target_table: zsales_analytics
-  log_table: zetl_log
-
-# File Paths Configuration
-paths:
-  data_path: data/
-  log_path: logs/
-  checkpoint_path: checkpoints/
-
-# Spark Configuration
-spark:
-  app_name: SalesETL
-  master: local[*]
-  sql_shuffle_partitions: 200
-  executor_memory: 4g
-  driver_memory: 2g
-
-# Logging Configuration
 logging:
-  level: INFO
-  enable_console: true
-  enable_file: true
+  # Log format configuration
+  format:
+    structured: true  # Use JSON structured logging
+    include_correlation: true  # Include correlation IDs
+    
+  # Output configuration
+  console:
+    enabled: true
+    level: INFO
+    
+  file:
+    enabled: true
+    path: "logs/etl_{etl_run_id}.log"
+    level: DEBUG
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
+    
+  # Log rotation
+  rotation:
+    when: "midnight"
+    interval: 1
+    backup_count: 30
 
-# Test Mode Configuration
-test_mode:
-  enabled: false
-  record_limit: 100
+# ABAP status code mapping
+status_mapping:
+  S: INFO     # Success
+  I: INFO     # Info
+  W: WARNING  # Warning
+  E: ERROR    # Error
+  N: INFO     # New
+
+# ETL process steps
+process_steps:
+  - INIT
+  - EXTRACT
+  - TRANSFORM
+  - LOAD
+  - VALIDATE
+  - COMPLETE
+  - ERROR
+
+# Correlation tracking
+correlation:
+  generate_uuid: true
+  propagate_to_spark: true
+  include_in_metrics: true
+
+# Performance monitoring
+monitoring:
+  log_execution_time: true
+  log_memory_usage: true
+  log_record_counts: true
+  
+# Error handling
+error_handling:
+  max_retries: 3
+  retry_delay_seconds: 5
+  log_stack_trace: true
+
+# Batch processing
+batch:
+  log_interval: 1000  # Log progress every N records
+  commit_interval: 500
