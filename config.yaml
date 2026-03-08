@@ -1,109 +1,83 @@
 # ETL Configuration
-# Configuration parameters for Sales ETL System
-
-app:
-  name: "sales_etl"
-  version: "1.0.0"
-  description: "Sales Data ETL System"
-
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
+# Converted from ABAP package configuration
 
 etl:
+  # Batch processing settings
   batch_size: 1000
   commit_interval: 500
   parallel_jobs: 4
   retry_attempts: 3
   timeout_seconds: 3600
+  
+  # Business rules - Discounts
+  discount:
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
+  
+  # Business rules - Tax
+  tax:
+    rate: 0.08
+  
+  # Business rules - Cost calculation
+  cost:
+    ratio: 0.60
+  
+  # Business rules - Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+  
+  # ID generation prefixes
+  prefixes:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
 
-business_rules:
-  # Discount thresholds
-  discount_qty_tier1: 10
-  discount_qty_tier2: 15
-  discount_rate_tier1: 0.05
-  discount_rate_tier2: 0.10
-  
-  # Tax rate
-  tax_rate: 0.08
-  
-  # Cost ratio for profit calculation
-  cost_ratio: 0.60
-  
-  # Category thresholds
-  category_high_threshold: 2000.00
-  category_medium_threshold: 500.00
-
+# Database configuration
 database:
   # Source table
   source_table: "zsales_raw"
+  
   # Target table
   target_table: "zsales_analytics"
+  
   # Log table
   log_table: "zetl_log"
   
-  # Database paths (configure based on environment)
-  source_path: "data/input/raw_sales"
-  target_path: "data/output/analytics"
-  log_path: "data/output/logs"
-  
-  # File formats
-  source_format: "parquet"
-  target_format: "parquet"
-  log_format: "parquet"
+  # Connection settings
+  connection:
+    driver: "org.apache.spark.sql.jdbc"
+    isolation_level: "READ_COMMITTED"
 
+# Spark configuration
+spark:
+  app_name: "Sales_ETL_Process"
+  master: "local[*]"
+  
+  # Spark settings
+  config:
+    "spark.sql.shuffle.partitions": "200"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.default.parallelism": "8"
+    "spark.sql.sources.partitionOverwriteMode": "dynamic"
+  
+  # Memory settings
+  memory:
+    driver: "2g"
+    executor: "4g"
+
+# Logging configuration
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file_path: "logs/etl.log"
-  max_file_size: 10485760  # 10MB
-  backup_count: 5
+  file: "logs/etl_process.log"
+  console: true
 
-validation:
-  # Enable/disable validation steps
-  validate_input: true
-  validate_output: true
-  skip_invalid_records: false
-  max_error_rate: 0.05  # 5% max error rate
-
-monitoring:
-  enable_metrics: true
-  metrics_path: "metrics/etl_metrics.json"
-  enable_notifications: false
-  notification_email: "etl-team@example.com"
-
-# Environment-specific overrides
-environments:
-  development:
-    spark:
-      master: "local[2]"
-    logging:
-      level: "DEBUG"
-    etl:
-      batch_size: 100
-      
-  test:
-    spark:
-      master: "local[2]"
-    logging:
-      level: "DEBUG"
-    validation:
-      skip_invalid_records: true
-      
-  production:
-    spark:
-      master: "yarn"
-      config:
-        spark.executor.instances: "10"
-        spark.executor.memory: "8g"
-        spark.driver.memory: "4g"
-    logging:
-      level: "WARN"
-    monitoring:
-      enable_notifications: true
+# Test mode settings
+test_mode:
+  enabled: false
+  sample_size: 100
+  skip_commit: true
