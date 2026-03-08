@@ -1,56 +1,84 @@
 # ETL Logger Configuration
+# Converted from ABAP $ZETL package configuration
 
-# Logging Configuration
+etl_config:
+  # Process identification
+  prefix:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
+  
+  # Batch processing
+  batch:
+    default_size: 1000
+    commit_interval: 500
+    retry_attempts: 3
+    timeout_seconds: 3600
+  
+  # Business rules - Discounts
+  discount:
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
+  
+  # Business rules - Tax
+  tax:
+    rate: 0.08
+  
+  # Business rules - Costs
+  cost:
+    ratio: 0.60
+  
+  # Business rules - Categorization
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
+
+# Logging configuration
 logging:
-  level: INFO
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  console_output: true
-  file_output: false
-  log_file_path: "logs/etl.log"
+  # Log output destinations
+  destinations:
+    console: true
+    file: true
+    delta_table: true
+  
+  # Log storage paths
+  paths:
+    delta_table: "s3://etl-logs/etl_log"
+    file_path: "/tmp/etl_logs"
+  
+  # Log levels
+  levels:
+    default: "INFO"
+    error: "ERROR"
+    warning: "WARNING"
+  
+  # Log retention
+  retention:
+    days: 30
+    max_entries: 1000000
 
-# Database Configuration
-database:
-  log_table_name: "etl_log"
-  write_mode: "append"
-  enable_table_logging: false
-
-# ETL Run Configuration
-etl_run:
-  generate_run_id: true
-  id_prefix: "ETL"
-  timestamp_format: "%Y%m%d%H%M%S%f"
-
-# Log Entry Configuration
-log_entry:
-  id_prefix: "LOG"
-  include_duration: true
-  track_step_timing: true
-  max_message_length: 255
-
-# Status Codes
+# Status codes mapping
 status_codes:
   success: "S"
   error: "E"
   warning: "W"
   info: "I"
+  new: "N"
+  processed: "P"
 
-# Process Steps
+# Process steps
 process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
+  - INIT
+  - EXTRACT
+  - TRANSFORM
+  - LOAD
+  - VALIDATE
+  - COMPLETE
+  - ERROR
 
-# Performance Configuration
-performance:
-  batch_log_size: 1000
-  enable_statistics: true
-  console_output_delay_ms: 0
-
-# Message Templates
+# Messages
 messages:
   init_success: "ETL process initialized successfully"
   extract_start: "Starting data extraction"
