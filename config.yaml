@@ -1,83 +1,119 @@
-# ETL Configuration
-# Converted from ABAP package configuration
+# ETL Exception Configuration
+# Configuration for exception handling and error management
 
 etl:
-  # Batch processing settings
-  batch_size: 1000
-  commit_interval: 500
-  parallel_jobs: 4
-  retry_attempts: 3
-  timeout_seconds: 3600
-  
-  # Business rules - Discounts
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
-  
-  # Business rules - Tax
-  tax:
-    rate: 0.08
-  
-  # Business rules - Cost calculation
-  cost:
-    ratio: 0.60
-  
-  # Business rules - Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-  
-  # ID generation prefixes
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
-
-# Database configuration
-database:
-  # Source table
-  source_table: "zsales_raw"
-  
-  # Target table
-  target_table: "zsales_analytics"
-  
-  # Log table
-  log_table: "zetl_log"
-  
-  # Connection settings
-  connection:
-    driver: "org.apache.spark.sql.jdbc"
-    isolation_level: "READ_COMMITTED"
-
-# Spark configuration
-spark:
-  app_name: "Sales_ETL_Process"
-  master: "local[*]"
-  
-  # Spark settings
-  config:
-    "spark.sql.shuffle.partitions": "200"
-    "spark.sql.adaptive.enabled": "true"
-    "spark.sql.adaptive.coalescePartitions.enabled": "true"
-    "spark.default.parallelism": "8"
-    "spark.sql.sources.partitionOverwriteMode": "dynamic"
-  
-  # Memory settings
-  memory:
-    driver: "2g"
-    executor: "4g"
-
-# Logging configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
-  console: true
-
-# Test mode settings
-test_mode:
-  enabled: false
-  sample_size: 100
-  skip_commit: true
+  # Exception handling settings
+  exceptions:
+    # Enable detailed error context
+    detailed_context: true
+    
+    # Include stack traces in error logs
+    include_stacktrace: true
+    
+    # Maximum error context size (characters)
+    max_context_size: 5000
+    
+    # Error code prefix
+    error_code_prefix: "ZETL"
+    
+  # Error phases
+  phases:
+    init: "INIT"
+    extract: "EXTRACT"
+    transform: "TRANSFORM"
+    load: "LOAD"
+    validate: "VALIDATE"
+    complete: "COMPLETE"
+    error: "ERROR"
+    
+  # Status codes (mirrors ABAP gc_status)
+  status:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+    info: "I"
+    
+  # Error handling behavior
+  error_handling:
+    # Continue processing after errors
+    continue_on_error: false
+    
+    # Maximum errors before stopping
+    max_errors_before_stop: 100
+    
+    # Retry configuration
+    retry:
+      enabled: true
+      max_attempts: 3
+      backoff_seconds: 5
+      exponential_backoff: true
+      
+    # Error notification
+    notification:
+      enabled: false
+      email_recipients: []
+      slack_webhook: null
+      
+  # Logging configuration
+  logging:
+    # Log level for exceptions
+    exception_log_level: "ERROR"
+    
+    # Log level for warnings
+    warning_log_level: "WARNING"
+    
+    # Include error context in logs
+    log_context: true
+    
+    # Error log file
+    error_log_file: "logs/etl_errors.log"
+    
+    # Log format
+    log_format: "[%(asctime)s] [%(levelname)s] [%(error_code)s] %(message)s"
+    
+  # Message templates (mirrors ABAP constants)
+  messages:
+    init_success: "ETL process initialized successfully"
+    extract_start: "Starting data extraction"
+    extract_complete: "Data extraction completed"
+    extract_error: "Data extraction failed: {error}"
+    transform_start: "Starting data transformation"
+    transform_complete: "Data transformation completed"
+    transform_error: "Data transformation failed: {error}"
+    load_start: "Starting data load"
+    load_complete: "Data load completed"
+    load_error: "Data load failed: {error}"
+    validate_start: "Starting data validation"
+    validate_complete: "Data validation completed"
+    validate_error: "Data validation failed: {error}"
+    etl_complete: "ETL process completed successfully"
+    etl_error: "ETL process failed: {error}"
+    
+  # Error context fields
+  context_fields:
+    # Fields to always include in error context
+    required:
+      - error_step
+      - timestamp
+      - error_code
+      
+    # Optional fields based on error type
+    optional:
+      extract:
+        - source_table
+        - query
+        - connection_string
+      transform:
+        - field_name
+        - field_value
+        - transformation_rule
+      load:
+        - target_table
+        - operation
+        - constraint_violated
+      validate:
+        - validation_rule
+        - expected_value
+        - actual_value
