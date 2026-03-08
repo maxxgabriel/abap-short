@@ -1,140 +1,137 @@
-# Delta Lake Loader Configuration
-app_name: "sales_etl_delta_loader"
-environment: "production"
+# ETL Configuration File
+# Replaces ABAP configuration and constants
 
 # Spark Configuration
 spark:
-  app_name: "SalesETLDeltaLoader"
-  master: "local[*]"  # Change to yarn/k8s in production
-  driver_memory: "4g"
-  executor_memory: "8g"
-  executor_cores: 4
-  sql_extensions: "io.delta.sql.DeltaSparkSessionExtension"
-  catalog_implementation: "hive"
+  master: "local[*]"  # Use local[*] for local mode, or spark://host:port for cluster
+  app_name: "SalesETL"
+  log_level: "WARN"  # DEBUG, INFO, WARN, ERROR
+  enable_hive: false
   
-  # Delta Lake specific configs
-  delta:
-    log_cache_size: 1000
-    checkpoint_interval: 10
-    vacuum_retention_hours: 168  # 7 days
-    
-  # Shuffle and partition configs
-  shuffle_partitions: 200
-  adaptive_enabled: true
-  
-# Source Configuration
-source:
-  format: "parquet"  # or jdbc for direct ABAP extraction
-  path: "s3a://raw-data/sales/analytics/"
-  
-  # JDBC config (if extracting directly from SAP)
-  jdbc:
-    url: "jdbc:sap://hostname:port"
-    driver: "com.sap.db.jdbc.Driver"
-    table: "ZSALES_ANALYTICS"
-    partition_column: "trans_date"
-    num_partitions: 10
-    fetch_size: 10000
+  config:
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.driver.memory: "2g"
+    spark.executor.memory: "2g"
+    spark.sql.sources.partitionOverwriteMode: "dynamic"
 
-# Target Configuration - Delta Lake
-target:
-  format: "delta"
-  path: "s3a://curated-data/sales/analytics_delta/"
-  table_name: "sales_analytics"
-  database: "sales_db"
+# Database Configuration
+database:
+  # Source database (replaces ZSALES_RAW table)
+  source:
+    format: "jdbc"  # or "parquet", "delta", "hive"
+    url: "jdbc:postgresql://localhost:5432/sales_raw"
+    driver: "org.postgresql.Driver"
+    table: "sales_raw"
+    user: "etl_user"
+    password: "etl_password"
+    fetch_size: 1000
   
-  # Partitioning strategy
-  partition_columns:
-    - "region"
-    - "trans_year"
-    - "trans_month"
-    
-  # Merge/Upsert configuration
-  merge:
-    enabled: true
-    merge_keys:
-      - "analytics_id"
-    update_condition: "source.loaded_at > target.loaded_at"
-    
-  # Z-Order optimization columns (for query performance)
-  zorder_columns:
-    - "customer_id"
-    - "product_id"
-    - "trans_date"
-    
-  # Table properties
-  properties:
-    delta.autoOptimize.optimizeWrite: "true"
-    delta.autoOptimize.autoCompact: "true"
-    delta.checkpoint.writeStatsAsJson: "true"
-    delta.checkpoint.writeStatsAsStruct: "true"
-    delta.logRetentionDuration: "interval 30 days"
-    delta.deletedFileRetentionDuration: "interval 7 days"
+  # Target database (replaces ZSALES_ANALYTICS table)
+  target:
+    format: "jdbc"  # or "parquet", "delta", "hive"
+    url: "jdbc:postgresql://localhost:5432/sales_analytics"
+    driver: "org.postgresql.Driver"
+    table: "sales_analytics"
+    user: "etl_user"
+    password: "etl_password"
+    batch_size: 1000
+  
+  # Log database (replaces ZETL_LOG table)
+  log:
+    format: "jdbc"
+    url: "jdbc:postgresql://localhost:5432/etl_logs"
+    driver: "org.postgresql.Driver"
+    table: "etl_log"
+    user: "etl_user"
+    password: "etl_password"
 
-# Business Rules (from ABAP)
+# Business Rules (from ZCL_ETL_CONSTANTS)
 business_rules:
+  # Discount thresholds
   discount:
     tier1_quantity: 10
     tier1_rate: 0.05
     tier2_quantity: 15
     tier2_rate: 0.10
   
+  # Tax rate
   tax_rate: 0.08
+  
+  # Cost calculation
   cost_ratio: 0.60
   
-  category_thresholds:
-    high: 2000.00
-    medium: 500.00
+  # Category thresholds
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# ETL Configuration
+# ETL Configuration (from ZCL_ETL_CONSTANTS defaults)
 etl:
-  batch_size: 10000
-  write_mode: "merge"  # append, overwrite, merge
-  enable_schema_evolution: true
-  enable_partition_pruning: true
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
   
-  # Performance tuning
-  coalesce_partitions: 10
-  repartition_before_write: true
+  # Status codes
+  status_codes:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+    info: "I"
   
-  # Validation
-  validate_before_load: true
-  quality_checks:
-    - check_nulls: ["analytics_id", "customer_id", "product_id"]
-    - check_positive: ["gross_amount", "net_amount"]
-    - check_category_values: ["HIGH", "MEDIUM", "LOW"]
+  # Process steps
+  steps:
+    init: "INIT"
+    extract: "EXTRACT"
+    transform: "TRANSFORM"
+    load: "LOAD"
+    validate: "VALIDATE"
+    complete: "COMPLETE"
+    error: "ERROR"
+  
+  # Sale categories
+  categories:
+    high: "HIGH"
+    medium: "MEDIUM"
+    low: "LOW"
+
+# ID Prefixes
+id_prefixes:
+  etl_run: "ETL"
+  log_id: "LOG"
+  analytics_id: "ANL"
+
+# Message Templates
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
 
 # Logging Configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARN, ERROR
-  format: "json"
-  output_path: "s3a://logs/etl/delta-loader/"
-  console_output: true
-  
-  # Metrics
-  enable_metrics: true
-  metrics_path: "s3a://metrics/etl/delta-loader/"
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  console: true
+  file:
+    enabled: true
+    path: "logs/etl.log"
+    max_bytes: 10485760  # 10MB
+    backup_count: 5
 
-# Monitoring & Alerting
-monitoring:
-  enable_history_server: true
-  enable_event_log: true
-  
-  # Thresholds for alerts
-  max_error_rate: 0.05  # 5%
-  max_load_duration_minutes: 120
-  min_records_expected: 100
-
-# Retry Configuration
-retry:
-  enabled: true
-  max_attempts: 3
-  backoff_seconds: 60
-  exponential_backoff: true
-
-# Testing Configuration
-testing:
-  test_mode: false
-  test_data_path: "s3a://test-data/sales/analytics/"
-  test_output_path: "/tmp/delta-test/"
-  sample_fraction: 0.1
+# Data Quality Rules
+data_quality:
+  validate_required_fields: true
+  validate_data_types: true
+  reject_invalid_records: false  # Set to true to reject, false to log warnings
+  max_error_percentage: 5.0  # Max percentage of errors before failing
