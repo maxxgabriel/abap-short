@@ -1,415 +1,477 @@
 """
-Production monitoring module for Sales ETL PySpark jobs.
-Tracks job execution, performance metrics, and error conditions.
+ETL monitoring and metrics collection module.
+Tracks job performance, errors, and system health.
 """
 
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
-from pyspark.sql import SparkSession
+from pathlib import Path
 import json
-import time
-import requests
-from collections import defaultdict
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, sum as spark_sum, avg, max as spark_max
 
 
 @dataclass
-class JobMetrics:
-    """Job execution metrics."""
+class ETLMetrics:
+    """ETL job execution metrics"""
     job_id: str
     start_time: datetime
     end_time: Optional[datetime]
+    duration_seconds: Optional[float]
     status: str
-    records_processed: int
-    records_success: int
-    records_error: int
-    duration_seconds: float
-    memory_used_mb: float
-    cpu_utilization: float
-    error_rate: float
-    throughput_records_per_sec: float
+    records_extracted: int
+    records_transformed: int
+    records_loaded: int
+    records_failed: int
+    error_message: Optional[str]
+    memory_usage_mb: Optional[float]
+    cpu_usage_percent: Optional[float]
 
 
 @dataclass
-class PerformanceMetrics:
-    """Performance metrics for ETL stages."""
-    stage_name: str
-    duration_seconds: float
-    records_processed: int
-    memory_peak_mb: float
-    shuffle_read_mb: float
-    shuffle_write_mb: float
-    task_count: int
-    failed_tasks: int
+class HealthCheck:
+    """System health check result"""
+    timestamp: datetime
+    component: str
+    status: str  # healthy, degraded, unhealthy
+    latency_ms: Optional[float]
+    error_message: Optional[str]
+    details: Dict[str, Any]
 
 
-@dataclass
-class AlertCondition:
-    """Alert condition definition."""
-    name: str
-    threshold: float
-    operator: str  # gt, lt, eq
-    metric: str
-    severity: str  # critical, warning, info
-
-
-class MetricsCollector:
-    """Collects and aggregates metrics from Spark jobs."""
+class ETLMonitor:
+    """Monitors ETL job execution and system health"""
     
-    def __init__(self, spark: SparkSession):
-        self.spark = spark
-        self.sc = spark.sparkContext
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize ETL monitor
         
-    def collect_job_metrics(self, job_id: str) -> JobMetrics:
-        """Collect metrics for a specific job."""
-        # Get Spark UI data
-        status_tracker = self.sc.statusTracker()
+        Args:
+            config: Monitoring configuration dictionary
+        """
+        self.config = config
+        self.logger = self._setup_logging()
+        self.metrics_buffer: List[ETLMetrics] = []
+        self.health_checks: List[HealthCheck] = []
+        self.alert_thresholds = config.get('alerts', {})
         
-        # In production, would query Spark History Server API
-        metrics = JobMetrics(
+    def _setup_logging(self) -> logging.Logger:
+        """Configure monitoring logger"""
+        log_dir = Path('logs/monitoring')
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger = logging.getLogger('etl_monitor')
+        logger.setLevel(logging.INFO)
+        
+        # File handler
+        log_file = log_dir / f"monitor_{datetime.now().strftime('%Y%m%d')}.log"
+        fh = logging.FileHandler(log_file)
+        fh.setLevel(logging.INFO)
+        
+        # Console handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
+        
+        logger.addHandler(fh)
+        logger.addHandler(ch)
+        
+        return logger
+    
+    def start_job_monitoring(self, job_id: str) -> ETLMetrics:
+        """
+        Start monitoring a new ETL job
+        
+        Args:
+            job_id: Unique job identifier
+            
+        Returns:
+            ETLMetrics object for tracking
+        """
+        metrics = ETLMetrics(
             job_id=job_id,
             start_time=datetime.now(),
             end_time=None,
+            duration_seconds=None,
             status='RUNNING',
-            records_processed=0,
-            records_success=0,
-            records_error=0,
-            duration_seconds=0.0,
-            memory_used_mb=0.0,
-            cpu_utilization=0.0,
-            error_rate=0.0,
-            throughput_records_per_sec=0.0
+            records_extracted=0,
+            records_transformed=0,
+            records_loaded=0,
+            records_failed=0,
+            error_message=None,
+            memory_usage_mb=None,
+            cpu_usage_percent=None
         )
+        
+        self.metrics_buffer.append(metrics)
+        self.logger.info(f"Started monitoring job: {job_id}")
         
         return metrics
-        
-    def collect_stage_metrics(self) -> List[PerformanceMetrics]:
-        """Collect metrics for all stages."""
-        status_tracker = self.sc.statusTracker()
-        stage_metrics = []
-        
-        for stage_id in status_tracker.getJobIdsForGroup(""):
-            stage_info = status_tracker.getStageInfo(stage_id)
-            if stage_info:
-                metrics = PerformanceMetrics(
-                    stage_name=f"Stage_{stage_id}",
-                    duration_seconds=0.0,
-                    records_processed=0,
-                    memory_peak_mb=0.0,
-                    shuffle_read_mb=0.0,
-                    shuffle_write_mb=0.0,
-                    task_count=stage_info.numTasks,
-                    failed_tasks=stage_info.numFailedTasks
-                )
-                stage_metrics.append(metrics)
-                
-        return stage_metrics
-        
-    def get_executor_metrics(self) -> Dict[str, Any]:
-        """Get executor-level metrics."""
-        # In production, would query from Spark metrics system
-        return {
-            'active_executors': 0,
-            'total_memory_mb': 0,
-            'used_memory_mb': 0,
-            'total_cores': 0,
-            'active_tasks': 0
-        }
-
-
-class HealthChecker:
-    """Monitors job health and detects anomalies."""
     
-    def __init__(self, alert_conditions: List[AlertCondition]):
-        self.alert_conditions = alert_conditions
-        self.baseline_metrics: Dict[str, float] = {}
-        
-    def check_health(self, metrics: JobMetrics) -> List[Dict[str, Any]]:
-        """Check job health against defined conditions."""
-        alerts = []
-        
-        for condition in self.alert_conditions:
-            if self._evaluate_condition(metrics, condition):
-                alert = {
-                    'name': condition.name,
-                    'severity': condition.severity,
-                    'metric': condition.metric,
-                    'threshold': condition.threshold,
-                    'actual_value': getattr(metrics, condition.metric, 0),
-                    'timestamp': datetime.now().isoformat()
-                }
-                alerts.append(alert)
-                logger.warning(f"Alert triggered: {condition.name}")
-                
-        return alerts
-        
-    def _evaluate_condition(
+    def update_job_metrics(
         self,
-        metrics: JobMetrics,
-        condition: AlertCondition
-    ) -> bool:
-        """Evaluate if alert condition is met."""
-        actual_value = getattr(metrics, condition.metric, 0)
-        
-        if condition.operator == 'gt':
-            return actual_value > condition.threshold
-        elif condition.operator == 'lt':
-            return actual_value < condition.threshold
-        elif condition.operator == 'eq':
-            return actual_value == condition.threshold
-            
-        return False
-        
-    def update_baseline(self, metrics: JobMetrics):
-        """Update baseline metrics for anomaly detection."""
-        for field in metrics.__dataclass_fields__:
-            value = getattr(metrics, field)
-            if isinstance(value, (int, float)):
-                if field not in self.baseline_metrics:
-                    self.baseline_metrics[field] = value
-                else:
-                    # Exponential moving average
-                    alpha = 0.3
-                    self.baseline_metrics[field] = (
-                        alpha * value +
-                        (1 - alpha) * self.baseline_metrics[field]
-                    )
-
-
-class MonitoringDashboard:
-    """Provides monitoring dashboard functionality."""
-    
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.metrics_history: List[JobMetrics] = []
-        self.alerts_history: List[Dict[str, Any]] = []
-        
-    def record_metrics(self, metrics: JobMetrics):
-        """Record metrics for historical tracking."""
-        self.metrics_history.append(metrics)
-        
-        # Keep only last 1000 entries
-        if len(self.metrics_history) > 1000:
-            self.metrics_history = self.metrics_history[-1000:]
-            
-    def record_alert(self, alert: Dict[str, Any]):
-        """Record alert for tracking."""
-        self.alerts_history.append(alert)
-        
-        # Keep only last 500 alerts
-        if len(self.alerts_history) > 500:
-            self.alerts_history = self.alerts_history[-500:]
-            
-    def get_summary(self) -> Dict[str, Any]:
-        """Get summary statistics."""
-        if not self.metrics_history:
-            return {'status': 'no_data'}
-            
-        recent_metrics = self.metrics_history[-10:]
-        
-        return {
-            'total_jobs': len(self.metrics_history),
-            'recent_jobs': len(recent_metrics),
-            'avg_duration': sum(
-                m.duration_seconds for m in recent_metrics
-            ) / len(recent_metrics),
-            'avg_throughput': sum(
-                m.throughput_records_per_sec for m in recent_metrics
-            ) / len(recent_metrics),
-            'total_alerts': len(self.alerts_history),
-            'critical_alerts': len([
-                a for a in self.alerts_history
-                if a.get('severity') == 'critical'
-            ]),
-            'last_updated': datetime.now().isoformat()
-        }
-        
-    def export_metrics(self, filepath: str):
-        """Export metrics to file."""
-        data = {
-            'metrics': [asdict(m) for m in self.metrics_history],
-            'alerts': self.alerts_history,
-            'summary': self.get_summary()
-        }
-        
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
-            
-        logger.info(f"Metrics exported to {filepath}")
-
-
-class ErrorTracker:
-    """Tracks and categorizes errors."""
-    
-    def __init__(self):
-        self.errors: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        
-    def track_error(
-        self,
-        error_type: str,
-        error_message: str,
-        context: Dict[str, Any]
+        job_id: str,
+        extracted: int = 0,
+        transformed: int = 0,
+        loaded: int = 0,
+        failed: int = 0
     ):
-        """Track an error occurrence."""
-        error_record = {
-            'timestamp': datetime.now().isoformat(),
-            'error_type': error_type,
-            'message': error_message,
-            'context': context
-        }
-        
-        self.errors[error_type].append(error_record)
-        logger.error(f"Error tracked: {error_type} - {error_message}")
-        
-    def get_error_summary(self) -> Dict[str, Any]:
-        """Get summary of errors."""
-        return {
-            'total_error_types': len(self.errors),
-            'total_errors': sum(len(v) for v in self.errors.values()),
-            'error_breakdown': {
-                k: len(v) for k, v in self.errors.items()
-            },
-            'most_common_error': max(
-                self.errors.items(),
-                key=lambda x: len(x[1])
-            )[0] if self.errors else None
-        }
-        
-    def get_recent_errors(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get most recent errors."""
-        all_errors = []
-        for error_list in self.errors.values():
-            all_errors.extend(error_list)
-            
-        all_errors.sort(
-            key=lambda x: x['timestamp'],
-            reverse=True
-        )
-        
-        return all_errors[:limit]
-
-
-class MonitoringService:
-    """Main monitoring service orchestrator."""
+        """Update job metrics during execution"""
+        for metrics in self.metrics_buffer:
+            if metrics.job_id == job_id:
+                metrics.records_extracted += extracted
+                metrics.records_transformed += transformed
+                metrics.records_loaded += loaded
+                metrics.records_failed += failed
+                break
     
-    def __init__(self, spark: SparkSession, config: Dict[str, Any]):
-        self.spark = spark
-        self.config = config
-        self.collector = MetricsCollector(spark)
-        self.dashboard = MonitoringDashboard(config)
-        self.error_tracker = ErrorTracker()
+    def complete_job_monitoring(
+        self,
+        job_id: str,
+        status: str = 'SUCCESS',
+        error_message: Optional[str] = None
+    ):
+        """
+        Complete job monitoring and finalize metrics
         
-        # Define alert conditions
-        alert_conditions = [
-            AlertCondition(
-                name='high_error_rate',
-                threshold=0.05,
-                operator='gt',
-                metric='error_rate',
-                severity='critical'
-            ),
-            AlertCondition(
-                name='low_throughput',
-                threshold=100.0,
-                operator='lt',
-                metric='throughput_records_per_sec',
-                severity='warning'
-            ),
-            AlertCondition(
-                name='long_duration',
-                threshold=3600.0,
-                operator='gt',
-                metric='duration_seconds',
-                severity='warning'
-            )
-        ]
-        
-        self.health_checker = HealthChecker(alert_conditions)
-        
-    def monitor_job(self, job_id: str, interval_seconds: int = 30):
-        """Monitor a running job."""
-        logger.info(f"Starting monitoring for job {job_id}")
-        
-        while True:
-            try:
-                # Collect metrics
-                metrics = self.collector.collect_job_metrics(job_id)
-                self.dashboard.record_metrics(metrics)
+        Args:
+            job_id: Job identifier
+            status: Final job status (SUCCESS, FAILED, CANCELLED)
+            error_message: Error description if failed
+        """
+        for metrics in self.metrics_buffer:
+            if metrics.job_id == job_id:
+                metrics.end_time = datetime.now()
+                metrics.duration_seconds = (
+                    metrics.end_time - metrics.start_time
+                ).total_seconds()
+                metrics.status = status
+                metrics.error_message = error_message
                 
-                # Check health
-                alerts = self.health_checker.check_health(metrics)
-                for alert in alerts:
-                    self.dashboard.record_alert(alert)
-                    self._send_alert(alert)
-                    
-                # Update baseline
-                self.health_checker.update_baseline(metrics)
-                
-                # Log summary
-                self._log_status(metrics)
-                
-                # Check if job completed
-                if metrics.status in ['SUCCEEDED', 'FAILED']:
-                    logger.info(f"Job {job_id} completed with status {metrics.status}")
-                    break
-                    
-                time.sleep(interval_seconds)
-                
-            except Exception as e:
-                self.error_tracker.track_error(
-                    error_type='monitoring_error',
-                    error_message=str(e),
-                    context={'job_id': job_id}
+                self.logger.info(
+                    f"Job {job_id} completed with status {status} "
+                    f"in {metrics.duration_seconds:.2f}s"
                 )
-                time.sleep(interval_seconds)
                 
-    def _log_status(self, metrics: JobMetrics):
-        """Log current status."""
-        logger.info(
-            f"Job Status: {metrics.status} | "
-            f"Processed: {metrics.records_processed} | "
-            f"Success: {metrics.records_success} | "
-            f"Errors: {metrics.records_error} | "
-            f"Throughput: {metrics.throughput_records_per_sec:.2f} rec/sec"
+                # Check alert thresholds
+                self._check_alert_thresholds(metrics)
+                
+                # Persist metrics
+                self._persist_metrics(metrics)
+                break
+    
+    def _check_alert_thresholds(self, metrics: ETLMetrics):
+        """Check if metrics exceed alert thresholds"""
+        # Duration threshold
+        max_duration = self.alert_thresholds.get('max_duration_seconds', 3600)
+        if metrics.duration_seconds and metrics.duration_seconds > max_duration:
+            self.logger.warning(
+                f"Job {metrics.job_id} exceeded duration threshold: "
+                f"{metrics.duration_seconds:.2f}s > {max_duration}s"
+            )
+            self._send_alert('DURATION_EXCEEDED', metrics)
+        
+        # Error rate threshold
+        total_records = (
+            metrics.records_extracted + metrics.records_failed
+        )
+        if total_records > 0:
+            error_rate = metrics.records_failed / total_records
+            max_error_rate = self.alert_thresholds.get('max_error_rate', 0.05)
+            
+            if error_rate > max_error_rate:
+                self.logger.warning(
+                    f"Job {metrics.job_id} exceeded error rate threshold: "
+                    f"{error_rate:.2%} > {max_error_rate:.2%}"
+                )
+                self._send_alert('ERROR_RATE_EXCEEDED', metrics)
+    
+    def _send_alert(self, alert_type: str, metrics: ETLMetrics):
+        """Send alert notification"""
+        alert_config = self.config.get('alert_channels', {})
+        
+        alert_data = {
+            'type': alert_type,
+            'job_id': metrics.job_id,
+            'timestamp': datetime.now().isoformat(),
+            'metrics': asdict(metrics)
+        }
+        
+        # Log alert
+        self.logger.error(f"ALERT: {alert_type} for job {metrics.job_id}")
+        
+        # Write to alert file
+        if alert_config.get('file', {}).get('enabled', False):
+            alert_dir = Path('logs/alerts')
+            alert_dir.mkdir(parents=True, exist_ok=True)
+            
+            alert_file = alert_dir / f"alert_{datetime.now().strftime('%Y%m%d')}.json"
+            with open(alert_file, 'a') as f:
+                json.dump(alert_data, f, default=str)
+                f.write('\n')
+    
+    def _persist_metrics(self, metrics: ETLMetrics):
+        """Persist metrics to storage"""
+        metrics_dir = Path('logs/metrics')
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write to daily metrics file
+        date_str = metrics.start_time.strftime('%Y%m%d')
+        metrics_file = metrics_dir / f"metrics_{date_str}.jsonl"
+        
+        with open(metrics_file, 'a') as f:
+            json.dump(asdict(metrics), f, default=str)
+            f.write('\n')
+    
+    def perform_health_check(self, spark: SparkSession) -> HealthCheck:
+        """
+        Perform comprehensive system health check
+        
+        Args:
+            spark: Active SparkSession
+            
+        Returns:
+            HealthCheck result
+        """
+        start_time = time.time()
+        details = {}
+        status = 'healthy'
+        error_message = None
+        
+        try:
+            # Check Spark session
+            details['spark_version'] = spark.version
+            details['spark_active'] = spark.sparkContext._jsc.sc().isStopped() == False
+            
+            # Check catalog access
+            try:
+                databases = spark.catalog.listDatabases()
+                details['catalog_accessible'] = True
+                details['database_count'] = len(databases)
+            except Exception as e:
+                details['catalog_accessible'] = False
+                status = 'degraded'
+                self.logger.warning(f"Catalog access issue: {str(e)}")
+            
+            # Check executor status
+            try:
+                executor_info = spark.sparkContext._jsc.sc().statusTracker().getExecutorInfos()
+                active_executors = len(executor_info)
+                details['active_executors'] = active_executors
+                
+                min_executors = self.config.get('health_check', {}).get('min_executors', 1)
+                if active_executors < min_executors:
+                    status = 'degraded'
+                    self.logger.warning(
+                        f"Low executor count: {active_executors} < {min_executors}"
+                    )
+            except Exception as e:
+                details['executor_check_failed'] = str(e)
+                status = 'degraded'
+            
+            # Calculate latency
+            latency_ms = (time.time() - start_time) * 1000
+            
+            # Check latency threshold
+            max_latency = self.config.get('health_check', {}).get('max_latency_ms', 1000)
+            if latency_ms > max_latency:
+                status = 'degraded'
+                self.logger.warning(f"High latency: {latency_ms:.2f}ms")
+            
+        except Exception as e:
+            status = 'unhealthy'
+            error_message = str(e)
+            self.logger.error(f"Health check failed: {str(e)}")
+        
+        health_check = HealthCheck(
+            timestamp=datetime.now(),
+            component='etl_system',
+            status=status,
+            latency_ms=latency_ms,
+            error_message=error_message,
+            details=details
         )
         
-    def _send_alert(self, alert: Dict[str, Any]):
-        """Send alert notification."""
-        endpoint = self.config.get('alert_endpoint')
-        if endpoint:
-            try:
-                requests.post(
-                    endpoint,
-                    json=alert,
-                    timeout=5
-                )
-            except Exception as e:
-                logger.error(f"Failed to send alert: {e}")
-                
-    def generate_report(self) -> Dict[str, Any]:
-        """Generate comprehensive monitoring report."""
-        return {
-            'dashboard_summary': self.dashboard.get_summary(),
-            'error_summary': self.error_tracker.get_error_summary(),
-            'recent_errors': self.error_tracker.get_recent_errors(),
-            'baseline_metrics': self.health_checker.baseline_metrics,
-            'generated_at': datetime.now().isoformat()
-        }
-
-
-def create_monitoring_service(
-    spark: SparkSession,
-    config_path: str
-) -> MonitoringService:
-    """Factory function to create monitoring service."""
-    with open(config_path, 'r') as f:
-        config = json.load(f)
+        self.health_checks.append(health_check)
+        self.logger.info(f"Health check completed: {status} ({latency_ms:.2f}ms)")
         
-    return MonitoringService(spark, config)
+        return health_check
+    
+    def get_job_statistics(
+        self,
+        spark: SparkSession,
+        start_date: str,
+        end_date: str
+    ) -> Dict[str, Any]:
+        """
+        Calculate job statistics for date range
+        
+        Args:
+            spark: Active SparkSession
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            
+        Returns:
+            Dictionary with aggregated statistics
+        """
+        self.logger.info(f"Calculating statistics from {start_date} to {end_date}")
+        
+        try:
+            # Load metrics from files
+            metrics_data = []
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            
+            current_dt = start_dt
+            while current_dt <= end_dt:
+                date_str = current_dt.strftime('%Y%m%d')
+                metrics_file = Path('logs/metrics') / f"metrics_{date_str}.jsonl"
+                
+                if metrics_file.exists():
+                    with open(metrics_file, 'r') as f:
+                        for line in f:
+                            metrics_data.append(json.loads(line))
+                
+                current_dt += timedelta(days=1)
+            
+            if not metrics_data:
+                return {'error': 'No metrics data found for date range'}
+            
+            # Create DataFrame
+            df = spark.createDataFrame(metrics_data)
+            
+            # Calculate statistics
+            stats = df.agg(
+                count('*').alias('total_jobs'),
+                spark_sum(col('records_extracted')).alias('total_extracted'),
+                spark_sum(col('records_loaded')).alias('total_loaded'),
+                spark_sum(col('records_failed')).alias('total_failed'),
+                avg('duration_seconds').alias('avg_duration_seconds'),
+                spark_max('duration_seconds').alias('max_duration_seconds')
+            ).collect()[0]
+            
+            # Status distribution
+            status_dist = df.groupBy('status').count().collect()
+            
+            result = {
+                'date_range': {
+                    'start': start_date,
+                    'end': end_date
+                },
+                'total_jobs': stats['total_jobs'],
+                'total_records': {
+                    'extracted': stats['total_extracted'],
+                    'loaded': stats['total_loaded'],
+                    'failed': stats['total_failed']
+                },
+                'duration': {
+                    'average_seconds': float(stats['avg_duration_seconds'] or 0),
+                    'max_seconds': float(stats['max_duration_seconds'] or 0)
+                },
+                'status_distribution': {
+                    row['status']: row['count'] for row in status_dist
+                },
+                'success_rate': (
+                    stats_dist.get('SUCCESS', 0) / stats['total_jobs']
+                    if stats['total_jobs'] > 0 else 0
+                )
+            }
+            
+            self.logger.info(f"Statistics calculated: {result['total_jobs']} jobs processed")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Failed to calculate statistics: {str(e)}")
+            return {'error': str(e)}
+    
+    def generate_dashboard_data(self, spark: SparkSession) -> Dict[str, Any]:
+        """
+        Generate data for monitoring dashboard
+        
+        Args:
+            spark: Active SparkSession
+            
+        Returns:
+            Dashboard data dictionary
+        """
+        # Get recent health checks
+        recent_health = self.health_checks[-10:] if self.health_checks else []
+        
+        # Get recent metrics
+        recent_metrics = self.metrics_buffer[-20:] if self.metrics_buffer else []
+        
+        # Calculate today's statistics
+        today = datetime.now().strftime('%Y-%m-%d')
+        today_stats = self.get_job_statistics(spark, today, today)
+        
+        dashboard = {
+            'timestamp': datetime.now().isoformat(),
+            'system_health': {
+                'current_status': recent_health[-1].status if recent_health else 'unknown',
+                'recent_checks': [
+                    {
+                        'timestamp': hc.timestamp.isoformat(),
+                        'status': hc.status,
+                        'latency_ms': hc.latency_ms
+                    }
+                    for hc in recent_health
+                ]
+            },
+            'today_summary': today_stats,
+            'recent_jobs': [
+                {
+                    'job_id': m.job_id,
+                    'status': m.status,
+                    'duration_seconds': m.duration_seconds,
+                    'records_processed': m.records_loaded
+                }
+                for m in recent_metrics
+            ]
+        }
+        
+        return dashboard
+
+
+def main():
+    """Main monitoring entry point for testing"""
+    import yaml
+    
+    # Load configuration
+    with open('config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Initialize monitor
+    monitor = ETLMonitor(config.get('monitoring', {}))
+    
+    # Initialize Spark
+    spark = SparkSession.builder \
+        .appName("ETL_Monitor_Test") \
+        .config("spark.sql.shuffle.partitions", "2") \
+        .getOrCreate()
+    
+    try:
+        # Perform health check
+        health = monitor.perform_health_check(spark)
+        print(f"Health Status: {health.status}")
+        print(f"Details: {json.dumps(health.details, indent=2)}")
+        
+        # Generate dashboard
+        dashboard = monitor.generate_dashboard_data(spark)
+        print(f"\nDashboard Data:")
+        print(json.dumps(dashboard, indent=2, default=str))
+        
+    finally:
+        spark.stop()
+
+
+if __name__ == '__main__':
+    main()
