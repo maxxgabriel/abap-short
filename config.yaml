@@ -1,137 +1,109 @@
-# ETL Configuration File
-# Replaces ABAP configuration and constants
+# ETL Configuration
+# Configuration parameters for Sales ETL System
 
-# Spark Configuration
+app:
+  name: "sales_etl"
+  version: "1.0.0"
+  description: "Sales Data ETL System"
+
 spark:
-  master: "local[*]"  # Use local[*] for local mode, or spark://host:port for cluster
   app_name: "SalesETL"
-  log_level: "WARN"  # DEBUG, INFO, WARN, ERROR
-  enable_hive: false
-  
+  master: "local[*]"
   config:
-    spark.sql.shuffle.partitions: "200"
     spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.shuffle.partitions: "200"
+    spark.executor.memory: "4g"
     spark.driver.memory: "2g"
-    spark.executor.memory: "2g"
-    spark.sql.sources.partitionOverwriteMode: "dynamic"
 
-# Database Configuration
-database:
-  # Source database (replaces ZSALES_RAW table)
-  source:
-    format: "jdbc"  # or "parquet", "delta", "hive"
-    url: "jdbc:postgresql://localhost:5432/sales_raw"
-    driver: "org.postgresql.Driver"
-    table: "sales_raw"
-    user: "etl_user"
-    password: "etl_password"
-    fetch_size: 1000
-  
-  # Target database (replaces ZSALES_ANALYTICS table)
-  target:
-    format: "jdbc"  # or "parquet", "delta", "hive"
-    url: "jdbc:postgresql://localhost:5432/sales_analytics"
-    driver: "org.postgresql.Driver"
-    table: "sales_analytics"
-    user: "etl_user"
-    password: "etl_password"
-    batch_size: 1000
-  
-  # Log database (replaces ZETL_LOG table)
-  log:
-    format: "jdbc"
-    url: "jdbc:postgresql://localhost:5432/etl_logs"
-    driver: "org.postgresql.Driver"
-    table: "etl_log"
-    user: "etl_user"
-    password: "etl_password"
+etl:
+  batch_size: 1000
+  commit_interval: 500
+  parallel_jobs: 4
+  retry_attempts: 3
+  timeout_seconds: 3600
 
-# Business Rules (from ZCL_ETL_CONSTANTS)
 business_rules:
   # Discount thresholds
-  discount:
-    tier1_quantity: 10
-    tier1_rate: 0.05
-    tier2_quantity: 15
-    tier2_rate: 0.10
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
   
   # Tax rate
   tax_rate: 0.08
   
-  # Cost calculation
+  # Cost ratio for profit calculation
   cost_ratio: 0.60
   
   # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
-# ETL Configuration (from ZCL_ETL_CONSTANTS defaults)
-etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
+database:
+  # Source table
+  source_table: "zsales_raw"
+  # Target table
+  target_table: "zsales_analytics"
+  # Log table
+  log_table: "zetl_log"
   
-  # Status codes
-  status_codes:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
+  # Database paths (configure based on environment)
+  source_path: "data/input/raw_sales"
+  target_path: "data/output/analytics"
+  log_path: "data/output/logs"
   
-  # Process steps
-  steps:
-    init: "INIT"
-    extract: "EXTRACT"
-    transform: "TRANSFORM"
-    load: "LOAD"
-    validate: "VALIDATE"
-    complete: "COMPLETE"
-    error: "ERROR"
-  
-  # Sale categories
-  categories:
-    high: "HIGH"
-    medium: "MEDIUM"
-    low: "LOW"
+  # File formats
+  source_format: "parquet"
+  target_format: "parquet"
+  log_format: "parquet"
 
-# ID Prefixes
-id_prefixes:
-  etl_run: "ETL"
-  log_id: "LOG"
-  analytics_id: "ANL"
-
-# Message Templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
-
-# Logging Configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  console: true
-  file:
-    enabled: true
-    path: "logs/etl.log"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
+  file_path: "logs/etl.log"
+  max_file_size: 10485760  # 10MB
+  backup_count: 5
 
-# Data Quality Rules
-data_quality:
-  validate_required_fields: true
-  validate_data_types: true
-  reject_invalid_records: false  # Set to true to reject, false to log warnings
-  max_error_percentage: 5.0  # Max percentage of errors before failing
+validation:
+  # Enable/disable validation steps
+  validate_input: true
+  validate_output: true
+  skip_invalid_records: false
+  max_error_rate: 0.05  # 5% max error rate
+
+monitoring:
+  enable_metrics: true
+  metrics_path: "metrics/etl_metrics.json"
+  enable_notifications: false
+  notification_email: "etl-team@example.com"
+
+# Environment-specific overrides
+environments:
+  development:
+    spark:
+      master: "local[2]"
+    logging:
+      level: "DEBUG"
+    etl:
+      batch_size: 100
+      
+  test:
+    spark:
+      master: "local[2]"
+    logging:
+      level: "DEBUG"
+    validation:
+      skip_invalid_records: true
+      
+  production:
+    spark:
+      master: "yarn"
+      config:
+        spark.executor.instances: "10"
+        spark.executor.memory: "8g"
+        spark.driver.memory: "4g"
+    logging:
+      level: "WARN"
+    monitoring:
+      enable_notifications: true
