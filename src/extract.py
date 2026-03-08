@@ -1,104 +1,99 @@
 """
 ETL Extractor Module
-Extracts raw sales data from source tables.
+Extracts raw sales data from source table.
 """
 
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col
 from typing import Optional
-from datetime import date
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, DecimalType, DateType, TimestampType
-)
-from pyspark.sql.functions import col, lit
 import logging
+
+from src.logger import ETLLogger
+from src.exceptions import ETLExtractError
 
 
 class ETLExtractor:
-    """
-    Extracts raw sales data from source system.
-    Reads from database tables or files based on configuration.
-    """
+    """Extracts raw sales data from source table."""
     
-    def __init__(self, spark: SparkSession, config: dict, logger):
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
         """
-        Initialize extractor with Spark session and configuration.
+        Initialize the ETL Extractor.
         
         Args:
-            spark: SparkSession instance
+            spark: Active SparkSession
+            logger: ETL logger instance
             config: Configuration dictionary
-            logger: Logger instance for tracking extraction
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
+        self.config = config
         
-    def get_raw_sales_schema(self) -> StructType:
+    def extract_data(
+        self,
+        source_table: str,
+        from_date: str,
+        to_date: str,
+        status_filter: str = 'N'
+    ) -> DataFrame:
         """
-        Define schema for raw sales data.
-        
-        Returns:
-            StructType: Schema definition for raw sales DataFrame
-        """
-        return StructType([
-            StructField("trans_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("quantity", IntegerType(), False),
-            StructField("unit_price", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
-            StructField("status", StringType(), False)
-        ])
-    
-    def extract_data(self, from_date: date, to_date: date) -> DataFrame:
-        """
-        Extract raw sales data for the specified date range.
+        Extract raw sales data from source table.
         
         Args:
-            from_date: Start date for extraction
-            to_date: End date for extraction
+            source_table: Source table name
+            from_date: Start date (YYYY-MM-DD format)
+            to_date: End date (YYYY-MM-DD format)
+            status_filter: Status to filter (default 'N' for new records)
             
         Returns:
-            DataFrame: Extracted raw sales data
+            DataFrame containing extracted raw sales data
         """
         try:
             self.logger.log_message(
                 step='EXTRACT',
-                status='I',
+                status='S',
                 message=f'Starting extraction from {from_date} to {to_date}'
             )
             
-            source_type = self.config['source']['type']
+            # Extract data with filters
+            query = f"""
+                SELECT 
+                    trans_id,
+                    trans_date,
+                    customer_id,
+                    product_id,
+                    quantity,
+                    unit_price,
+                    currency,
+                    sales_rep,
+                    region,
+                    status
+                FROM {source_table}
+                WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
+                AND status = '{status_filter}'
+            """
             
-            if source_type == 'jdbc':
-                df = self._extract_from_jdbc(from_date, to_date)
-            elif source_type == 'csv':
-                df = self._extract_from_csv()
-            elif source_type == 'parquet':
-                df = self._extract_from_parquet()
+            df = self.spark.sql(query)
+            
+            # Count extracted records
+            record_count = df.count()
+            
+            if record_count == 0:
+                self.logger.log_message(
+                    step='EXTRACT',
+                    status='W',
+                    message='No records found for extraction',
+                    records_processed=0
+                )
             else:
-                raise ValueError(f"Unsupported source type: {source_type}")
+                self.logger.log_message(
+                    step='EXTRACT',
+                    status='S',
+                    message=f'Extracted {record_count} records successfully',
+                    records_processed=record_count,
+                    records_success=record_count
+                )
             
-            # Filter by date range and status
-            df_filtered = df.filter(
-                (col("trans_date") >= lit(from_date)) &
-                (col("trans_date") <= lit(to_date)) &
-                (col("status") == lit("N"))
-            )
-            
-            record_count = df_filtered.count()
-            
-            self.logger.log_message(
-                step='EXTRACT',
-                status='S',
-                records_processed=record_count,
-                records_success=record_count,
-                message=f'Extracted {record_count} records successfully'
-            )
-            
-            return df_filtered
+            return df
             
         except Exception as e:
             self.logger.log_message(
@@ -106,61 +101,4 @@ class ETLExtractor:
                 status='E',
                 message=f'Extraction failed: {str(e)}'
             )
-            raise
-    
-    def _extract_from_jdbc(self, from_date: date, to_date: date) -> DataFrame:
-        """
-        Extract data from JDBC source (database).
-        
-        Args:
-            from_date: Start date for extraction
-            to_date: End date for extraction
-            
-        Returns:
-            DataFrame: Extracted data from JDBC source
-        """
-        jdbc_config = self.config['source']['jdbc']
-        
-        df = self.spark.read \
-            .format("jdbc") \
-            .option("url", jdbc_config['url']) \
-            .option("dbtable", jdbc_config['table']) \
-            .option("user", jdbc_config.get('user', '')) \
-            .option("password", jdbc_config.get('password', '')) \
-            .option("driver", jdbc_config.get('driver', 'org.postgresql.Driver')) \
-            .load()
-        
-        return df
-    
-    def _extract_from_csv(self) -> DataFrame:
-        """
-        Extract data from CSV file source.
-        
-        Returns:
-            DataFrame: Extracted data from CSV
-        """
-        csv_config = self.config['source']['csv']
-        
-        df = self.spark.read \
-            .format("csv") \
-            .option("header", csv_config.get('header', True)) \
-            .option("inferSchema", csv_config.get('infer_schema', False)) \
-            .schema(self.get_raw_sales_schema()) \
-            .load(csv_config['path'])
-        
-        return df
-    
-    def _extract_from_parquet(self) -> DataFrame:
-        """
-        Extract data from Parquet file source.
-        
-        Returns:
-            DataFrame: Extracted data from Parquet
-        """
-        parquet_config = self.config['source']['parquet']
-        
-        df = self.spark.read \
-            .format("parquet") \
-            .load(parquet_config['path'])
-        
-        return df
+            raise ETLExtractError(f'Data extraction failed: {str(e)}')
