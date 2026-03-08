@@ -1,27 +1,26 @@
 """
-ETL Extractor Module
-Extracts raw sales data from source
-Migrated from ZCL_ETL_EXTRACTOR ABAP class
+Extractor Module
+Handles data extraction from source systems.
 """
-
-from typing import Optional
-from datetime import datetime
+from datetime import date
+from typing import List, Tuple
+from decimal import Decimal
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
 
 from src.logger import ETLLogger
+from src.types import RawSales
+from src.constants import ETLStep, ETLStatus
+from src.exceptions import ExtractError
 
 
 class ETLExtractor:
-    """
-    Data extraction component for ETL pipeline.
-    Reads raw sales data from source and returns as Spark DataFrame.
-    """
-
+    """Extracts raw sales data from source."""
+    
     def __init__(self, logger: ETLLogger, spark: SparkSession):
         """
-        Initialize extractor with logger and Spark session.
+        Initialize extractor.
         
         Args:
             logger: ETL logger instance
@@ -29,15 +28,63 @@ class ETLExtractor:
         """
         self.logger = logger
         self.spark = spark
-
-    def get_raw_sales_schema(self) -> StructType:
+    
+    def extract_data(
+        self,
+        from_date: date,
+        to_date: date,
+        source_table: str = "zsales_raw"
+    ) -> Tuple[DataFrame, bool]:
         """
-        Define schema for raw sales data.
-        Migrates ABAP ty_raw_sales structure to PySpark StructType.
+        Extract raw sales data from source.
         
+        Args:
+            from_date: Start date for extraction
+            to_date: End date for extraction
+            source_table: Source table name
+            
         Returns:
-            StructType schema for raw sales data
+            Tuple of (DataFrame, success_flag)
+            
+        Raises:
+            ExtractError: If extraction fails
         """
+        try:
+            self.logger.log_message(
+                step=ETLStep.EXTRACT,
+                status=ETLStatus.SUCCESS,
+                message=f"Starting extraction from {from_date} to {to_date}"
+            )
+            
+            # Define schema
+            schema = self._get_raw_sales_schema()
+            
+            # Extract data (simulated with sample data for demo)
+            # In production: df = self.spark.read.table(source_table).filter(...)
+            df = self._create_sample_data(schema, from_date)
+            
+            count = df.count()
+            
+            self.logger.log_message(
+                step=ETLStep.EXTRACT,
+                status=ETLStatus.SUCCESS,
+                message=f"Extracted {count} records successfully",
+                records_processed=count,
+                records_success=count
+            )
+            
+            return df, True
+            
+        except Exception as e:
+            self.logger.log_message(
+                step=ETLStep.EXTRACT,
+                status=ETLStatus.ERROR,
+                message=f"Extraction failed: {str(e)}"
+            )
+            raise ExtractError(f"Failed to extract data: {str(e)}", previous=e)
+    
+    def _get_raw_sales_schema(self) -> StructType:
+        """Define schema for raw sales data."""
         return StructType([
             StructField("trans_id", StringType(), False),
             StructField("trans_date", DateType(), False),
@@ -46,77 +93,76 @@ class ETLExtractor:
             StructField("quantity", IntegerType(), False),
             StructField("unit_price", DecimalType(16, 2), False),
             StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), True),
+            StructField("sales_rep", StringType(), False),
+            StructField("region", StringType(), False),
             StructField("status", StringType(), False)
         ])
-
-    def extract_data(self, from_date: str, to_date: str) -> Optional[DataFrame]:
-        """
-        Extract raw sales data for date range.
-        Migrates ABAP SELECT statement to PySpark DataFrame operations.
+    
+    def _create_sample_data(self, schema: StructType, trans_date: date) -> DataFrame:
+        """Create sample data for demonstration."""
+        from pyspark.sql import Row
         
-        Args:
-            from_date: Start date (YYYY-MM-DD format)
-            to_date: End date (YYYY-MM-DD format)
-            
-        Returns:
-            DataFrame containing raw sales data, or None if extraction fails
-        """
-        try:
-            self.logger.log_message(
-                step="EXTRACT",
-                status="S",
-                message=f"Starting extraction from {from_date} to {to_date}"
+        sample_data = [
+            Row(
+                trans_id="T000001",
+                trans_date=trans_date,
+                customer_id="CUST001",
+                product_id="PROD001",
+                quantity=10,
+                unit_price=Decimal("99.99"),
+                currency="USD",
+                sales_rep="John Doe",
+                region="NORTH",
+                status="N"
+            ),
+            Row(
+                trans_id="T000002",
+                trans_date=trans_date,
+                customer_id="CUST002",
+                product_id="PROD002",
+                quantity=5,
+                unit_price=Decimal("149.99"),
+                currency="USD",
+                sales_rep="Jane Smith",
+                region="SOUTH",
+                status="N"
+            ),
+            Row(
+                trans_id="T000003",
+                trans_date=trans_date,
+                customer_id="CUST003",
+                product_id="PROD001",
+                quantity=20,
+                unit_price=Decimal("99.99"),
+                currency="USD",
+                sales_rep="John Doe",
+                region="EAST",
+                status="N"
+            ),
+            Row(
+                trans_id="T000004",
+                trans_date=trans_date,
+                customer_id="CUST001",
+                product_id="PROD003",
+                quantity=3,
+                unit_price=Decimal("299.99"),
+                currency="USD",
+                sales_rep="Bob Wilson",
+                region="WEST",
+                status="N"
+            ),
+            Row(
+                trans_id="T000005",
+                trans_date=trans_date,
+                customer_id="CUST004",
+                product_id="PROD002",
+                quantity=15,
+                unit_price=Decimal("149.99"),
+                currency="USD",
+                sales_rep="Jane Smith",
+                region="SOUTH",
+                status="N"
             )
-
-            # In production: Read from actual data source
-            # sales_df = self.spark.read.jdbc(
-            #     url="jdbc:...",
-            #     table="zsales_raw",
-            #     properties={...}
-            # ).filter(
-            #     (col("trans_date") >= from_date) &
-            #     (col("trans_date") <= to_date) &
-            #     (col("status") == "N")
-            # )
-
-            # For demonstration: Create sample data
-            # Migrates ABAP VALUE #(...) to Python list of tuples
-            sample_data = [
-                ("T000001", datetime.strptime("2024-01-15", "%Y-%m-%d").date(), "CUST001", 
-                 "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N"),
-                ("T000002", datetime.strptime("2024-01-15", "%Y-%m-%d").date(), "CUST002", 
-                 "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
-                ("T000003", datetime.strptime("2024-01-15", "%Y-%m-%d").date(), "CUST003", 
-                 "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N"),
-                ("T000004", datetime.strptime("2024-01-15", "%Y-%m-%d").date(), "CUST001", 
-                 "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N"),
-                ("T000005", datetime.strptime("2024-01-15", "%Y-%m-%d").date(), "CUST004", 
-                 "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
-            ]
-
-            # Create DataFrame with schema
-            schema = self.get_raw_sales_schema()
-            sales_df = self.spark.createDataFrame(sample_data, schema)
-
-            # Get record count
-            record_count = sales_df.count()
-
-            self.logger.log_message(
-                step="EXTRACT",
-                status="S",
-                records_processed=record_count,
-                records_success=record_count,
-                message=f"Extracted {record_count} records successfully"
-            )
-
-            return sales_df
-
-        except Exception as ex:
-            self.logger.log_message(
-                step="EXTRACT",
-                status="E",
-                message=f"Extraction failed: {str(ex)}"
-            )
-            return None
+        ]
+        
+        return self.spark.createDataFrame(sample_data, schema)
