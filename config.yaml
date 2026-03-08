@@ -1,60 +1,82 @@
-# PySpark ETL Pipeline Configuration
-pipeline:
-  name: "sales_etl_pipeline"
-  version: "1.0.0"
-  description: "Sales data ETL pipeline with resilience"
+# Delta Lake Loader Configuration
+app_name: "sales_etl_delta_loader"
+environment: "production"
 
+# Spark Configuration
 spark:
-  app_name: "SalesETLPipeline"
-  master: "local[*]"
-  log_level: "WARN"
-  config:
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-
-sources:
-  raw_sales:
-    format: "parquet"
-    path: "data/input/sales_raw"
-    options:
-      mergeSchema: "true"
-
-targets:
-  analytics:
-    format: "parquet"
-    path: "data/output/sales_analytics"
-    mode: "append"
-    partitionBy: ["trans_date"]
+  app_name: "SalesETLDeltaLoader"
+  master: "local[*]"  # Change to yarn/k8s in production
+  driver_memory: "4g"
+  executor_memory: "8g"
+  executor_cores: 4
+  sql_extensions: "io.delta.sql.DeltaSparkSessionExtension"
+  catalog_implementation: "hive"
   
-  logs:
-    format: "parquet"
-    path: "data/logs/etl_logs"
-    mode: "append"
+  # Delta Lake specific configs
+  delta:
+    log_cache_size: 1000
+    checkpoint_interval: 10
+    vacuum_retention_hours: 168  # 7 days
+    
+  # Shuffle and partition configs
+  shuffle_partitions: 200
+  adaptive_enabled: true
+  
+# Source Configuration
+source:
+  format: "parquet"  # or jdbc for direct ABAP extraction
+  path: "s3a://raw-data/sales/analytics/"
+  
+  # JDBC config (if extracting directly from SAP)
+  jdbc:
+    url: "jdbc:sap://hostname:port"
+    driver: "com.sap.db.jdbc.Driver"
+    table: "ZSALES_ANALYTICS"
+    partition_column: "trans_date"
+    num_partitions: 10
+    fetch_size: 10000
 
-checkpoints:
-  enabled: true
-  base_path: "data/checkpoints"
-  stages:
-    - extract
-    - transform
-    - load
+# Target Configuration - Delta Lake
+target:
+  format: "delta"
+  path: "s3a://curated-data/sales/analytics_delta/"
+  table_name: "sales_analytics"
+  database: "sales_db"
+  
+  # Partitioning strategy
+  partition_columns:
+    - "region"
+    - "trans_year"
+    - "trans_month"
+    
+  # Merge/Upsert configuration
+  merge:
+    enabled: true
+    merge_keys:
+      - "analytics_id"
+    update_condition: "source.loaded_at > target.loaded_at"
+    
+  # Z-Order optimization columns (for query performance)
+  zorder_columns:
+    - "customer_id"
+    - "product_id"
+    - "trans_date"
+    
+  # Table properties
+  properties:
+    delta.autoOptimize.optimizeWrite: "true"
+    delta.autoOptimize.autoCompact: "true"
+    delta.checkpoint.writeStatsAsJson: "true"
+    delta.checkpoint.writeStatsAsStruct: "true"
+    delta.logRetentionDuration: "interval 30 days"
+    delta.deletedFileRetentionDuration: "interval 7 days"
 
-retry:
-  max_attempts: 3
-  initial_backoff_seconds: 2
-  max_backoff_seconds: 60
-  backoff_multiplier: 2.0
-  retryable_exceptions:
-    - "AnalysisException"
-    - "IOException"
-    - "TimeoutException"
-
+# Business Rules (from ABAP)
 business_rules:
   discount:
     tier1_quantity: 10
-    tier2_quantity: 15
     tier1_rate: 0.05
+    tier2_quantity: 15
     tier2_rate: 0.10
   
   tax_rate: 0.08
@@ -64,20 +86,55 @@ business_rules:
     high: 2000.00
     medium: 500.00
 
-processing:
-  batch_size: 1000
-  commit_interval: 500
-  timeout_seconds: 3600
+# ETL Configuration
+etl:
+  batch_size: 10000
+  write_mode: "merge"  # append, overwrite, merge
+  enable_schema_evolution: true
+  enable_partition_pruning: true
   
-validation:
-  enabled: true
-  fail_on_error: false
-  error_threshold_percent: 5.0
+  # Performance tuning
+  coalesce_partitions: 10
+  repartition_before_write: true
+  
+  # Validation
+  validate_before_load: true
+  quality_checks:
+    - check_nulls: ["analytics_id", "customer_id", "product_id"]
+    - check_positive: ["gross_amount", "net_amount"]
+    - check_category_values: ["HIGH", "MEDIUM", "LOW"]
 
+# Logging Configuration
 logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  output:
-    console: true
-    file: true
-    file_path: "logs/etl_pipeline.log"
+  level: "INFO"  # DEBUG, INFO, WARN, ERROR
+  format: "json"
+  output_path: "s3a://logs/etl/delta-loader/"
+  console_output: true
+  
+  # Metrics
+  enable_metrics: true
+  metrics_path: "s3a://metrics/etl/delta-loader/"
+
+# Monitoring & Alerting
+monitoring:
+  enable_history_server: true
+  enable_event_log: true
+  
+  # Thresholds for alerts
+  max_error_rate: 0.05  # 5%
+  max_load_duration_minutes: 120
+  min_records_expected: 100
+
+# Retry Configuration
+retry:
+  enabled: true
+  max_attempts: 3
+  backoff_seconds: 60
+  exponential_backoff: true
+
+# Testing Configuration
+testing:
+  test_mode: false
+  test_data_path: "s3a://test-data/sales/analytics/"
+  test_output_path: "/tmp/delta-test/"
+  sample_fraction: 0.1
