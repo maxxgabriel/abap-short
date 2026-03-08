@@ -1,26 +1,23 @@
 """
-ETL Loader Module
-Loads transformed data into target analytics table
-Migrated from ZCL_ETL_LOADER ABAP class
+Loader Module
+Handles loading transformed data into target systems.
 """
-
-from typing import Optional
+from typing import Tuple
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col
+from pyspark.sql import functions as F
 
 from src.logger import ETLLogger
+from src.constants import ETLStep, ETLStatus, SaleCategory
+from src.exceptions import LoadError, ValidationError
 
 
 class ETLLoader:
-    """
-    Data loading component for ETL pipeline.
-    Validates and loads transformed data into target.
-    """
-
+    """Loads transformed data into target analytics table."""
+    
     def __init__(self, logger: ETLLogger, spark: SparkSession):
         """
-        Initialize loader with logger and Spark session.
+        Initialize loader.
         
         Args:
             logger: ETL logger instance
@@ -28,96 +25,98 @@ class ETLLoader:
         """
         self.logger = logger
         self.spark = spark
-
-    def validate_record(self, analytics_df: DataFrame) -> DataFrame:
+    
+    def load_data(
+        self,
+        analytics_df: DataFrame,
+        target_table: str = "zsales_analytics"
+    ) -> Tuple[int, bool]:
         """
-        Validate analytics records before loading.
-        Migrates ABAP validate_record method to PySpark filter operations.
+        Load transformed data into target table.
         
         Args:
-            analytics_df: DataFrame containing analytics data
+            analytics_df: Transformed analytics DataFrame
+            target_table: Target table name
             
         Returns:
-            DataFrame containing only valid records
-        """
-        # Filter out invalid records
-        valid_df = analytics_df.filter(
-            (col("analytics_id").isNotNull()) &
-            (col("customer_id").isNotNull()) &
-            (col("product_id").isNotNull()) &
-            (col("gross_amount") > 0) &
-            (col("currency").isNotNull()) &
-            (col("category").isin("HIGH", "MEDIUM", "LOW"))
-        )
-        
-        return valid_df
-
-    def load_data(self, analytics_df: DataFrame) -> bool:
-        """
-        Load validated analytics data to target.
-        Migrates ABAP INSERT/UPDATE statements to PySpark write operations.
-        
-        Args:
-            analytics_df: DataFrame containing analytics data
+            Tuple of (records_loaded, success_flag)
             
-        Returns:
-            True if load succeeded, False otherwise
+        Raises:
+            LoadError: If loading fails
         """
         try:
             self.logger.log_message(
-                step="LOAD",
-                status="S",
+                step=ETLStep.LOAD,
+                status=ETLStatus.SUCCESS,
                 message="Starting data load"
             )
-
+            
+            # Validate records before loading
+            valid_df, invalid_count = self._validate_records(analytics_df)
+            
             total_count = analytics_df.count()
-
-            # Validate records
-            valid_df = self.validate_record(analytics_df)
             valid_count = valid_df.count()
-            error_count = total_count - valid_count
-
-            if error_count > 0:
+            
+            if invalid_count > 0:
                 self.logger.log_message(
-                    step="LOAD",
-                    status="W",
-                    message=f"Skipped {error_count} invalid records"
+                    step=ETLStep.LOAD,
+                    status=ETLStatus.WARNING,
+                    message=f"Skipped {invalid_count} invalid records"
                 )
-
-            # In production: Write to actual target
-            # valid_df.write.jdbc(
-            #     url="jdbc:...",
-            #     table="zsales_analytics",
-            #     mode="append",
-            #     properties={...}
-            # )
-
-            # For demonstration: Show sample records
-            print("\nSample Analytics Records:")
-            valid_df.show(5, truncate=False)
-
-            # Update source table status (in production)
-            # self.spark.sql("""
-            #     UPDATE zsales_raw 
-            #     SET status = 'P' 
-            #     WHERE trans_id IN (...)
-            # """)
-
+            
+            # Load to target (in production, use actual table writes)
+            # valid_df.write.mode("append").saveAsTable(target_table)
+            
+            # For demo, just show the data
             self.logger.log_message(
-                step="LOAD",
-                status="S",
+                step=ETLStep.LOAD,
+                status=ETLStatus.INFO,
+                message="Sample records to be loaded:"
+            )
+            valid_df.show(5, truncate=False)
+            
+            self.logger.log_message(
+                step=ETLStep.LOAD,
+                status=ETLStatus.SUCCESS,
+                message=f"Loaded {valid_count} of {total_count} records",
                 records_processed=total_count,
                 records_success=valid_count,
-                records_error=error_count,
-                message=f"Loaded {valid_count} of {total_count} records"
+                records_error=invalid_count
             )
-
-            return True
-
-        except Exception as ex:
+            
+            return valid_count, True
+            
+        except Exception as e:
             self.logger.log_message(
-                step="LOAD",
-                status="E",
-                message=f"Load failed: {str(ex)}"
+                step=ETLStep.LOAD,
+                status=ETLStatus.ERROR,
+                message=f"Load failed: {str(e)}"
             )
-            return False
+            raise LoadError(f"Failed to load data: {str(e)}", previous=e)
+    
+    def _validate_records(self, df: DataFrame) -> Tuple[DataFrame, int]:
+        """
+        Validate records before loading.
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            Tuple of (valid DataFrame, invalid count)
+        """
+        initial_count = df.count()
+        
+        # Validate required fields
+        valid_df = df.filter(
+            (F.col("analytics_id").isNotNull()) &
+            (F.col("customer_id").isNotNull()) &
+            (F.col("product_id").isNotNull()) &
+            (F.col("gross_amount") > 0) &
+            (F.col("currency").isNotNull()) &
+            (F.col("category").isin([SaleCategory.HIGH, SaleCategory.MEDIUM, SaleCategory.LOW]))
+        )
+        
+        valid_count = valid_df.count()
+        invalid_count = initial_count - valid_count
+        
+        return valid_df, invalid_count
