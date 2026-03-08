@@ -1,182 +1,274 @@
 """
 ETL Loader Module
-Loads transformed analytics data into target tables.
+Loads transformed data into target analytics table with validation.
 """
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, lit, current_timestamp
+from typing import Tuple, Dict, Any
 import logging
+from datetime import datetime
+
+from src.logger import ETLLogger
+from src.exceptions import ETLLoadError
 
 
 class ETLLoader:
-    """
-    Loads transformed analytics data into target system.
-    Supports multiple target types (JDBC, Parquet, Delta Lake).
-    """
+    """Loads transformed analytics data with validation and status updates."""
     
-    def __init__(self, spark: SparkSession, config: dict, logger):
+    def __init__(self, spark: SparkSession, logger: ETLLogger, config: Dict[str, Any]):
         """
-        Initialize loader with Spark session and configuration.
+        Initialize the ETL Loader.
         
         Args:
-            spark: SparkSession instance
+            spark: Active SparkSession
+            logger: ETL logger instance
             config: Configuration dictionary
-            logger: Logger instance for tracking load operations
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
+        self.config = config
+        self.batch_size = config.get('batch_size', 1000)
         
-    def load_data(self, df_analytics: DataFrame) -> bool:
+    def load_data(
+        self,
+        analytics_df: DataFrame,
+        source_table: str,
+        target_table: str
+    ) -> Tuple[bool, Dict[str, int]]:
         """
-        Load analytics data to target system.
+        Load validated analytics data to target table and update source status.
         
         Args:
-            df_analytics: Analytics DataFrame to load
+            analytics_df: Transformed analytics DataFrame
+            source_table: Source table name for status update
+            target_table: Target analytics table name
             
         Returns:
-            bool: True if load successful, False otherwise
+            Tuple of (success flag, statistics dictionary)
         """
         try:
             self.logger.log_message(
                 step='LOAD',
-                status='I',
-                message='Starting data load'
+                status='S',
+                message=f'Starting data load to {target_table}'
             )
             
-            record_count = df_analytics.count()
+            total_count = analytics_df.count()
             
-            # Validate records before loading
-            df_valid = self._validate_records(df_analytics)
-            valid_count = df_valid.count()
-            error_count = record_count - valid_count
+            # Validate records
+            validated_df, validation_stats = self._validate_records(analytics_df)
             
-            if error_count > 0:
+            valid_count = validation_stats['valid_records']
+            invalid_count = validation_stats['invalid_records']
+            
+            if valid_count == 0:
                 self.logger.log_message(
                     step='LOAD',
-                    status='W',
-                    message=f'{error_count} invalid records skipped'
+                    status='E',
+                    message='No valid records to load',
+                    records_processed=total_count,
+                    records_error=invalid_count
                 )
+                return False, validation_stats
             
-            # Load to target based on configuration
-            target_type = self.config['target']['type']
+            # Add metadata columns
+            load_df = self._add_load_metadata(validated_df)
             
-            if target_type == 'jdbc':
-                self._load_to_jdbc(df_valid)
-            elif target_type == 'parquet':
-                self._load_to_parquet(df_valid)
-            elif target_type == 'delta':
-                self._load_to_delta(df_valid)
+            # Bulk insert to analytics table
+            success_count = self._bulk_insert(load_df, target_table)
+            
+            if success_count > 0:
+                # Update source table status to 'P' (Processed)
+                trans_ids = [row.trans_id for row in validated_df.select('trans_id').collect()]
+                self._update_source_status(source_table, trans_ids)
+                
+                self.logger.log_message(
+                    step='LOAD',
+                    status='S',
+                    message=f'Loaded {success_count} records successfully',
+                    records_processed=total_count,
+                    records_success=success_count,
+                    records_error=invalid_count
+                )
+                
+                stats = {
+                    'total_records': total_count,
+                    'valid_records': valid_count,
+                    'invalid_records': invalid_count,
+                    'loaded_records': success_count,
+                    'failed_records': valid_count - success_count
+                }
+                
+                return True, stats
             else:
-                raise ValueError(f"Unsupported target type: {target_type}")
-            
-            self.logger.log_message(
-                step='LOAD',
-                status='S',
-                records_processed=record_count,
-                records_success=valid_count,
-                records_error=error_count,
-                message=f'Loaded {valid_count} of {record_count} records'
-            )
-            
-            return True
-            
+                raise ETLLoadError('Failed to insert records to target table')
+                
         except Exception as e:
             self.logger.log_message(
                 step='LOAD',
                 status='E',
                 message=f'Load failed: {str(e)}'
             )
-            return False
+            raise ETLLoadError(f'Data load failed: {str(e)}')
     
-    def _validate_records(self, df: DataFrame) -> DataFrame:
+    def _validate_records(self, df: DataFrame) -> Tuple[DataFrame, Dict[str, int]]:
         """
-        Validate records before loading.
+        Validate records according to business rules.
         
         Args:
             df: DataFrame to validate
             
         Returns:
-            DataFrame: Validated DataFrame with invalid records filtered
+            Tuple of (validated DataFrame, validation statistics)
         """
-        df_valid = df.filter(
-            (col("analytics_id").isNotNull()) &
-            (col("customer_id").isNotNull()) &
-            (col("product_id").isNotNull()) &
-            (col("gross_amount") > 0) &
-            (col("currency").isNotNull()) &
-            (col("category").isin(["HIGH", "MEDIUM", "LOW"]))
+        self.logger.log_message(
+            step='VALIDATE',
+            status='S',
+            message='Starting record validation'
         )
         
-        return df_valid
+        initial_count = df.count()
+        
+        # Validation rules:
+        # 1. Required fields must not be null
+        # 2. Numeric fields must be positive
+        # 3. Currency must be valid (not empty)
+        # 4. Category must be HIGH, MEDIUM, or LOW
+        
+        valid_df = df.filter(
+            (col('analytics_id').isNotNull()) &
+            (col('customer_id').isNotNull()) &
+            (col('product_id').isNotNull()) &
+            (col('gross_amount') > 0) &
+            (col('net_amount') > 0) &
+            (col('currency').isNotNull()) &
+            (col('currency') != '') &
+            (col('category').isin(['HIGH', 'MEDIUM', 'LOW']))
+        )
+        
+        valid_count = valid_df.count()
+        invalid_count = initial_count - valid_count
+        
+        if invalid_count > 0:
+            self.logger.log_message(
+                step='VALIDATE',
+                status='W',
+                message=f'Found {invalid_count} invalid records',
+                records_processed=initial_count,
+                records_success=valid_count,
+                records_error=invalid_count
+            )
+        else:
+            self.logger.log_message(
+                step='VALIDATE',
+                status='S',
+                message='All records passed validation',
+                records_processed=initial_count,
+                records_success=valid_count
+            )
+        
+        stats = {
+            'total_records': initial_count,
+            'valid_records': valid_count,
+            'invalid_records': invalid_count
+        }
+        
+        return valid_df, stats
     
-    def _load_to_jdbc(self, df: DataFrame):
+    def _add_load_metadata(self, df: DataFrame) -> DataFrame:
         """
-        Load data to JDBC target (database).
+        Add load metadata columns to DataFrame.
         
         Args:
-            df: DataFrame to load
+            df: DataFrame to enhance
+            
+        Returns:
+            DataFrame with metadata columns
         """
-        jdbc_config = self.config['target']['jdbc']
-        
-        df.write \
-            .format("jdbc") \
-            .option("url", jdbc_config['url']) \
-            .option("dbtable", jdbc_config['table']) \
-            .option("user", jdbc_config.get('user', '')) \
-            .option("password", jdbc_config.get('password', '')) \
-            .option("driver", jdbc_config.get('driver', 'org.postgresql.Driver')) \
-            .mode(jdbc_config.get('mode', 'append')) \
-            .save()
+        return df.withColumn('loaded_at', current_timestamp()) \
+                 .withColumn('loaded_by', lit('ETL_PROCESS'))
     
-    def _load_to_parquet(self, df: DataFrame):
+    def _bulk_insert(self, df: DataFrame, target_table: str) -> int:
         """
-        Load data to Parquet files.
+        Perform bulk insert to target table.
         
         Args:
-            df: DataFrame to load
+            df: DataFrame to insert
+            target_table: Target table name
+            
+        Returns:
+            Number of records inserted
         """
-        parquet_config = self.config['target']['parquet']
-        
-        df.write \
-            .format("parquet") \
-            .mode(parquet_config.get('mode', 'append')) \
-            .partitionBy(parquet_config.get('partition_by', [])) \
-            .save(parquet_config['path'])
+        try:
+            # Write in append mode to target table
+            df.write \
+              .mode('append') \
+              .format('delta') \
+              .option('mergeSchema', 'true') \
+              .saveAsTable(target_table)
+            
+            inserted_count = df.count()
+            
+            self.logger.log_message(
+                step='LOAD',
+                status='S',
+                message=f'Bulk insert completed: {inserted_count} records',
+                records_success=inserted_count
+            )
+            
+            return inserted_count
+            
+        except Exception as e:
+            self.logger.log_message(
+                step='LOAD',
+                status='E',
+                message=f'Bulk insert failed: {str(e)}'
+            )
+            raise ETLLoadError(f'Bulk insert failed: {str(e)}')
     
-    def _load_to_delta(self, df: DataFrame):
+    def _update_source_status(self, source_table: str, trans_ids: list):
         """
-        Load data to Delta Lake.
+        Update source table status to 'P' (Processed) for loaded records.
         
         Args:
-            df: DataFrame to load
-        """
-        delta_config = self.config['target']['delta']
-        
-        df.write \
-            .format("delta") \
-            .mode(delta_config.get('mode', 'append')) \
-            .partitionBy(delta_config.get('partition_by', [])) \
-            .save(delta_config['path'])
-    
-    def update_source_status(self, trans_ids: list):
-        """
-        Update status in source table for processed records.
-        
-        Args:
+            source_table: Source table name
             trans_ids: List of transaction IDs to update
         """
         try:
-            # This would update the source table status from 'N' to 'P'
-            # Implementation depends on source type
+            if not trans_ids:
+                return
+            
+            # Create temp view for transaction IDs
+            trans_df = self.spark.createDataFrame(
+                [(tid,) for tid in trans_ids],
+                ['trans_id']
+            )
+            trans_df.createOrReplaceTempView('temp_processed_ids')
+            
+            # Update source table status
+            update_query = f"""
+                MERGE INTO {source_table} AS target
+                USING temp_processed_ids AS source
+                ON target.trans_id = source.trans_id
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        target.status = 'P',
+                        target.processed_at = current_timestamp()
+            """
+            
+            self.spark.sql(update_query)
+            
             self.logger.log_message(
                 step='LOAD',
-                status='I',
-                message=f'Updated status for {len(trans_ids)} records'
+                status='S',
+                message=f'Updated {len(trans_ids)} source records to status P'
             )
+            
         except Exception as e:
             self.logger.log_message(
                 step='LOAD',
                 status='W',
-                message=f'Failed to update source status: {str(e)}'
+                message=f'Source status update failed: {str(e)}'
             )
+            # Don't raise - status update failure shouldn't fail the load
