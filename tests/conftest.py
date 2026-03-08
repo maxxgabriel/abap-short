@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for ETL logger tests
+Pytest configuration and shared fixtures
 """
 import pytest
 from pyspark.sql import SparkSession
@@ -8,15 +8,14 @@ from pyspark.sql import SparkSession
 @pytest.fixture(scope="session")
 def spark_session():
     """
-    Create a Spark session for testing.
-    Shared across all tests in the session.
+    Create a Spark session for testing
     """
     spark = (
         SparkSession.builder
-        .appName("ETLLoggerTests")
+        .appName("ETL_Logger_Tests")
         .master("local[2]")
-        .config("spark.sql.warehouse.dir", "/tmp/spark-warehouse")
-        .config("spark.driver.memory", "1g")
+        .config("spark.sql.shuffle.partitions", "2")
+        .config("spark.default.parallelism", "2")
         .getOrCreate()
     )
     
@@ -26,13 +25,8 @@ def spark_session():
 
 
 @pytest.fixture
-def sample_config():
+def sample_etl_run_id():
     """
-    Provide sample configuration for testing
+    Sample ETL run ID for testing
     """
-    return {
-        'log_table': 'test_etl_logs',
-        'console_level': 'INFO',
-        'enable_database_logging': True,
-        'flush_interval': 100
-    }
+    return "ETL20240101120000"
