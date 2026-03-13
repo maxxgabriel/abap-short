@@ -1,122 +1,77 @@
 """
-Utility Functions
-Common utility functions for ETL framework
+Utility functions for ETL logger.
 """
 
-from datetime import datetime
-from typing import Optional
-import uuid
+from typing import Dict, Any
+import yaml
+import os
 
 
-def generate_etl_run_id(prefix: str = "ETL") -> str:
+def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     """
-    Generate unique ETL run ID
-    
+    Load configuration from YAML file.
+
     Args:
-        prefix: ID prefix
-        
+        config_path: Path to configuration file
+
     Returns:
-        Unique run ID
+        Dict containing configuration
     """
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"{prefix}{timestamp}"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Replace environment variables
+    config = _replace_env_vars(config)
+
+    return config
 
 
-def generate_log_id(prefix: str = "LOG") -> str:
+def _replace_env_vars(config: Any) -> Any:
     """
-    Generate unique log ID
-    
+    Recursively replace environment variable placeholders.
+
     Args:
-        prefix: ID prefix
-        
+        config: Configuration object (dict, list, or str)
+
     Returns:
-        Unique log ID
+        Configuration with environment variables resolved
     """
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    unique_suffix = str(uuid.uuid4())[:8]
-    return f"{prefix}{timestamp}{unique_suffix}"
-
-
-def generate_analytics_id(trans_id: str, prefix: str = "ANL") -> str:
-    """
-    Generate analytics record ID
-    
-    Args:
-        trans_id: Transaction ID
-        prefix: ID prefix
-        
-    Returns:
-        Analytics ID
-    """
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"{prefix}{trans_id}{timestamp[-6:]}"
-
-
-def format_duration(seconds: float) -> str:
-    """
-    Format duration in human-readable format
-    
-    Args:
-        seconds: Duration in seconds
-        
-    Returns:
-        Formatted duration string
-    """
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    
-    if hours > 0:
-        return f"{hours}h {minutes}m {secs}s"
-    elif minutes > 0:
-        return f"{minutes}m {secs}s"
+    if isinstance(config, dict):
+        return {k: _replace_env_vars(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        return [_replace_env_vars(item) for item in config]
+    elif isinstance(config, str) and config.startswith('${') and config.endswith('}'):
+        env_var = config[2:-1]
+        return os.getenv(env_var, config)
     else:
-        return f"{secs}s"
+        return config
 
 
-def format_number(number: int) -> str:
+def validate_status_code(status: str, config: Dict[str, Any]) -> bool:
     """
-    Format number with thousand separators
-    
+    Validate status code against configured values.
+
     Args:
-        number: Number to format
-        
+        status: Status code to validate
+        config: Configuration dictionary
+
     Returns:
-        Formatted number string
+        bool: True if valid, False otherwise
     """
-    return f"{number:,}"
+    valid_statuses = set(config.get('status_codes', {}).values())
+    return status in valid_statuses
 
 
-def calculate_percentage(part: float, total: float) -> float:
+def validate_process_step(step: str, config: Dict[str, Any]) -> bool:
     """
-    Calculate percentage
-    
+    Validate process step against configured values.
+
     Args:
-        part: Part value
-        total: Total value
-        
-    Returns:
-        Percentage (0-100)
-    """
-    if total == 0:
-        return 0.0
-    return (part / total) * 100
+        step: Process step to validate
+        config: Configuration dictionary
 
-
-def validate_date_range(from_date: str, to_date: str) -> bool:
-    """
-    Validate date range
-    
-    Args:
-        from_date: Start date (YYYY-MM-DD)
-        to_date: End date (YYYY-MM-DD)
-        
     Returns:
-        True if valid, False otherwise
+        bool: True if valid, False otherwise
     """
-    try:
-        from_dt = datetime.strptime(from_date, "%Y-%m-%d")
-        to_dt = datetime.strptime(to_date, "%Y-%m-%d")
-        return from_dt <= to_dt
-    except ValueError:
-        return False
+    valid_steps = set(config.get('process_steps', {}).values())
+    return step in valid_steps
