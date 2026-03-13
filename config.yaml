@@ -1,64 +1,117 @@
 # ETL Configuration
-# Replaces ABAP ZCL_ETL_CONSTANTS and configuration parameters
+# Replaces ABAP configuration and constants
 
 etl:
-  # Process identification
-  run_id_prefix: "ETL"
-  log_id_prefix: "LOG"
-  analytics_id_prefix: "ANL"
-  
-  # Batch processing settings
+  # Processing configuration
   batch_size: 1000
   commit_interval: 500
+  parallel_jobs: 4
   retry_attempts: 3
   timeout_seconds: 3600
-  parallel_jobs: 4
   
-  # Status codes (replaces gc_status constants)
-  status_codes:
-    new: "N"
-    processed: "P"
-    error: "E"
-    warning: "W"
-    success: "S"
-    info: "I"
-  
-  # Process steps (replaces gc_step constants)
-  steps:
-    init: "INIT"
-    extract: "EXTRACT"
-    transform: "TRANSFORM"
-    load: "LOAD"
-    validate: "VALIDATE"
-    complete: "COMPLETE"
-    error: "ERROR"
+  # Default date range (days)
+  default_lookback_days: 7
 
-# Business rules (replaces gc_category and business rule constants)
+# Business rules
 business_rules:
   # Discount thresholds
   discount:
     quantity_tier1: 10
     quantity_tier2: 15
-    rate_tier1: 0.05  # 5%
-    rate_tier2: 0.10  # 10%
+    rate_tier1: 0.05
+    rate_tier2: 0.10
   
-  # Tax and cost settings
-  tax_rate: 0.08  # 8%
-  cost_ratio: 0.60  # 60%
+  # Tax rate
+  tax_rate: 0.08
+  
+  # Cost ratio for profit calculation
+  cost_ratio: 0.60
   
   # Category thresholds
-  categories:
-    high:
-      name: "HIGH"
-      threshold: 2000.00
-    medium:
-      name: "MEDIUM"
-      threshold: 500.00
-    low:
-      name: "LOW"
-      threshold: 0.00
+  category:
+    high_threshold: 2000.00
+    medium_threshold: 500.00
 
-# Message templates (replaces gc_msg constants)
+# ID prefixes
+id_prefixes:
+  etl_run: "ETL"
+  log: "LOG"
+  analytics: "ANL"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/etl_process.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# Database configuration
+database:
+  # Source table
+  source_table: "zsales_raw"
+  
+  # Target table
+  target_table: "zsales_analytics"
+  
+  # Log table
+  log_table: "zetl_log"
+
+# Spark configuration
+spark:
+  app_name: "Sales ETL Process"
+  master: "local[*]"
+  
+  # Spark options
+  options:
+    "spark.sql.shuffle.partitions": "200"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.executor.memory": "4g"
+    "spark.driver.memory": "2g"
+
+# Validation rules
+validation:
+  required_fields:
+    raw_sales:
+      - "trans_id"
+      - "trans_date"
+      - "customer_id"
+      - "product_id"
+      - "quantity"
+      - "unit_price"
+      - "currency"
+    
+    analytics:
+      - "analytics_id"
+      - "customer_id"
+      - "product_id"
+      - "gross_amount"
+      - "currency"
+  
+  # Valid currency codes
+  valid_currencies:
+    - "USD"
+    - "EUR"
+    - "GBP"
+    - "JPY"
+    - "CAD"
+    - "AUD"
+  
+  # Valid regions
+  valid_regions:
+    - "NORTH"
+    - "SOUTH"
+    - "EAST"
+    - "WEST"
+  
+  # Valid categories
+  valid_categories:
+    - "HIGH"
+    - "MEDIUM"
+    - "LOW"
+
+# Message templates
 messages:
   init_success: "ETL process initialized successfully"
   extract_start: "Starting data extraction"
@@ -69,63 +122,3 @@ messages:
   load_complete: "Data load completed"
   etl_complete: "ETL process completed successfully"
   etl_error: "ETL process failed"
-
-# Spark configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  executor_memory: "4g"
-  driver_memory: "2g"
-  shuffle_partitions: 200
-  
-  # Additional Spark settings
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.debug.maxToStringFields: 100
-
-# Database configuration
-database:
-  source:
-    table: "sales_raw"
-    status_column: "status"
-    date_column: "trans_date"
-  
-  target:
-    table: "sales_analytics"
-  
-  log:
-    table: "etl_log"
-
-# Logging configuration
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
-  console: true
-  
-  # Log rotation
-  rotation:
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
-
-# Error handling configuration
-error_handling:
-  max_consecutive_errors: 10
-  error_threshold_percentage: 5.0
-  fail_fast: false
-  continue_on_validation_error: true
-  
-  # Retry configuration
-  retry:
-    enabled: true
-    max_attempts: 3
-    backoff_factor: 2
-    max_backoff_seconds: 60
-
-# Data quality thresholds
-data_quality:
-  min_records: 1
-  max_null_percentage: 10.0
-  duplicate_check: true
-  schema_validation: true
