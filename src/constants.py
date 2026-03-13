@@ -1,86 +1,139 @@
 """
 ETL Constants Module
-Defines business rules, thresholds, and configuration constants.
+Defines all constants and configuration values for the ETL system
 """
-
-from enum import Enum
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Final
 
 
-class Status(Enum):
-    """Status codes for ETL processing."""
-    NEW = 'N'
-    PROCESSED = 'P'
-    ERROR = 'E'
-    WARNING = 'W'
-    SUCCESS = 'S'
-    INFO = 'I'
+@dataclass(frozen=True)
+class StatusCodes:
+    """Status codes for ETL processing"""
+    NEW: Final[str] = 'N'
+    PROCESSED: Final[str] = 'P'
+    ERROR: Final[str] = 'E'
+    WARNING: Final[str] = 'W'
+    SUCCESS: Final[str] = 'S'
+    INFO: Final[str] = 'I'
 
 
-class ProcessStep(Enum):
-    """ETL process step identifiers."""
-    INIT = 'INIT'
-    EXTRACT = 'EXTRACT'
-    TRANSFORM = 'TRANSFORM'
-    LOAD = 'LOAD'
-    VALIDATE = 'VALIDATE'
-    COMPLETE = 'COMPLETE'
-    ERROR = 'ERROR'
+@dataclass(frozen=True)
+class ProcessSteps:
+    """ETL process step identifiers"""
+    INIT: Final[str] = 'INIT'
+    EXTRACT: Final[str] = 'EXTRACT'
+    TRANSFORM: Final[str] = 'TRANSFORM'
+    LOAD: Final[str] = 'LOAD'
+    VALIDATE: Final[str] = 'VALIDATE'
+    COMPLETE: Final[str] = 'COMPLETE'
+    ERROR: Final[str] = 'ERROR'
 
 
-class Category(Enum):
-    """Sale category classifications."""
-    HIGH = 'HIGH'
-    MEDIUM = 'MEDIUM'
-    LOW = 'LOW'
+@dataclass(frozen=True)
+class SaleCategories:
+    """Sale category classifications"""
+    HIGH: Final[str] = 'HIGH'
+    MEDIUM: Final[str] = 'MEDIUM'
+    LOW: Final[str] = 'LOW'
 
 
+@dataclass(frozen=True)
 class BusinessRules:
-    """Business rules and thresholds for ETL processing."""
-    
+    """Business rules and thresholds"""
     # Discount thresholds
-    DISCOUNT_QTY_TIER1: int = 10
-    DISCOUNT_QTY_TIER2: int = 15
-    DISCOUNT_RATE_TIER1: Decimal = Decimal('0.05')
-    DISCOUNT_RATE_TIER2: Decimal = Decimal('0.10')
+    DISCOUNT_QTY_TIER1: Final[int] = 10
+    DISCOUNT_QTY_TIER2: Final[int] = 15
+    DISCOUNT_RATE_TIER1: Final[Decimal] = Decimal('0.05')
+    DISCOUNT_RATE_TIER2: Final[Decimal] = Decimal('0.10')
     
     # Tax rate
-    TAX_RATE: Decimal = Decimal('0.08')
+    TAX_RATE: Final[Decimal] = Decimal('0.08')
     
-    # Cost ratio for profit calculation
-    COST_RATIO: Decimal = Decimal('0.60')
+    # Cost ratio
+    COST_RATIO: Final[Decimal] = Decimal('0.60')
     
     # Category thresholds
-    CATEGORY_HIGH_THRESHOLD: Decimal = Decimal('2000.00')
-    CATEGORY_MEDIUM_THRESHOLD: Decimal = Decimal('500.00')
+    CATEGORY_HIGH_THRESHOLD: Final[Decimal] = Decimal('2000.00')
+    CATEGORY_MEDIUM_THRESHOLD: Final[Decimal] = Decimal('500.00')
 
 
-class ETLConfig:
-    """ETL processing configuration defaults."""
-    
-    DEFAULT_BATCH_SIZE: int = 1000
-    DEFAULT_COMMIT_INTERVAL: int = 500
-    DEFAULT_RETRY_ATTEMPTS: int = 3
-    DEFAULT_TIMEOUT_SECONDS: int = 3600
+@dataclass(frozen=True)
+class ETLConfiguration:
+    """ETL configuration defaults"""
+    DEFAULT_BATCH_SIZE: Final[int] = 1000
+    DEFAULT_COMMIT_INTERVAL: Final[int] = 500
+    DEFAULT_RETRY_ATTEMPTS: Final[int] = 3
+    DEFAULT_TIMEOUT_SECONDS: Final[int] = 3600
 
 
+@dataclass(frozen=True)
 class IDPrefixes:
-    """ID generation prefixes."""
-    
-    ETL_RUN = 'ETL'
-    LOG_ID = 'LOG'
-    ANALYTICS_ID = 'ANL'
+    """ID generation prefixes"""
+    ETL_RUN: Final[str] = 'ETL'
+    LOG_ID: Final[str] = 'LOG'
+    ANALYTICS_ID: Final[str] = 'ANL'
 
 
+@dataclass(frozen=True)
 class Messages:
-    """Standard message templates."""
+    """Standard message templates"""
+    INIT_SUCCESS: Final[str] = 'ETL process initialized successfully'
+    EXTRACT_START: Final[str] = 'Starting data extraction'
+    EXTRACT_COMPLETE: Final[str] = 'Data extraction completed'
+    TRANSFORM_START: Final[str] = 'Starting data transformation'
+    TRANSFORM_COMPLETE: Final[str] = 'Data transformation completed'
+    LOAD_START: Final[str] = 'Starting data load'
+    LOAD_COMPLETE: Final[str] = 'Data load completed'
+    ETL_COMPLETE: Final[str] = 'ETL process completed successfully'
+    ETL_ERROR: Final[str] = 'ETL process failed'
+
+
+class ETLConstants:
+    """Main constants container"""
     
-    INIT_SUCCESS = 'ETL process initialized successfully'
-    EXTRACT_START = 'Starting data extraction'
-    EXTRACT_COMPLETE = 'Data extraction completed'
-    TRANSFORM_START = 'Starting data transformation'
-    TRANSFORM_COMPLETE = 'Data transformation completed'
-    LOAD_START = 'Starting data load'
-    LOAD_COMPLETE = 'Data load completed'
-    ETL_COMPLETE = 'ETL process completed successfully'
-    ETL_ERROR = 'ETL process failed'
+    STATUS = StatusCodes()
+    STEP = ProcessSteps()
+    CATEGORY = SaleCategories()
+    RULES = BusinessRules()
+    CONFIG = ETLConfiguration()
+    PREFIX = IDPrefixes()
+    MSG = Messages()
+    
+    @classmethod
+    def get_all_statuses(cls) -> list[str]:
+        """Return all valid status codes"""
+        return [
+            cls.STATUS.NEW,
+            cls.STATUS.PROCESSED,
+            cls.STATUS.ERROR,
+            cls.STATUS.WARNING,
+            cls.STATUS.SUCCESS,
+            cls.STATUS.INFO
+        ]
+    
+    @classmethod
+    def get_all_steps(cls) -> list[str]:
+        """Return all valid process steps"""
+        return [
+            cls.STEP.INIT,
+            cls.STEP.EXTRACT,
+            cls.STEP.TRANSFORM,
+            cls.STEP.LOAD,
+            cls.STEP.VALIDATE,
+            cls.STEP.COMPLETE,
+            cls.STEP.ERROR
+        ]
+    
+    @classmethod
+    def get_all_categories(cls) -> list[str]:
+        """Return all valid sale categories"""
+        return [
+            cls.CATEGORY.HIGH,
+            cls.CATEGORY.MEDIUM,
+            cls.CATEGORY.LOW
+        ]
+
+
+# Singleton instance for easy import
+constants = ETLConstants()
