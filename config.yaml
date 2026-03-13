@@ -1,173 +1,91 @@
-# ETL Configuration for Sales Analytics Data Loader
+# PySpark ETL Orchestrator Configuration
 
-# Application metadata
-application:
-  name: "sales_etl_loader"
+# Application Settings
+app:
+  name: "Sales ETL Orchestrator"
   version: "1.0.0"
-  description: "Data loader with comprehensive field validation"
-  user: "system"
+  environment: "production"
 
-# Spark configuration
+# Spark Configuration
 spark:
-  app_name: "SalesDataLoader"
+  app_name: "ETL_Orchestrator"
   master: "local[*]"
+  log_level: "WARN"
   config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.adaptive.enabled: "true"
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
 
-# Paths configuration
-paths:
-  # Source data path (from transform step)
-  source: "output/transformed"
-  
-  # Target analytics table path
-  target: "output/sales_analytics"
-  
-  # Quarantine path for invalid records
-  quarantine: "output/quarantine"
-  
-  # Error logs path
-  error_logs: "logs/validation_errors"
+# ETL Run ID Configuration
+run_id:
+  prefix: "ETL"
+  timestamp_format: "%Y%m%d%H%M%S"  # 14-digit timestamp
 
-# Target configuration
-target_table: "sales_analytics"
-target_format: "parquet"
+# Date Range Parameters
+date_range:
+  default_days_back: 7
+  date_format: "%Y-%m-%d"
 
-# Validation rules configuration
-validation:
-  # Strict mode - fail entire load if any validation errors
-  strict_mode: false
-  
-  # Required fields (must not be null)
-  required_fields:
-    - analytics_id
-    - customer_id
-    - product_id
-    - gross_amount
-    - currency
-    - category
-  
-  # Field-specific validation rules
-  rules:
-    gross_amount:
-      min_value: 0.01
-      max_value: 1000000.00
-      description: "Gross amount must be positive"
-    
-    currency:
-      not_null: true
-      not_empty: true
-      min_length: 3
-      max_length: 3
-      description: "Currency must be a valid 3-character code"
-    
-    category:
-      allowed_values:
-        - "HIGH"
-        - "MEDIUM"
-        - "LOW"
-      description: "Category must be HIGH, MEDIUM, or LOW"
-    
-    analytics_id:
-      not_null: true
-      pattern: "^ANL.*"
-      description: "Analytics ID must start with ANL prefix"
-    
-    customer_id:
-      not_null: true
-      min_length: 1
-      description: "Customer ID is required"
-    
-    product_id:
-      not_null: true
-      min_length: 1
-      description: "Product ID is required"
-  
-  # Error handling strategy
-  # Options: 'log' (log only), 'quarantine' (move to quarantine), 'reject' (fail load)
-  error_handling: "quarantine"
-  
-  # Maximum validation errors to collect in detail
-  max_error_details: 1000
+# Execution Parameters
+execution:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  test_mode: false
 
-# Load configuration
-load:
-  # Write mode: append, overwrite, error, ignore
-  mode: "append"
-  
-  # Batch size for processing
-  batch_size: 10000
-  
-  # Enable data quality checks
-  enable_quality_checks: true
-  
-  # Partition columns for target table
-  partition_by:
-    - "trans_date"
-  
-  # Enable schema validation
-  validate_schema: true
-  
-  # Duplicate handling
-  deduplication:
-    enabled: true
-    key_columns:
-      - "analytics_id"
-    strategy: "keep_last"  # keep_first, keep_last, drop_all
-
-# Logging configuration
+# Logging Configuration
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
-  # Log file configuration
-  file:
-    enabled: true
-    path: "logs/loader.log"
-    max_bytes: 10485760  # 10MB
-    backup_count: 5
-  
-  # Console logging
-  console:
-    enabled: true
+  file_enabled: true
+  log_dir: "logs"
+  console_enabled: true
 
-# Monitoring and alerting
-monitoring:
-  # Enable monitoring
-  enabled: true
-  
-  # Metrics to track
-  metrics:
-    - "records_processed"
-    - "records_loaded"
-    - "records_failed"
-    - "validation_errors"
-    - "load_duration"
-  
-  # Alert thresholds
-  alerts:
-    max_error_rate: 0.05  # 5% error rate threshold
-    max_load_duration: 3600  # 1 hour in seconds
+# Phase Configuration
+phases:
+  extract:
+    enabled: true
+    timeout_seconds: 1800
+  transform:
+    enabled: true
+    timeout_seconds: 1800
+  load:
+    enabled: true
+    timeout_seconds: 1800
 
-# Business rules (from constants)
+# Data Source Configuration
+data_sources:
+  raw_sales:
+    format: "parquet"
+    path: "data/raw/sales"
+    schema_validation: true
+  
+# Data Target Configuration
+data_targets:
+  analytics:
+    format: "parquet"
+    path: "data/analytics/sales"
+    mode: "append"
+    partitionBy: ["trans_date"]
+
+# Business Rules
 business_rules:
-  categories:
+  discount:
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
+  tax:
+    rate: 0.08
+  cost:
+    ratio: 0.60
+  category:
     high_threshold: 2000.00
     medium_threshold: 500.00
-  
-  discount:
-    tier1_quantity: 10
-    tier2_quantity: 15
-    tier1_rate: 0.05
-    tier2_rate: 0.10
-  
-  tax_rate: 0.08
-  cost_ratio: 0.60
 
-# ETL process configuration
-etl:
-  run_id_prefix: "ETL"
-  retry_attempts: 3
-  retry_delay: 5  # seconds
-  timeout: 3600  # seconds
+# Monitoring
+monitoring:
+  metrics_enabled: true
+  alert_on_failure: true
+  summary_display: true
