@@ -1,409 +1,504 @@
 """
-ETL Exception Hierarchy Module
+Custom exception hierarchy for ETL error handling.
 
-This module defines a custom exception hierarchy for ETL errors,
-replacing the ABAP ZCX_ETL_ERROR exception class and if_t100_message interface.
+This module defines custom exception classes for ETL operations, replacing
+the ABAP ZCX_ETL_ERROR class and T100 message constants with Python exception
+templates that include context attributes.
 """
 
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 
 class ETLError(Exception):
     """
     Base exception class for all ETL errors.
     
-    Replaces ABAP ZCX_ETL_ERROR base exception with custom message formatting
-    instead of if_t100_message interface.
+    Replaces ABAP ZCX_ETL_ERROR base exception class.
+    Provides context attributes for error tracking and logging.
+    
+    Attributes:
+        step: The ETL process step where the error occurred
+        status: Error status code (E=Error, W=Warning, F=Fatal)
+        record_count: Number of records processed before error
+        record_id: Identifier of the record that caused the error
+        error_code: Unique error code for categorization
+        timestamp: When the error occurred
+        context: Additional context information
     """
+    
+    # Error code constants (replaces T100 message constants)
+    ERROR_CODE_BASE = "ETL001"
+    MESSAGE_ID = "ZETL"
     
     def __init__(
         self,
         message: str,
-        error_step: Optional[str] = None,
+        step: Optional[str] = None,
+        status: str = "E",
+        record_count: int = 0,
         record_id: Optional[str] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
+        error_code: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        previous: Optional[Exception] = None
     ):
         """
-        Initialize ETL error with context.
+        Initialize ETL error with context attributes.
         
         Args:
             message: Human-readable error message
-            error_step: ETL step where error occurred (EXTRACT/TRANSFORM/LOAD)
-            record_id: ID of record being processed when error occurred
-            previous: Previous exception that caused this error (chained exception)
-            context: Additional context information as key-value pairs
+            step: ETL step where error occurred (INIT, EXTRACT, TRANSFORM, LOAD)
+            status: Error severity (E=Error, W=Warning, F=Fatal)
+            record_count: Number of records processed
+            record_id: ID of problematic record
+            error_code: Unique error identifier
+            context: Additional context dictionary
+            previous: Previous exception for chaining
         """
         super().__init__(message)
         self.message = message
-        self.error_step = error_step or "UNKNOWN"
+        self.step = step or "UNKNOWN"
+        self.status = status
+        self.record_count = record_count
         self.record_id = record_id
-        self.previous = previous
-        self.context = context or {}
+        self.error_code = error_code or self.ERROR_CODE_BASE
         self.timestamp = datetime.now()
+        self.context = context or {}
+        self.previous = previous
         
-    def get_formatted_message(self) -> str:
-        """
-        Get formatted error message with context.
-        
-        Replaces ABAP if_t100_message interface formatting.
-        
-        Returns:
-            Formatted error message string
-        """
-        parts = [f"[{self.error_step}]"]
-        
-        if self.record_id:
-            parts.append(f"Record: {self.record_id}")
-            
-        parts.append(self.message)
-        
-        if self.context:
-            context_str = ", ".join(f"{k}={v}" for k, v in self.context.items())
-            parts.append(f"Context: {context_str}")
-            
-        if self.previous:
-            parts.append(f"Caused by: {str(self.previous)}")
-            
-        return " | ".join(parts)
-    
-    def __str__(self) -> str:
-        """String representation of the error."""
-        return self.get_formatted_message()
-    
     def to_dict(self) -> Dict[str, Any]:
         """
-        Convert exception to dictionary for logging/serialization.
+        Convert exception to dictionary for logging and serialization.
         
         Returns:
-            Dictionary representation of exception
+            Dictionary containing all error attributes
         """
         return {
             "error_type": self.__class__.__name__,
             "message": self.message,
-            "error_step": self.error_step,
+            "step": self.step,
+            "status": self.status,
+            "record_count": self.record_count,
             "record_id": self.record_id,
+            "error_code": self.error_code,
             "timestamp": self.timestamp.isoformat(),
             "context": self.context,
             "previous_error": str(self.previous) if self.previous else None
         }
-
-
-class ExtractError(ETLError):
-    """
-    Exception for data extraction errors.
     
-    Replaces ABAP ZCX_ETL_ERROR=>EXTRACT_ERROR constant.
-    Raised when errors occur during the extract phase.
+    def __str__(self) -> str:
+        """String representation with context."""
+        parts = [f"[{self.error_code}] {self.message}"]
+        if self.step:
+            parts.append(f"Step: {self.step}")
+        if self.record_id:
+            parts.append(f"Record: {self.record_id}")
+        if self.record_count > 0:
+            parts.append(f"Processed: {self.record_count} records")
+        return " | ".join(parts)
+    
+    def get_log_entry(self) -> Dict[str, Any]:
+        """
+        Generate log entry format compatible with ETL logging system.
+        
+        Returns:
+            Dictionary formatted for ETL log table
+        """
+        return {
+            "process_step": self.step,
+            "status": self.status,
+            "records_processed": self.record_count,
+            "message": str(self),
+            "error_code": self.error_code,
+            "timestamp": self.timestamp
+        }
+
+
+class ExtractionError(ETLError):
     """
+    Exception for errors during data extraction phase.
+    
+    Replaces ABAP extract_error constant (msgno='002').
+    Raised when data cannot be read from source systems.
+    
+    Common scenarios:
+        - Database connection failures
+        - Invalid query syntax
+        - Missing source tables
+        - Access permission errors
+        - Data format issues in source
+    """
+    
+    ERROR_CODE_BASE = "ETL002"
     
     def __init__(
         self,
         message: str,
-        source_table: Optional[str] = None,
-        record_id: Optional[str] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
+        source_system: Optional[str] = None,
+        query: Optional[str] = None,
+        **kwargs
     ):
         """
-        Initialize extraction error.
+        Initialize extraction error with source context.
         
         Args:
-            message: Error message
-            source_table: Name of source table/dataset
-            record_id: ID of record causing error
-            previous: Previous exception
-            context: Additional context
+            message: Error description
+            source_system: Name of source system/database
+            query: SQL or query that failed
+            **kwargs: Additional ETLError arguments
         """
-        context = context or {}
-        if source_table:
-            context["source_table"] = source_table
-            
+        context = kwargs.pop("context", {})
+        context.update({
+            "source_system": source_system,
+            "query": query
+        })
+        
         super().__init__(
             message=message,
-            error_step="EXTRACT",
-            record_id=record_id,
-            previous=previous,
-            context=context
+            step="EXTRACT",
+            error_code=self.ERROR_CODE_BASE,
+            context=context,
+            **kwargs
         )
-        self.source_table = source_table
+        
+        self.source_system = source_system
+        self.query = query
 
 
-class TransformError(ETLError):
+class TransformationError(ETLError):
     """
-    Exception for data transformation errors.
+    Exception for errors during data transformation phase.
     
-    Replaces ABAP ZCX_ETL_ERROR=>TRANSFORM_ERROR constant.
-    Raised when errors occur during the transform phase.
+    Replaces ABAP transform_error constant (msgno='003').
+    Raised when data transformation logic fails.
+    
+    Common scenarios:
+        - Data type conversion errors
+        - Invalid business rule application
+        - Calculation errors (divide by zero, overflow)
+        - Schema validation failures
+        - Missing required fields
     """
+    
+    ERROR_CODE_BASE = "ETL003"
     
     def __init__(
         self,
         message: str,
         transformation_rule: Optional[str] = None,
-        record_id: Optional[str] = None,
-        field_name: Optional[str] = None,
-        field_value: Optional[Any] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
+        input_value: Optional[Any] = None,
+        expected_type: Optional[str] = None,
+        **kwargs
     ):
         """
-        Initialize transformation error.
+        Initialize transformation error with rule context.
         
         Args:
-            message: Error message
-            transformation_rule: Name of transformation rule that failed
-            record_id: ID of record causing error
-            field_name: Name of field being transformed
-            field_value: Value that caused error
-            previous: Previous exception
-            context: Additional context
+            message: Error description
+            transformation_rule: Name of failed transformation rule
+            input_value: The value that caused the error
+            expected_type: Expected data type or format
+            **kwargs: Additional ETLError arguments
         """
-        context = context or {}
-        if transformation_rule:
-            context["transformation_rule"] = transformation_rule
-        if field_name:
-            context["field_name"] = field_name
-        if field_value is not None:
-            context["field_value"] = str(field_value)
-            
+        context = kwargs.pop("context", {})
+        context.update({
+            "transformation_rule": transformation_rule,
+            "input_value": str(input_value) if input_value is not None else None,
+            "expected_type": expected_type
+        })
+        
         super().__init__(
             message=message,
-            error_step="TRANSFORM",
-            record_id=record_id,
-            previous=previous,
-            context=context
+            step="TRANSFORM",
+            error_code=self.ERROR_CODE_BASE,
+            context=context,
+            **kwargs
         )
+        
         self.transformation_rule = transformation_rule
-        self.field_name = field_name
-        self.field_value = field_value
+        self.input_value = input_value
+        self.expected_type = expected_type
 
 
 class LoadError(ETLError):
     """
-    Exception for data loading errors.
+    Exception for errors during data loading phase.
     
-    Replaces ABAP ZCX_ETL_ERROR=>LOAD_ERROR constant.
-    Raised when errors occur during the load phase.
+    Replaces ABAP load_error constant (msgno='004').
+    Raised when data cannot be written to target system.
+    
+    Common scenarios:
+        - Database constraint violations
+        - Duplicate key errors
+        - Target table unavailable
+        - Insufficient storage space
+        - Transaction commit failures
+        - Write permission errors
     """
+    
+    ERROR_CODE_BASE = "ETL004"
     
     def __init__(
         self,
         message: str,
         target_table: Optional[str] = None,
-        record_id: Optional[str] = None,
-        operation: Optional[str] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
+        constraint_violated: Optional[str] = None,
+        failed_records: int = 0,
+        **kwargs
     ):
         """
-        Initialize load error.
+        Initialize load error with target context.
         
         Args:
-            message: Error message
-            target_table: Name of target table/dataset
-            record_id: ID of record causing error
-            operation: Database operation (INSERT/UPDATE/DELETE)
-            previous: Previous exception
-            context: Additional context
+            message: Error description
+            target_table: Name of target table/destination
+            constraint_violated: Database constraint that was violated
+            failed_records: Number of records that failed to load
+            **kwargs: Additional ETLError arguments
         """
-        context = context or {}
-        if target_table:
-            context["target_table"] = target_table
-        if operation:
-            context["operation"] = operation
-            
+        context = kwargs.pop("context", {})
+        context.update({
+            "target_table": target_table,
+            "constraint_violated": constraint_violated,
+            "failed_records": failed_records
+        })
+        
         super().__init__(
             message=message,
-            error_step="LOAD",
-            record_id=record_id,
-            previous=previous,
-            context=context
+            step="LOAD",
+            error_code=self.ERROR_CODE_BASE,
+            context=context,
+            **kwargs
         )
+        
         self.target_table = target_table
-        self.operation = operation
+        self.constraint_violated = constraint_violated
+        self.failed_records = failed_records
 
 
 class ValidationError(ETLError):
     """
-    Exception for data validation errors.
+    Exception for data validation failures.
     
-    Raised when data fails validation rules.
+    Raised when data fails quality or business rule validation.
+    
+    Common scenarios:
+        - Missing mandatory fields
+        - Invalid data formats
+        - Business rule violations
+        - Data quality thresholds not met
+        - Referential integrity errors
     """
+    
+    ERROR_CODE_BASE = "ETL005"
     
     def __init__(
         self,
         message: str,
         validation_rule: Optional[str] = None,
-        record_id: Optional[str] = None,
         field_name: Optional[str] = None,
-        expected_value: Optional[Any] = None,
-        actual_value: Optional[Any] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
+        invalid_value: Optional[Any] = None,
+        **kwargs
     ):
         """
-        Initialize validation error.
+        Initialize validation error with rule context.
         
         Args:
-            message: Error message
+            message: Error description
             validation_rule: Name of validation rule that failed
-            record_id: ID of record causing error
-            field_name: Name of field that failed validation
-            expected_value: Expected value or pattern
-            actual_value: Actual value received
-            previous: Previous exception
-            context: Additional context
+            field_name: Field that failed validation
+            invalid_value: The invalid value
+            **kwargs: Additional ETLError arguments
         """
-        context = context or {}
-        if validation_rule:
-            context["validation_rule"] = validation_rule
-        if field_name:
-            context["field_name"] = field_name
-        if expected_value is not None:
-            context["expected_value"] = str(expected_value)
-        if actual_value is not None:
-            context["actual_value"] = str(actual_value)
-            
+        context = kwargs.pop("context", {})
+        context.update({
+            "validation_rule": validation_rule,
+            "field_name": field_name,
+            "invalid_value": str(invalid_value) if invalid_value is not None else None
+        })
+        
         super().__init__(
             message=message,
-            error_step="VALIDATE",
-            record_id=record_id,
-            previous=previous,
-            context=context
+            step="VALIDATE",
+            error_code=self.ERROR_CODE_BASE,
+            context=context,
+            **kwargs
         )
+        
         self.validation_rule = validation_rule
         self.field_name = field_name
-        self.expected_value = expected_value
-        self.actual_value = actual_value
+        self.invalid_value = invalid_value
 
 
 class ConfigurationError(ETLError):
     """
     Exception for ETL configuration errors.
     
-    Raised when ETL configuration is invalid or missing.
+    Raised when ETL process configuration is invalid or missing.
+    
+    Common scenarios:
+        - Missing configuration files
+        - Invalid configuration parameters
+        - Missing required environment variables
+        - Invalid connection strings
     """
+    
+    ERROR_CODE_BASE = "ETL006"
     
     def __init__(
         self,
         message: str,
-        config_key: Optional[str] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
+        config_parameter: Optional[str] = None,
+        config_file: Optional[str] = None,
+        **kwargs
     ):
         """
         Initialize configuration error.
         
         Args:
-            message: Error message
-            config_key: Configuration key that is invalid/missing
-            previous: Previous exception
-            context: Additional context
+            message: Error description
+            config_parameter: Name of problematic configuration parameter
+            config_file: Path to configuration file
+            **kwargs: Additional ETLError arguments
         """
-        context = context or {}
-        if config_key:
-            context["config_key"] = config_key
-            
-        super().__init__(
-            message=message,
-            error_step="INIT",
-            previous=previous,
-            context=context
-        )
-        self.config_key = config_key
-
-
-class ConnectionError(ETLError):
-    """
-    Exception for database/data source connection errors.
-    
-    Raised when connection to data sources fails.
-    """
-    
-    def __init__(
-        self,
-        message: str,
-        connection_type: Optional[str] = None,
-        host: Optional[str] = None,
-        previous: Optional[Exception] = None,
-        context: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Initialize connection error.
+        context = kwargs.pop("context", {})
+        context.update({
+            "config_parameter": config_parameter,
+            "config_file": config_file
+        })
         
-        Args:
-            message: Error message
-            connection_type: Type of connection (database/file/api)
-            host: Host or connection string
-            previous: Previous exception
-            context: Additional context
-        """
-        context = context or {}
-        if connection_type:
-            context["connection_type"] = connection_type
-        if host:
-            context["host"] = host
-            
         super().__init__(
             message=message,
-            error_step="INIT",
-            previous=previous,
-            context=context
+            step="INIT",
+            error_code=self.ERROR_CODE_BASE,
+            context=context,
+            **kwargs
         )
-        self.connection_type = connection_type
-        self.host = host
+        
+        self.config_parameter = config_parameter
+        self.config_file = config_file
 
 
-# Convenience function for error handling
-def handle_etl_error(
-    operation: str,
-    error: Exception,
-    record_id: Optional[str] = None,
-    context: Optional[Dict[str, Any]] = None
-) -> ETLError:
+# T100-style message templates (replaces ABAP T100 message constants)
+ERROR_MESSAGES = {
+    "ETL001": "General ETL error: {message}",
+    "ETL002": "Data extraction failed from {source_system}: {message}",
+    "ETL003": "Data transformation failed for rule '{transformation_rule}': {message}",
+    "ETL004": "Data load failed to table '{target_table}': {message}",
+    "ETL005": "Validation failed for field '{field_name}': {message}",
+    "ETL006": "Configuration error for parameter '{config_parameter}': {message}",
+    "ETL101": "Database connection failed: {message}",
+    "ETL102": "Query execution timeout after {timeout} seconds",
+    "ETL103": "No data found for date range {start_date} to {end_date}",
+    "ETL201": "Invalid data type conversion from {from_type} to {to_type}",
+    "ETL202": "Calculation error: {operation} failed for value {value}",
+    "ETL203": "Business rule violation: {rule_name}",
+    "ETL301": "Duplicate key violation for {key_field}={key_value}",
+    "ETL302": "Foreign key constraint failed: {constraint_name}",
+    "ETL303": "Transaction commit failed after {retry_count} retries"
+}
+
+
+def format_error_message(error_code: str, **kwargs) -> str:
     """
-    Convert standard Python exceptions to ETL exceptions.
+    Format error message using T100-style templates.
     
     Args:
-        operation: Operation being performed (extract/transform/load)
-        error: Original exception
-        record_id: Record ID if applicable
-        context: Additional context
+        error_code: Error code to look up
+        **kwargs: Values to substitute in template
         
     Returns:
-        Appropriate ETLError subclass
+        Formatted error message
     """
-    operation_lower = operation.lower()
-    message = f"Error during {operation}: {str(error)}"
+    template = ERROR_MESSAGES.get(error_code, "Unknown error code: {error_code}")
+    return template.format(error_code=error_code, **kwargs)
+
+
+def raise_extraction_error(
+    message: str,
+    source_system: Optional[str] = None,
+    query: Optional[str] = None,
+    record_count: int = 0,
+    previous: Optional[Exception] = None
+) -> None:
+    """
+    Helper function to raise ExtractionError with standard formatting.
     
-    if operation_lower == "extract":
-        return ExtractError(
-            message=message,
-            record_id=record_id,
-            previous=error,
-            context=context
-        )
-    elif operation_lower == "transform":
-        return TransformError(
-            message=message,
-            record_id=record_id,
-            previous=error,
-            context=context
-        )
-    elif operation_lower == "load":
-        return LoadError(
-            message=message,
-            record_id=record_id,
-            previous=error,
-            context=context
-        )
-    else:
-        return ETLError(
-            message=message,
-            error_step=operation,
-            record_id=record_id,
-            previous=error,
-            context=context
-        )
+    Args:
+        message: Error description
+        source_system: Source system name
+        query: Failed query
+        record_count: Records processed before error
+        previous: Previous exception
+        
+    Raises:
+        ExtractionError
+    """
+    raise ExtractionError(
+        message=message,
+        source_system=source_system,
+        query=query,
+        record_count=record_count,
+        previous=previous
+    )
+
+
+def raise_transformation_error(
+    message: str,
+    transformation_rule: Optional[str] = None,
+    record_id: Optional[str] = None,
+    record_count: int = 0,
+    previous: Optional[Exception] = None
+) -> None:
+    """
+    Helper function to raise TransformationError with standard formatting.
+    
+    Args:
+        message: Error description
+        transformation_rule: Rule that failed
+        record_id: ID of problematic record
+        record_count: Records processed before error
+        previous: Previous exception
+        
+    Raises:
+        TransformationError
+    """
+    raise TransformationError(
+        message=message,
+        transformation_rule=transformation_rule,
+        record_id=record_id,
+        record_count=record_count,
+        previous=previous
+    )
+
+
+def raise_load_error(
+    message: str,
+    target_table: Optional[str] = None,
+    record_id: Optional[str] = None,
+    record_count: int = 0,
+    failed_records: int = 0,
+    previous: Optional[Exception] = None
+) -> None:
+    """
+    Helper function to raise LoadError with standard formatting.
+    
+    Args:
+        message: Error description
+        target_table: Target table name
+        record_id: ID of problematic record
+        record_count: Records processed before error
+        failed_records: Number of failed records
+        previous: Previous exception
+        
+    Raises:
+        LoadError
+    """
+    raise LoadError(
+        message=message,
+        target_table=target_table,
+        record_id=record_id,
+        record_count=record_count,
+        failed_records=failed_records,
+        previous=previous
+    )
