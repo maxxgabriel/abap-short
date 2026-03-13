@@ -1,56 +1,63 @@
-# ETL Configuration for Sales Data Processing
-# Migrated from ABAP ZETL system
+# ETL Configuration
+# Migrated from ABAP $ZETL package configuration
 
-# Application metadata
-application:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  description: "ETL system for sales data processing migrated from ABAP"
-
-# Spark configuration
+# Spark Configuration
 spark:
   app_name: "SalesETL"
-  master: "local[*]"  # Override in production
+  master: "local[*]"
   config:
-    spark.sql.shuffle.partitions: "200"
     spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
+    spark.sql.shuffle.partitions: "200"
+    spark.sql.legacy.timeParserPolicy: "LEGACY"
 
-# Data sources
+# Data Sources
 data_sources:
   raw_sales:
-    format: "parquet"  # or jdbc, csv, etc.
-    path: "data/raw/sales"
-    jdbc:
-      url: "jdbc:postgresql://localhost:5432/sales_db"
-      driver: "org.postgresql.Driver"
-      table: "zsales_raw"
-      user: "${DB_USER}"
-      password: "${DB_PASSWORD}"
+    format: "parquet"
+    path: "data/input/raw_sales"
+    # Alternative: JDBC for ABAP source tables
+    # jdbc_url: "jdbc:sap://hostname:port"
+    # table: "ZSALES_RAW"
   
   analytics:
     format: "parquet"
-    path: "data/analytics/sales"
-    jdbc:
-      url: "jdbc:postgresql://localhost:5432/sales_db"
-      driver: "org.postgresql.Driver"
-      table: "zsales_analytics"
-      user: "${DB_USER}"
-      password: "${DB_PASSWORD}"
+    path: "data/output/analytics"
+    mode: "overwrite"  # append, overwrite, error, ignore
+    partition_by: ["trans_date", "region"]
   
   etl_log:
     format: "parquet"
-    path: "data/logs/etl"
-    jdbc:
-      url: "jdbc:postgresql://localhost:5432/sales_db"
-      driver: "org.postgresql.Driver"
-      table: "zetl_log"
-      user: "${DB_USER}"
-      password: "${DB_PASSWORD}"
+    path: "data/output/etl_log"
+    mode: "append"
 
-# Status codes
+# Business Rules (from ZCL_ETL_CONSTANTS)
+business_rules:
+  discount:
+    qty_tier1: 10
+    qty_tier2: 15
+    rate_tier1: 0.05
+    rate_tier2: 0.10
+  
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  
+  category_thresholds:
+    high: 2000.00
+    medium: 500.00
+
+# ETL Processing Configuration
+etl_config:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  parallel_jobs: 4
+  
+  # Date range defaults (days back from current date)
+  default_lookback_days: 7
+
+# Status Codes
 status_codes:
   new: "N"
   processed: "P"
@@ -59,69 +66,69 @@ status_codes:
   success: "S"
   info: "I"
 
-# Process steps
-process_steps:
-  init: "INIT"
-  extract: "EXTRACT"
-  transform: "TRANSFORM"
-  load: "LOAD"
-  validate: "VALIDATE"
-  complete: "COMPLETE"
-  error: "ERROR"
-
-# Sale categories
-categories:
-  high: "HIGH"
-  medium: "MEDIUM"
-  low: "LOW"
-
-# Business rules
-business_rules:
-  discount:
-    tier1_quantity_threshold: 10
-    tier2_quantity_threshold: 15
-    tier1_rate: 0.05
-    tier2_rate: 0.10
+# Validation Rules
+validation:
+  required_fields:
+    raw_sales:
+      - trans_id
+      - trans_date
+      - customer_id
+      - product_id
+      - quantity
+      - unit_price
+      - currency
+    
+    analytics:
+      - analytics_id
+      - customer_id
+      - product_id
+      - gross_amount
+      - currency
+      - category
   
-  tax:
-    rate: 0.08
-  
-  cost:
-    ratio: 0.60
-  
-  category_thresholds:
-    high: 2000.00
-    medium: 500.00
+  field_constraints:
+    quantity:
+      min: 1
+      max: 10000
+    unit_price:
+      min: 0.01
+      max: 999999.99
+    gross_amount:
+      min: 0.01
 
-# ETL configuration defaults
-etl_config:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
-  test_mode: false
-
-# ID prefixes
-id_prefixes:
-  etl_run: "ETL"
-  log: "LOG"
-  analytics: "ANL"
-
-# Logging
+# Logging Configuration
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  handlers:
-    console:
-      enabled: true
-    file:
-      enabled: true
-      path: "logs/etl.log"
-      max_bytes: 10485760  # 10MB
-      backup_count: 5
+  file: "logs/etl.log"
+  console: true
 
-# Message templates
+# ID Generation
+id_generation:
+  prefixes:
+    etl_run: "ETL"
+    log_id: "LOG"
+    analytics_id: "ANL"
+  
+  timestamp_format: "%Y%m%d%H%M%S"
+
+# Performance Tuning
+performance:
+  cache_enabled: true
+  checkpoint_enabled: false
+  checkpoint_dir: "data/checkpoint"
+  
+  repartition:
+    enabled: true
+    num_partitions: 20
+
+# Error Handling
+error_handling:
+  continue_on_error: false
+  max_errors_per_batch: 100
+  error_output_path: "data/output/errors"
+
+# Message Templates
 messages:
   init_success: "ETL process initialized successfully"
   extract_start: "Starting data extraction"
@@ -132,7 +139,3 @@ messages:
   load_complete: "Data load completed"
   etl_complete: "ETL process completed successfully"
   etl_error: "ETL process failed"
-
-# Date format
-date_format: "yyyy-MM-dd"
-timestamp_format: "yyyy-MM-dd HH:mm:ss"
