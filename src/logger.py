@@ -1,203 +1,252 @@
 """
-ETL Logger implementation.
-
-Provides logging functionality for ETL processes with support for
-both console and structured logging to Delta tables.
+ETL Logging Framework
+Structured logging with ETL stage tracking and ABAP status code mapping
 """
 
 import logging
+import sys
 from datetime import datetime
-from typing import List, Optional
-from pyspark.sql import SparkSession, Row
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType
-
-from src.protocols import (
-    ETLLoggerProtocol,
-    LogEntry,
-    StatusCode,
-    ProcessStep
-)
+from typing import Optional, Dict, Any
+from enum import Enum
+import json
 
 
-class ETLLogger(ETLLoggerProtocol):
+class ETLStatus(Enum):
+    """ABAP status code mapping to Python logging levels"""
+    NEW = ('N', logging.INFO, 'NEW')
+    PROCESSED = ('P', logging.INFO, 'PROCESSED')
+    ERROR = ('E', logging.ERROR, 'ERROR')
+    WARNING = ('W', logging.WARNING, 'WARNING')
+    SUCCESS = ('S', logging.INFO, 'SUCCESS')
+    INFO = ('I', logging.INFO, 'INFO')
+
+    def __init__(self, abap_code: str, log_level: int, description: str):
+        self.abap_code = abap_code
+        self.log_level = log_level
+        self.description = description
+
+
+class ETLStep(Enum):
+    """ETL process steps"""
+    INIT = 'INIT'
+    EXTRACT = 'EXTRACT'
+    TRANSFORM = 'TRANSFORM'
+    LOAD = 'LOAD'
+    VALIDATE = 'VALIDATE'
+    COMPLETE = 'COMPLETE'
+    ERROR = 'ERROR'
+
+
+class StructuredETLFormatter(logging.Formatter):
+    """Custom formatter for structured ETL logging"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record with ETL metadata as JSON"""
+        log_data = {
+            'timestamp': datetime.fromtimestamp(record.created).isoformat(),
+            'level': record.levelname,
+            'etl_run_id': getattr(record, 'etl_run_id', None),
+            'process_step': getattr(record, 'process_step', None),
+            'status': getattr(record, 'status', None),
+            'records_processed': getattr(record, 'records_processed', 0),
+            'records_success': getattr(record, 'records_success', 0),
+            'records_error': getattr(record, 'records_error', 0),
+            'message': record.getMessage(),
+            'module': record.module,
+            'function': record.funcName,
+            'line': record.lineno
+        }
+
+        # Add exception info if present
+        if record.exc_info:
+            log_data['exception'] = self.formatException(record.exc_info)
+
+        # Add extra fields
+        for key, value in record.__dict__.items():
+            if key not in ['name', 'msg', 'args', 'created', 'filename', 'funcName',
+                          'levelname', 'levelno', 'lineno', 'module', 'msecs',
+                          'pathname', 'process', 'processName', 'relativeCreated',
+                          'thread', 'threadName', 'exc_info', 'exc_text', 'stack_info']:
+                if key not in log_data:
+                    log_data[key] = value
+
+        return json.dumps(log_data, default=str)
+
+
+class ETLLogger:
     """
-    Logger implementation for ETL processes.
-    
-    Logs messages to console and optionally to a Delta table.
+    ETL-specific logger with stage tracking and metadata support.
+    Maps ABAP status codes to Python logging levels.
     """
 
-    def __init__(
-        self,
-        etl_run_id: str,
-        spark: Optional[SparkSession] = None,
-        log_path: Optional[str] = None,
-        console_enabled: bool = True
-    ):
+    def __init__(self, etl_run_id: str, name: str = 'etl'):
         """
-        Initialize the ETL logger.
+        Initialize ETL logger
 
         Args:
-            etl_run_id: Unique identifier for this ETL run
-            spark: SparkSession for logging to Delta tables
-            log_path: Path to Delta table for structured logs
-            console_enabled: Whether to enable console logging
+            etl_run_id: Unique identifier for the ETL run
+            name: Logger name
         """
-        self._etl_run_id = etl_run_id
-        self._spark = spark
-        self._log_path = log_path
-        self._console_enabled = console_enabled
-        self._log_entries: List[LogEntry] = []
-        
-        # Set up Python logging
-        self._setup_logging()
+        self.etl_run_id = etl_run_id
+        self.logger = logging.getLogger(name)
+        self._log_sequence = 0
 
-    def _setup_logging(self) -> None:
-        """Configure Python logging."""
-        self._logger = logging.getLogger(f"ETL.{self._etl_run_id}")
-        self._logger.setLevel(logging.DEBUG)
-        
-        if self._console_enabled and not self._logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            self._logger.addHandler(handler)
+        # Prevent duplicate handlers
+        if not self.logger.handlers:
+            self._setup_handlers()
 
-    @property
-    def etl_run_id(self) -> str:
-        """Get the ETL run identifier."""
-        return self._etl_run_id
+    def _setup_handlers(self):
+        """Configure logging handlers with structured formatting"""
+        self.logger.setLevel(logging.DEBUG)
+
+        # Console handler with structured JSON output
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(StructuredETLFormatter())
+
+        # File handler for detailed logs
+        file_handler = logging.FileHandler(f'etl_{self.etl_run_id}.log')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(StructuredETLFormatter())
+
+        self.logger.addHandler(console_handler)
+        self.logger.addHandler(file_handler)
+
+    def _generate_log_id(self) -> str:
+        """Generate unique log entry ID"""
+        self._log_sequence += 1
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        return f"LOG{timestamp}{self._log_sequence:06d}"
 
     def log_message(
         self,
-        step: str,
-        status: str,
+        step: ETLStep,
+        status: ETLStatus,
         message: str,
         records_processed: int = 0,
         records_success: int = 0,
-        records_error: int = 0
-    ) -> None:
+        records_error: int = 0,
+        **extra_fields
+    ):
         """
-        Log a message for the ETL process.
+        Log ETL message with metadata
 
         Args:
-            step: Process step identifier
-            status: Status code (S/E/W/I)
-            message: Log message text
+            step: ETL process step
+            status: Status code (maps to log level)
+            message: Log message
             records_processed: Number of records processed
             records_success: Number of successful records
             records_error: Number of error records
+            **extra_fields: Additional metadata fields
         """
-        now = datetime.now()
-        
-        # Generate unique log ID
-        log_id = f"LOG{now.strftime('%Y%m%d%H%M%S%f')}"
-        
-        # Create log entry
-        entry = LogEntry(
-            log_id=log_id,
-            etl_run_id=self._etl_run_id,
-            execution_date=now,
-            execution_time=now.strftime("%H:%M:%S"),
-            process_step=step,
-            status=status,
-            records_processed=records_processed,
-            records_success=records_success,
-            records_error=records_error,
-            message=message,
-            created_at=now
-        )
-        
-        self._log_entries.append(entry)
-        
-        # Log to console
-        if self._console_enabled:
-            log_level = self._get_log_level(status)
-            self._logger.log(
-                log_level,
-                f"[{step}] {message} "
-                f"(Processed: {records_processed}, "
-                f"Success: {records_success}, "
-                f"Error: {records_error})"
-            )
-        
-        # Log to Delta table if configured
-        if self._spark and self._log_path:
-            self._write_to_delta(entry)
+        log_id = self._generate_log_id()
 
-    def _get_log_level(self, status: str) -> int:
-        """Map status code to Python logging level."""
-        mapping = {
-            StatusCode.SUCCESS.value: logging.INFO,
-            StatusCode.INFO.value: logging.INFO,
-            StatusCode.WARNING.value: logging.WARNING,
-            StatusCode.ERROR.value: logging.ERROR
+        # Create extra dict with ETL metadata
+        extra = {
+            'log_id': log_id,
+            'etl_run_id': self.etl_run_id,
+            'process_step': step.value,
+            'status': status.abap_code,
+            'status_description': status.description,
+            'records_processed': records_processed,
+            'records_success': records_success,
+            'records_error': records_error,
+            **extra_fields
         }
-        return mapping.get(status, logging.INFO)
 
-    def _write_to_delta(self, entry: LogEntry) -> None:
-        """Write log entry to Delta table."""
-        try:
-            schema = StructType([
-                StructField("log_id", StringType(), False),
-                StructField("etl_run_id", StringType(), False),
-                StructField("execution_date", TimestampType(), False),
-                StructField("execution_time", StringType(), False),
-                StructField("process_step", StringType(), False),
-                StructField("status", StringType(), False),
-                StructField("records_processed", IntegerType(), False),
-                StructField("records_success", IntegerType(), False),
-                StructField("records_error", IntegerType(), False),
-                StructField("message", StringType(), False),
-                StructField("created_at", TimestampType(), False)
-            ])
-            
-            row = Row(
-                log_id=entry.log_id,
-                etl_run_id=entry.etl_run_id,
-                execution_date=entry.execution_date,
-                execution_time=entry.execution_time,
-                process_step=entry.process_step,
-                status=entry.status,
-                records_processed=entry.records_processed,
-                records_success=entry.records_success,
-                records_error=entry.records_error,
-                message=entry.message,
-                created_at=entry.created_at
+        # Log at appropriate level based on status
+        self.logger.log(
+            status.log_level,
+            message,
+            extra=extra
+        )
+
+    def log_info(self, step: ETLStep, message: str, **kwargs):
+        """Log INFO level message"""
+        self.log_message(step, ETLStatus.INFO, message, **kwargs)
+
+    def log_success(self, step: ETLStep, message: str, **kwargs):
+        """Log SUCCESS level message"""
+        self.log_message(step, ETLStatus.SUCCESS, message, **kwargs)
+
+    def log_warning(self, step: ETLStep, message: str, **kwargs):
+        """Log WARNING level message"""
+        self.log_message(step, ETLStatus.WARNING, message, **kwargs)
+
+    def log_error(self, step: ETLStep, message: str, exception: Optional[Exception] = None, **kwargs):
+        """
+        Log ERROR level message
+
+        Args:
+            step: ETL process step
+            message: Error message
+            exception: Optional exception object
+            **kwargs: Additional metadata
+        """
+        if exception:
+            kwargs['exception_type'] = type(exception).__name__
+            kwargs['exception_message'] = str(exception)
+
+        self.log_message(step, ETLStatus.ERROR, message, **kwargs)
+
+        # Log exception traceback if present
+        if exception:
+            self.logger.exception(
+                f"Exception details for: {message}",
+                extra={'etl_run_id': self.etl_run_id, 'process_step': step.value}
             )
-            
-            df = self._spark.createDataFrame([row], schema)
-            df.write.format("delta").mode("append").save(self._log_path)
-            
-        except Exception as e:
-            self._logger.error(f"Failed to write log to Delta: {str(e)}")
 
-    def get_logs(self) -> List[LogEntry]:
-        """Retrieve all log entries for this ETL run."""
-        return self._log_entries.copy()
+    def get_etl_run_id(self) -> str:
+        """Get the ETL run ID"""
+        return self.etl_run_id
 
-    def get_summary(self) -> dict:
-        """Get summary statistics from logs."""
-        total_processed = sum(e.records_processed for e in self._log_entries)
-        total_success = sum(e.records_success for e in self._log_entries)
-        total_error = sum(e.records_error for e in self._log_entries)
-        
-        error_count = sum(
-            1 for e in self._log_entries 
-            if e.status == StatusCode.ERROR.value
-        )
-        warning_count = sum(
-            1 for e in self._log_entries 
-            if e.status == StatusCode.WARNING.value
-        )
-        
+
+class LogAggregator:
+    """Aggregate and summarize ETL logs"""
+
+    def __init__(self):
+        self.stats: Dict[str, Dict[str, int]] = {}
+
+    def add_log_entry(self, step: str, status: str, records_processed: int = 0,
+                     records_success: int = 0, records_error: int = 0):
+        """Add log entry to aggregator"""
+        if step not in self.stats:
+            self.stats[step] = {
+                'total_processed': 0,
+                'total_success': 0,
+                'total_error': 0,
+                'info_count': 0,
+                'warning_count': 0,
+                'error_count': 0
+            }
+
+        self.stats[step]['total_processed'] += records_processed
+        self.stats[step]['total_success'] += records_success
+        self.stats[step]['total_error'] += records_error
+
+        if status == 'I' or status == 'S' or status == 'P':
+            self.stats[step]['info_count'] += 1
+        elif status == 'W':
+            self.stats[step]['warning_count'] += 1
+        elif status == 'E':
+            self.stats[step]['error_count'] += 1
+
+    def get_summary(self) -> Dict[str, Any]:
+        """Get aggregated summary"""
         return {
-            "etl_run_id": self._etl_run_id,
-            "total_processed": total_processed,
-            "total_success": total_success,
-            "total_error": total_error,
-            "error_count": error_count,
-            "warning_count": warning_count,
-            "log_entries": len(self._log_entries)
+            'by_step': self.stats,
+            'totals': {
+                'total_processed': sum(s['total_processed'] for s in self.stats.values()),
+                'total_success': sum(s['total_success'] for s in self.stats.values()),
+                'total_error': sum(s['total_error'] for s in self.stats.values()),
+                'total_warnings': sum(s['warning_count'] for s in self.stats.values()),
+                'total_errors': sum(s['error_count'] for s in self.stats.values())
+            }
         }
+
+
+def generate_etl_run_id() -> str:
+    """Generate unique ETL run ID"""
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+    return f"ETL{timestamp[:14]}"
