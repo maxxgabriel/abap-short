@@ -1,158 +1,112 @@
-# ETL Logger Module
+# ETL Component Interface - Python Migration
 
-Production-ready Python logger class for ETL processes that generates unique log IDs and persists execution metadata to database.
+## Overview
 
-## Features
+This package contains the Python migration of the ABAP `ZIF_ETL_COMPONENT` and `ZIF_ETL_LOGGER` interfaces using Abstract Base Classes (ABC) with `@abstractmethod` decorators.
 
-- **Unique Log ID Generation**: LOG + 14-digit timestamp + microseconds for guaranteed uniqueness
-- **Multiple Database Connectors**: Support for JDBC, SAP HANA, and Delta Lake
-- **Execution Metadata Capture**: Captures step, status, record counts, and messages
-- **Robust Error Handling**: Continues operation even if logging fails
-- **Configurable**: YAML-based configuration for flexibility
-- **Production-Ready**: Comprehensive test coverage and error recovery
+## Components
 
-## Installation
+### 1. Abstract Base Classes
 
-```bash
-pip install -r requirements.txt
-```
+#### `ETLComponent` (src/etl_component.py)
+- Converted from ABAP interface `ZIF_ETL_COMPONENT`
+- Defines contract for all ETL components
+- Methods:
+  - `execute()`: Execute component processing
+  - `get_component_name()`: Get component identifier
+  - `validate_prerequisites()`: Validate requirements
+
+#### `ETLLogger` (src/etl_component.py)
+- Converted from ABAP interface `ZIF_ETL_LOGGER`
+- Defines logging contract
+- Methods:
+  - `log_message()`: Log ETL messages
+  - `get_etl_run_id()`: Get run identifier
+
+### 2. Data Classes
+
+#### `ExecutionResult`
+- Mapped from ABAP `ty_execution_result` structure
+- Fields:
+  - `success`: Execution success flag
+  - `records_total`: Total records processed
+  - `records_success`: Successful records
+  - `records_error`: Error records
+  - `message`: Result message
+
+### 3. Exception Classes
+
+Converted from ABAP RAISING clauses:
+- `ETLComponentError`: Base exception class
+- `ExtractError`: Extraction phase errors
+- `TransformError`: Transformation phase errors
+- `LoadError`: Load phase errors
 
 ## Configuration
 
-Edit `config.yaml` to configure database connection and ETL parameters:
+The `config.yaml` file contains all business rules and configuration parameters migrated from `ZCL_ETL_CONSTANTS`:
 
 ```yaml
-database:
-  type: jdbc  # or 'hana', 'delta'
-  jdbc_url: jdbc:sap://hostname:30015
-  driver: com.sap.db.jdbc.Driver
-  user: ETL_USER
-  password: ${DB_PASSWORD}
-  log_table: ZETL_LOG
+discount_rules:
+  quantity_tier1: 10
+  rate_tier1: 0.05
+
+tax_rules:
+  tax_rate: 0.08
+
+category_thresholds:
+  high: 2000.00
+  medium: 500.00
 ```
 
-## Usage
+## Usage Example
 
 ```python
-from pyspark.sql import SparkSession
-from src.logger import ETLLogger, generate_etl_run_id
-from src.utils import load_config
+from src.etl_component import ETLComponent, ExecutionResult, ETLComponentError
 
-# Initialize Spark
-spark = SparkSession.builder \
-    .appName("Sales_ETL") \
-    .getOrCreate()
-
-# Load configuration
-config = load_config("config.yaml")
-
-# Generate unique ETL run ID
-etl_run_id = generate_etl_run_id()
-
-# Create logger
-logger = ETLLogger(spark, etl_run_id, config)
-
-# Log messages
-logger.log_message(
-    step='EXTRACT',
-    status='S',
-    message='Starting extraction',
-    records_processed=1000,
-    records_success=1000,
-    records_error=0
-)
+class MyExtractor(ETLComponent):
+    def execute(self) -> ExecutionResult:
+        try:
+            # Processing logic here
+            return ExecutionResult(
+                success=True,
+                records_total=100,
+                records_success=100,
+                records_error=0,
+                message="Extraction completed"
+            )
+        except Exception as e:
+            raise ETLComponentError(
+                message=str(e),
+                error_step="EXTRACT"
+            )
+    
+    def get_component_name(self) -> str:
+        return "DataExtractor"
+    
+    def validate_prerequisites(self) -> bool:
+        # Validation logic
+        return True
 ```
-
-## Database Schema
-
-The ZETL_LOG table should have the following structure:
-
-```sql
-CREATE TABLE ZETL_LOG (
-    log_id VARCHAR(20) PRIMARY KEY,
-    etl_run_id VARCHAR(20) NOT NULL,
-    execution_date DATE NOT NULL,
-    execution_time TIME NOT NULL,
-    process_step VARCHAR(20) NOT NULL,
-    status CHAR(1) NOT NULL,
-    records_processed INTEGER,
-    records_success INTEGER,
-    records_error INTEGER,
-    message VARCHAR(255),
-    created_at TIMESTAMP NOT NULL,
-    created_by VARCHAR(50) NOT NULL
-);
-```
-
-## Status Codes
-
-- `S`: Success
-- `E`: Error
-- `W`: Warning
-- `I`: Info
-
-## Process Steps
-
-- `INIT`: Initialization
-- `EXTRACT`: Data extraction
-- `TRANSFORM`: Data transformation
-- `LOAD`: Data loading
-- `VALIDATE`: Data validation
-- `COMPLETE`: Process complete
-- `ERROR`: Error occurred
 
 ## Testing
 
-Run tests with pytest:
-
+Run unit tests:
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run with coverage
-pytest tests/ -v --cov=src --cov-report=html
-
-# Run specific test class
-pytest tests/test_logger.py::TestLogIDGeneration -v
+pytest tests/test_etl_component.py -v
+pytest tests/test_config.py -v
 ```
 
-## Database Connectors
+## Key Differences from ABAP
 
-### JDBC (Default)
-```yaml
-database:
-  type: jdbc
-  jdbc_url: jdbc:sap://hostname:30015
-  driver: com.sap.db.jdbc.Driver
-```
+1. **Interfaces → ABC**: ABAP interfaces converted to Python Abstract Base Classes
+2. **RAISING → Exceptions**: RAISING clauses converted to exception handling
+3. **Structures → Dataclasses**: ABAP structures mapped to Python dataclasses
+4. **Constants → Config**: ABAP constants externalized to YAML configuration
 
-### SAP HANA
-```yaml
-database:
-  type: hana
-  hana_url: jdbc:sap://hostname:30015
-```
+## Dependencies
 
-### Delta Lake
-```yaml
-database:
-  type: delta
-  delta_log_path: /mnt/delta/zetl_log
-```
-
-## Error Handling
-
-The logger includes robust error handling:
-- Failed log insertions are caught and logged to console
-- Process continues even if logging fails
-- Invalid configurations generate warnings
-
-## Performance Considerations
-
-- Log entries are inserted individually for real-time visibility
-- Consider batching for high-volume logging scenarios
-- Delta Lake provides best performance for large-scale logging
-
-## License
-
-Proprietary - Internal Use Only
+- Python 3.8+
+- pytest (testing)
+- PyYAML (configuration)
+- PySpark (future ETL implementation)
