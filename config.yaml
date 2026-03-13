@@ -1,92 +1,188 @@
-# ETL Configuration File
-# Sales Data ETL System
+# ETL System Configuration
+# Production-ready configuration for Sales ETL system
 
-# Application metadata
-application:
-  name: "Sales ETL System"
-  version: "1.0.0"
-  description: "Complete ETL system for sales data processing"
+# Application Settings
+app_name: "Sales_ETL_System"
+version: "1.0.0"
+environment: "production"  # development, staging, production
 
-# Spark configuration
+# Database Configuration
+database:
+  # JDBC connection settings
+  jdbc_url: "jdbc:postgresql://localhost:5432/sales_db"
+  driver: "org.postgresql.Driver"
+  host: "localhost"
+  port: 5432
+  database: "sales_db"
+  user: "etl_user"
+  password: "${DB_PASSWORD}"  # Use environment variable
+  
+  # Connection pool settings
+  connection_pool:
+    max_connections: 10
+    min_connections: 2
+    connection_timeout: 30
+    idle_timeout: 600
+  
+  # Table names
+  tables:
+    raw_sales: "zsales_raw"
+    analytics: "zsales_analytics"
+    etl_log: "zetl_log"
+
+# Spark Configuration
 spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-    spark.executor.memory: "4g"
-    spark.driver.memory: "2g"
+  # Core settings
+  spark.sql.adaptive.enabled: "true"
+  spark.sql.adaptive.coalescePartitions.enabled: "true"
+  spark.sql.shuffle.partitions: "200"
+  spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+  spark.sql.sources.partitionOverwriteMode: "dynamic"
+  
+  # Memory settings
+  spark.driver.memory: "4g"
+  spark.executor.memory: "4g"
+  spark.executor.cores: "2"
+  spark.executor.instances: "4"
+  
+  # Optimization settings
+  spark.sql.autoBroadcastJoinThreshold: "10485760"  # 10MB
+  spark.sql.files.maxPartitionBytes: "134217728"  # 128MB
+  spark.default.parallelism: "200"
 
-# Database paths (adjust for your environment)
-paths:
-  raw_sales: "data/raw/sales"
-  analytics: "data/analytics/sales"
-  logs: "logs/etl"
-  format: "parquet"  # parquet, delta, csv
+# ETL Processing Configuration
+etl:
+  # Batch processing
+  batch_size: 1000
+  commit_interval: 500
+  parallel_jobs: 4
+  
+  # Retry and timeout
+  retry_attempts: 3
+  retry_delay_seconds: 5
+  timeout_seconds: 3600
+  
+  # Data quality
+  validation_enabled: true
+  skip_invalid_records: false
+  max_error_percentage: 5.0
 
-# Business rules
+# Business Rules Configuration
 business_rules:
   # Discount tiers
   discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
+    tier1:
+      quantity_threshold: 10
+      rate: 0.05
+    tier2:
+      quantity_threshold: 15
+      rate: 0.10
   
-  # Tax calculation
-  tax_rate: 0.08
+  # Tax configuration
+  tax:
+    rate: 0.08
+    apply_on_discounted: true
   
-  # Cost calculation
-  cost_ratio: 0.60
+  # Cost and margin
+  cost:
+    default_ratio: 0.60  # Cost is 60% of unit price
   
   # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  categories:
+    high:
+      threshold: 2000.00
+      label: "HIGH"
+    medium:
+      threshold: 500.00
+      label: "MEDIUM"
+    low:
+      label: "LOW"
+  
+  # Status codes
+  status_codes:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
 
-# ETL processing configuration
-etl:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
-
-# Logging configuration
+# Logging Configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  format: "%(asctime)s - %(name)s - [%(levelname)s] - %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_dir: "logs"
   
-# Data quality rules
-data_quality:
-  required_fields:
-    - trans_id
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
+  # Log retention
+  retention_days: 30
+  max_file_size_mb: 100
   
-  validation_rules:
-    quantity_min: 1
-    unit_price_min: 0.01
-    currency_length: 3
+  # Console output
+  console_output: true
+  
+  # Structured logging
+  format: "json"  # json or text
+  include_timestamp: true
+  include_run_id: true
 
-# ID prefixes
-id_prefixes:
-  etl_run: "ETL"
-  log_id: "LOG"
-  analytics_id: "ANL"
+# Data Source Configuration
+data_sources:
+  # Input data location
+  input:
+    format: "jdbc"  # jdbc, parquet, csv, json
+    options:
+      fetchsize: "1000"
+      batchsize: "1000"
+  
+  # Output data location
+  output:
+    format: "jdbc"
+    mode: "append"  # append, overwrite, ignore, error
+    options:
+      batchsize: "1000"
+      isolationLevel: "READ_COMMITTED"
 
-# Messages
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+# Monitoring and Alerting
+monitoring:
+  enabled: true
+  
+  # Metrics collection
+  metrics:
+    enabled: true
+    interval_seconds: 60
+  
+  # Alerting thresholds
+  alerts:
+    error_rate_threshold: 0.05  # 5%
+    processing_time_threshold_minutes: 60
+    record_count_threshold: 1000000
+
+# Performance Tuning
+performance:
+  # Caching strategy
+  cache_intermediate_results: true
+  persist_level: "MEMORY_AND_DISK"
+  
+  # Partitioning
+  repartition_enabled: true
+  target_partition_size_mb: 128
+  
+  # Shuffle optimization
+  shuffle_partitions: 200
+  broadcast_join_threshold_mb: 10
+
+# Security Configuration
+security:
+  # Encryption
+  encryption_enabled: false
+  encryption_algorithm: "AES256"
+  
+  # Authentication
+  authentication:
+    type: "password"  # password, kerberos, oauth
+    token_refresh_minutes: 60
+
+# Feature Flags
+features:
+  enable_data_quality_checks: true
+  enable_profiling: false
+  enable_audit_trail: true
+  enable_incremental_load: true
