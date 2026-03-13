@@ -1,124 +1,96 @@
-# ETL Configuration
-# Replaces ABAP configuration and constants
+# ETL Logger Configuration
 
+# Database configuration
+database:
+  # Database type: 'jdbc', 'hana', or 'delta'
+  type: jdbc
+  
+  # JDBC configuration (for generic JDBC connections)
+  jdbc_url: jdbc:sap://hostname:30015
+  driver: com.sap.db.jdbc.Driver
+  user: ETL_USER
+  password: ${DB_PASSWORD}  # Use environment variable
+  
+  # SAP HANA configuration (alternative)
+  hana_url: jdbc:sap://hostname:30015
+  
+  # Delta Lake configuration (alternative)
+  delta_log_path: /mnt/delta/zetl_log
+  
+  # Table names
+  log_table: ZETL_LOG
+  raw_table: ZSALES_RAW
+  analytics_table: ZSALES_ANALYTICS
+
+# ETL process configuration
 etl:
-  # Processing configuration
+  # Batch processing
   batch_size: 1000
   commit_interval: 500
-  parallel_jobs: 4
+  
+  # Retry configuration
   retry_attempts: 3
+  retry_delay_seconds: 5
+  
+  # Timeout configuration
   timeout_seconds: 3600
   
-  # Default date range (days)
-  default_lookback_days: 7
+  # Parallel processing
+  parallel_jobs: 4
+
+# Status codes
+status_codes:
+  new: N
+  processed: P
+  error: E
+  warning: W
+  success: S
+  info: I
+
+# Process steps
+process_steps:
+  init: INIT
+  extract: EXTRACT
+  transform: TRANSFORM
+  load: LOAD
+  validate: VALIDATE
+  complete: COMPLETE
+  error: ERROR
 
 # Business rules
 business_rules:
   # Discount thresholds
-  discount:
-    quantity_tier1: 10
-    quantity_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
   
   # Tax rate
   tax_rate: 0.08
   
-  # Cost ratio for profit calculation
+  # Cost ratio
   cost_ratio: 0.60
   
   # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
-# ID prefixes
-id_prefixes:
-  etl_run: "ETL"
-  log: "LOG"
-  analytics: "ANL"
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
 
 # Logging configuration
 logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl_process.log"
-  max_bytes: 10485760  # 10MB
-  backup_count: 5
-
-# Database configuration
-database:
-  # Source table
-  source_table: "zsales_raw"
+  level: INFO
+  format: "[%(asctime)s] [%(levelname)s] %(message)s"
   
-  # Target table
-  target_table: "zsales_analytics"
-  
-  # Log table
-  log_table: "zetl_log"
-
 # Spark configuration
 spark:
-  app_name: "Sales ETL Process"
-  master: "local[*]"
-  
-  # Spark options
-  options:
-    "spark.sql.shuffle.partitions": "200"
-    "spark.sql.adaptive.enabled": "true"
-    "spark.sql.adaptive.coalescePartitions.enabled": "true"
-    "spark.executor.memory": "4g"
-    "spark.driver.memory": "2g"
+  app_name: Sales_ETL_Process
+  master: local[*]
+  config:
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+    spark.executor.memory: 4g
+    spark.driver.memory: 2g
 
-# Validation rules
-validation:
-  required_fields:
-    raw_sales:
-      - "trans_id"
-      - "trans_date"
-      - "customer_id"
-      - "product_id"
-      - "quantity"
-      - "unit_price"
-      - "currency"
-    
-    analytics:
-      - "analytics_id"
-      - "customer_id"
-      - "product_id"
-      - "gross_amount"
-      - "currency"
-  
-  # Valid currency codes
-  valid_currencies:
-    - "USD"
-    - "EUR"
-    - "GBP"
-    - "JPY"
-    - "CAD"
-    - "AUD"
-  
-  # Valid regions
-  valid_regions:
-    - "NORTH"
-    - "SOUTH"
-    - "EAST"
-    - "WEST"
-  
-  # Valid categories
-  valid_categories:
-    - "HIGH"
-    - "MEDIUM"
-    - "LOW"
-
-# Message templates
-messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+# System configuration
+system:
+  user: etl_system
+  environment: production
