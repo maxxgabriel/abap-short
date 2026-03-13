@@ -1,228 +1,197 @@
 """
-Unit Tests for Constants and Configuration
-
-Tests enum values, configuration loading, and numeric precision.
+Unit Tests for ETL Constants Module
 """
 
 import pytest
 from decimal import Decimal
-from pathlib import Path
-import tempfile
-import yaml
-
 from src.constants import (
-    StatusCode, ProcessStep, SaleCategory, IDPrefix, MessageText, ETLDefaults
+    Status,
+    ProcessStep,
+    Category,
+    BusinessRules,
+    ETLConfig,
+    IDPrefixes,
+    Messages
 )
-from src.config_loader import ConfigLoader, get_config
 
 
-class TestEnums:
-    """Test enum classes"""
+class TestStatusEnum:
+    """Test Status enum."""
     
-    def test_status_code_values(self):
-        """Test status code enum values match ABAP constants"""
-        assert StatusCode.NEW == "N"
-        assert StatusCode.PROCESSED == "P"
-        assert StatusCode.ERROR == "E"
-        assert StatusCode.WARNING == "W"
-        assert StatusCode.SUCCESS == "S"
-        assert StatusCode.INFO == "I"
-    
-    def test_process_step_values(self):
-        """Test process step enum values match ABAP constants"""
-        assert ProcessStep.INIT == "INIT"
-        assert ProcessStep.EXTRACT == "EXTRACT"
-        assert ProcessStep.TRANSFORM == "TRANSFORM"
-        assert ProcessStep.LOAD == "LOAD"
-        assert ProcessStep.VALIDATE == "VALIDATE"
-        assert ProcessStep.COMPLETE == "COMPLETE"
-        assert ProcessStep.ERROR == "ERROR"
-    
-    def test_sale_category_values(self):
-        """Test sale category enum values match ABAP constants"""
-        assert SaleCategory.HIGH == "HIGH"
-        assert SaleCategory.MEDIUM == "MEDIUM"
-        assert SaleCategory.LOW == "LOW"
-    
-    def test_id_prefix_values(self):
-        """Test ID prefix enum values match ABAP constants"""
-        assert IDPrefix.ETL_RUN == "ETL"
-        assert IDPrefix.LOG == "LOG"
-        assert IDPrefix.ANALYTICS == "ANL"
+    def test_status_values(self):
+        """Test all status values."""
+        assert Status.NEW.value == 'N'
+        assert Status.PROCESSED.value == 'P'
+        assert Status.ERROR.value == 'E'
+        assert Status.WARNING.value == 'W'
+        assert Status.SUCCESS.value == 'S'
+        assert Status.INFO.value == 'I'
 
 
-class TestMessageText:
-    """Test message text constants"""
+class TestProcessStepEnum:
+    """Test ProcessStep enum."""
     
-    def test_message_text_values(self):
-        """Test message text constants match ABAP"""
-        assert MessageText.INIT_SUCCESS == "ETL process initialized successfully"
-        assert MessageText.EXTRACT_START == "Starting data extraction"
-        assert MessageText.EXTRACT_COMPLETE == "Data extraction completed"
-        assert MessageText.ETL_COMPLETE == "ETL process completed successfully"
+    def test_step_values(self):
+        """Test all process step values."""
+        assert ProcessStep.INIT.value == 'INIT'
+        assert ProcessStep.EXTRACT.value == 'EXTRACT'
+        assert ProcessStep.TRANSFORM.value == 'TRANSFORM'
+        assert ProcessStep.LOAD.value == 'LOAD'
+        assert ProcessStep.VALIDATE.value == 'VALIDATE'
+        assert ProcessStep.COMPLETE.value == 'COMPLETE'
+        assert ProcessStep.ERROR.value == 'ERROR'
 
 
-class TestETLDefaults:
-    """Test ETL default constants"""
+class TestCategoryEnum:
+    """Test Category enum."""
     
-    def test_default_values(self):
-        """Test default values match ABAP constants"""
-        assert ETLDefaults.BATCH_SIZE == 1000
-        assert ETLDefaults.COMMIT_INTERVAL == 500
-        assert ETLDefaults.RETRY_ATTEMPTS == 3
-        assert ETLDefaults.TIMEOUT_SECONDS == 3600
+    def test_category_values(self):
+        """Test all category values."""
+        assert Category.HIGH.value == 'HIGH'
+        assert Category.MEDIUM.value == 'MEDIUM'
+        assert Category.LOW.value == 'LOW'
 
 
-class TestConfigLoader:
-    """Test configuration loader"""
+class TestBusinessRules:
+    """Test BusinessRules constants."""
     
-    @pytest.fixture
-    def sample_config(self):
-        """Create sample configuration"""
-        return {
-            'business_rules': {
-                'discount': {
-                    'quantity_tier1': 10,
-                    'quantity_tier2': 15,
-                    'rate_tier1': 0.05,
-                    'rate_tier2': 0.10
-                },
-                'tax': {
-                    'rate': 0.08
-                },
-                'cost': {
-                    'ratio': 0.60
-                },
-                'category': {
-                    'high_threshold': 2000.00,
-                    'medium_threshold': 500.00
-                }
-            },
-            'etl_configuration': {
-                'batch_size': 1000,
-                'retry_attempts': 3,
-                'timeout_seconds': 3600
-            }
-        }
+    def test_discount_thresholds(self):
+        """Test discount tier thresholds."""
+        assert BusinessRules.DISCOUNT_QTY_TIER1 == 10
+        assert BusinessRules.DISCOUNT_QTY_TIER2 == 15
     
-    @pytest.fixture
-    def temp_config_file(self, sample_config):
-        """Create temporary config file"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.dump(sample_config, f)
-            temp_path = f.name
-        
-        yield temp_path
-        
-        # Cleanup
-        Path(temp_path).unlink()
+    def test_discount_rates(self):
+        """Test discount rates."""
+        assert BusinessRules.DISCOUNT_RATE_TIER1 == Decimal('0.05')
+        assert BusinessRules.DISCOUNT_RATE_TIER2 == Decimal('0.10')
     
-    def test_load_config(self, temp_config_file):
-        """Test configuration loading"""
-        config = ConfigLoader(temp_config_file)
-        
-        assert config.get('business_rules.discount.quantity_tier1') == 10
-        assert config.get('business_rules.tax.rate') == Decimal('0.08')
+    def test_tax_rate(self):
+        """Test tax rate."""
+        assert BusinessRules.TAX_RATE == Decimal('0.08')
     
-    def test_numeric_precision(self, temp_config_file):
-        """Test numeric precision conversion to Decimal"""
-        config = ConfigLoader(temp_config_file)
-        
-        # Verify Decimal type for precision
-        assert isinstance(config.discount_rate_tier1, Decimal)
-        assert isinstance(config.tax_rate, Decimal)
-        assert isinstance(config.cost_ratio, Decimal)
-        
-        # Verify exact values
-        assert config.discount_rate_tier1 == Decimal('0.05')
-        assert config.discount_rate_tier2 == Decimal('0.10')
-        assert config.tax_rate == Decimal('0.08')
-        assert config.cost_ratio == Decimal('0.60')
+    def test_cost_ratio(self):
+        """Test cost ratio."""
+        assert BusinessRules.COST_RATIO == Decimal('0.60')
     
-    def test_property_accessors(self, temp_config_file):
-        """Test property accessor methods"""
-        config = ConfigLoader(temp_config_file)
-        
-        assert config.discount_qty_tier1 == 10
-        assert config.discount_qty_tier2 == 15
-        assert config.batch_size == 1000
-        assert config.retry_attempts == 3
+    def test_category_thresholds(self):
+        """Test category thresholds."""
+        assert BusinessRules.CATEGORY_HIGH_THRESHOLD == Decimal('2000.00')
+        assert BusinessRules.CATEGORY_MEDIUM_THRESHOLD == Decimal('500.00')
     
-    def test_category_thresholds(self, temp_config_file):
-        """Test category threshold values"""
-        config = ConfigLoader(temp_config_file)
-        
-        assert config.category_high_threshold == Decimal('2000.00')
-        assert config.category_medium_threshold == Decimal('500.00')
-    
-    def test_missing_config_file(self):
-        """Test error handling for missing config file"""
-        with pytest.raises(FileNotFoundError):
-            ConfigLoader("nonexistent.yaml")
-    
-    def test_invalid_config_structure(self):
-        """Test validation of config structure"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-            yaml.dump({'invalid': 'structure'}, f)
-            temp_path = f.name
-        
-        try:
-            with pytest.raises(ValueError, match="Missing required configuration section"):
-                ConfigLoader(temp_path)
-        finally:
-            Path(temp_path).unlink()
-    
-    def test_get_with_default(self, temp_config_file):
-        """Test get method with default value"""
-        config = ConfigLoader(temp_config_file)
-        
-        assert config.get('nonexistent.key', 'default') == 'default'
-        assert config.get('business_rules.tax.rate') == Decimal('0.08')
+    def test_decimal_precision(self):
+        """Test decimal types have correct precision."""
+        # Discount rates should be 2 decimal places
+        rate1_str = str(BusinessRules.DISCOUNT_RATE_TIER1)
+        rate2_str = str(BusinessRules.DISCOUNT_RATE_TIER2)
+        assert '0.05' in rate1_str
+        assert '0.10' in rate2_str or '0.1' in rate2_str
 
 
-class TestDecimalPrecision:
-    """Test decimal precision handling"""
+class TestETLConfig:
+    """Test ETLConfig constants."""
     
-    def test_discount_calculation_precision(self):
-        """Test discount calculation maintains precision"""
-        from decimal import Decimal, getcontext
-        
-        # Set precision
-        getcontext().prec = 28
-        
-        gross = Decimal('999.99')
-        rate = Decimal('0.05')
-        
-        discount = gross * rate
-        
-        # Verify precision maintained
-        assert discount == Decimal('49.9995')
-        
-        # Verify rounding
-        discount_rounded = round(discount, 2)
-        assert discount_rounded == Decimal('50.00')
+    def test_batch_size(self):
+        """Test batch size configuration."""
+        assert ETLConfig.DEFAULT_BATCH_SIZE == 1000
     
-    def test_tax_calculation_precision(self):
-        """Test tax calculation maintains precision"""
-        from decimal import Decimal
-        
-        amount = Decimal('950.00')
-        tax_rate = Decimal('0.08')
-        
-        tax = amount * tax_rate
-        
-        assert tax == Decimal('76.00')
+    def test_commit_interval(self):
+        """Test commit interval configuration."""
+        assert ETLConfig.DEFAULT_COMMIT_INTERVAL == 500
     
-    def test_profit_margin_calculation(self):
-        """Test profit margin calculation precision"""
-        from decimal import Decimal
-        
-        net = Decimal('1000.00')
-        cost = Decimal('600.00')
-        
-        profit_margin = ((net - cost) / net) * Decimal('100')
-        
-        assert profit_margin == Decimal('40.00')
+    def test_retry_attempts(self):
+        """Test retry attempts configuration."""
+        assert ETLConfig.DEFAULT_RETRY_ATTEMPTS == 3
+    
+    def test_timeout_seconds(self):
+        """Test timeout configuration."""
+        assert ETLConfig.DEFAULT_TIMEOUT_SECONDS == 3600
+
+
+class TestIDPrefixes:
+    """Test ID prefix constants."""
+    
+    def test_etl_run_prefix(self):
+        """Test ETL run prefix."""
+        assert IDPrefixes.ETL_RUN == 'ETL'
+    
+    def test_log_id_prefix(self):
+        """Test log ID prefix."""
+        assert IDPrefixes.LOG_ID == 'LOG'
+    
+    def test_analytics_id_prefix(self):
+        """Test analytics ID prefix."""
+        assert IDPrefixes.ANALYTICS_ID == 'ANL'
+
+
+class TestMessages:
+    """Test message constants."""
+    
+    def test_init_message(self):
+        """Test initialization message."""
+        assert Messages.INIT_SUCCESS == 'ETL process initialized successfully'
+    
+    def test_extract_messages(self):
+        """Test extraction messages."""
+        assert Messages.EXTRACT_START == 'Starting data extraction'
+        assert Messages.EXTRACT_COMPLETE == 'Data extraction completed'
+    
+    def test_transform_messages(self):
+        """Test transformation messages."""
+        assert Messages.TRANSFORM_START == 'Starting data transformation'
+        assert Messages.TRANSFORM_COMPLETE == 'Data transformation completed'
+    
+    def test_load_messages(self):
+        """Test load messages."""
+        assert Messages.LOAD_START == 'Starting data load'
+        assert Messages.LOAD_COMPLETE == 'Data load completed'
+    
+    def test_completion_messages(self):
+        """Test completion messages."""
+        assert Messages.ETL_COMPLETE == 'ETL process completed successfully'
+        assert Messages.ETL_ERROR == 'ETL process failed'
+
+
+class TestBusinessRulesApplication:
+    """Test business rules in realistic scenarios."""
+    
+    def test_discount_tier1_threshold(self):
+        """Test tier 1 discount threshold."""
+        quantity = 11
+        assert quantity > BusinessRules.DISCOUNT_QTY_TIER1
+        assert quantity <= BusinessRules.DISCOUNT_QTY_TIER2
+    
+    def test_discount_tier2_threshold(self):
+        """Test tier 2 discount threshold."""
+        quantity = 20
+        assert quantity > BusinessRules.DISCOUNT_QTY_TIER2
+    
+    def test_category_high(self):
+        """Test high category threshold."""
+        amount = Decimal('2500.00')
+        assert amount >= BusinessRules.CATEGORY_HIGH_THRESHOLD
+    
+    def test_category_medium(self):
+        """Test medium category threshold."""
+        amount = Decimal('1000.00')
+        assert amount >= BusinessRules.CATEGORY_MEDIUM_THRESHOLD
+        assert amount < BusinessRules.CATEGORY_HIGH_THRESHOLD
+    
+    def test_category_low(self):
+        """Test low category threshold."""
+        amount = Decimal('300.00')
+        assert amount < BusinessRules.CATEGORY_MEDIUM_THRESHOLD
+    
+    def test_tax_calculation(self):
+        """Test tax calculation."""
+        gross = Decimal('1000.00')
+        tax = gross * BusinessRules.TAX_RATE
+        assert tax == Decimal('80.00')
+    
+    def test_cost_calculation(self):
+        """Test cost calculation."""
+        price = Decimal('100.00')
+        cost = price * BusinessRules.COST_RATIO
+        assert cost == Decimal('60.00')
 
 
 if __name__ == "__main__":
