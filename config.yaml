@@ -1,52 +1,95 @@
-# ETL Integration Test Configuration
+# ETL Business Rules and Configuration
+# Migrated from ABAP ZCL_ETL_CONSTANTS
+# All numeric values maintain precision from original ABAP definitions
 
-etl:
+business_rules:
+  # Discount tier thresholds and rates
+  discount:
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: 0.05  # 5% discount (DECIMALS 2)
+    rate_tier2: 0.10  # 10% discount (DECIMALS 2)
+  
+  # Tax rate
+  tax:
+    rate: 0.08  # 8% tax rate (DECIMALS 2)
+  
+  # Cost calculation
+  cost:
+    ratio: 0.60  # 60% cost ratio (DECIMALS 2)
+  
+  # Category thresholds
+  category:
+    high_threshold: 2000.00   # >= $2000 (DECIMALS 2)
+    medium_threshold: 500.00  # >= $500 (DECIMALS 2)
+
+etl_configuration:
+  # Batch processing settings
   batch_size: 1000
   commit_interval: 500
+  
+  # Error handling
   retry_attempts: 3
   timeout_seconds: 3600
-  parallel_jobs: 4
-
-test_data:
-  raw_sales_count: 100
-  date_range_days: 30
-  currencies:
-    - USD
-    - EUR
-    - GBP
-  regions:
-    - NORTH
-    - SOUTH
-    - EAST
-    - WEST
   
-business_rules:
-  discount:
-    tier1_quantity: 10
-    tier1_rate: 0.05
-    tier2_quantity: 15
-    tier2_rate: 0.10
-  tax_rate: 0.08
-  cost_ratio: 0.60
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  # Parallel processing
+  parallel_jobs: 4
+  
+  # Logging
+  log_level: "INFO"
+  log_to_console: true
+  log_to_file: true
+  
+  # Date ranges
+  default_lookback_days: 7
 
-logging:
-  level: INFO
-  console: true
-  file: true
-  log_path: logs/etl_integration_tests.log
+spark_configuration:
+  # Spark session settings
+  app_name: "Sales ETL Process"
+  master: "local[*]"
+  
+  # Memory settings
+  driver_memory: "4g"
+  executor_memory: "4g"
+  
+  # Shuffle partitions
+  shuffle_partitions: 200
+  
+  # Serialization
+  serializer: "org.apache.spark.serializer.KryoSerializer"
 
-spark:
-  app_name: ETL_Integration_Tests
-  master: local[*]
-  config:
-    spark.sql.shuffle.partitions: 4
-    spark.driver.memory: 2g
-    spark.executor.memory: 2g
+data_sources:
+  # Input source configuration
+  raw_sales:
+    format: "delta"  # or "parquet", "jdbc"
+    path: "data/raw/sales"
+    
+  # Output target configuration
+  analytics:
+    format: "delta"
+    path: "data/analytics/sales"
+    mode: "append"
+  
+  # Log storage
+  etl_log:
+    format: "delta"
+    path: "data/logs/etl"
 
-database:
-  raw_table: raw_sales
-  analytics_table: sales_analytics
-  log_table: etl_logs
+data_quality:
+  # Validation rules
+  mandatory_fields:
+    - "trans_id"
+    - "customer_id"
+    - "product_id"
+    - "currency"
+  
+  # Data type validation
+  numeric_fields:
+    - "quantity"
+    - "unit_price"
+    - "gross_amount"
+    - "net_amount"
+  
+  # Thresholds
+  max_error_rate: 0.05  # 5% maximum error rate
+  min_record_count: 1
