@@ -1,174 +1,131 @@
-# ETL Configuration File
-# Sales Data ETL System Configuration
+# ETL Configuration
+# Replaces ABAP ZCL_ETL_CONSTANTS and configuration parameters
 
-# Spark Configuration
-spark:
-  app_name: "Sales ETL Pipeline"
-  master: "local[*]"
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.sources.partitionOverwriteMode: "dynamic"
-
-# ETL Processing Parameters
 etl:
+  # Process identification
+  run_id_prefix: "ETL"
+  log_id_prefix: "LOG"
+  analytics_id_prefix: "ANL"
+  
   # Batch processing settings
   batch_size: 1000
   commit_interval: 500
-  parallel_jobs: 4
   retry_attempts: 3
   timeout_seconds: 3600
+  parallel_jobs: 4
   
-  # ID prefixes
-  prefix:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+  # Status codes (replaces gc_status constants)
+  status_codes:
+    new: "N"
+    processed: "P"
+    error: "E"
+    warning: "W"
+    success: "S"
+    info: "I"
+  
+  # Process steps (replaces gc_step constants)
+  steps:
+    init: "INIT"
+    extract: "EXTRACT"
+    transform: "TRANSFORM"
+    load: "LOAD"
+    validate: "VALIDATE"
+    complete: "COMPLETE"
+    error: "ERROR"
 
-# Business Rules Configuration
+# Business rules (replaces gc_category and business rule constants)
 business_rules:
-  # Discount tiers
+  # Discount thresholds
   discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05  # 5% discount
-    rate_tier2: 0.10  # 10% discount
+    quantity_tier1: 10
+    quantity_tier2: 15
+    rate_tier1: 0.05  # 5%
+    rate_tier2: 0.10  # 10%
   
-  # Tax configuration
-  tax:
-    rate: 0.08  # 8% tax rate
+  # Tax and cost settings
+  tax_rate: 0.08  # 8%
+  cost_ratio: 0.60  # 60%
   
-  # Cost calculation
-  cost:
-    ratio: 0.60  # Cost is 60% of unit price
-  
-  # Sale categorization thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
+  # Category thresholds
+  categories:
+    high:
+      name: "HIGH"
+      threshold: 2000.00
+    medium:
+      name: "MEDIUM"
+      threshold: 500.00
+    low:
+      name: "LOW"
+      threshold: 0.00
 
-# Data Source Configuration
-source:
-  # Source table/file configuration
-  type: "delta"  # delta, parquet, csv, jdbc
-  path: "data/raw/sales"
-  format: "delta"
-  
-  # JDBC connection (if applicable)
-  jdbc:
-    url: "jdbc:postgresql://localhost:5432/sales_db"
-    driver: "org.postgresql.Driver"
-    table: "zsales_raw"
-    user: "etl_user"
-    password_env: "DB_PASSWORD"  # Read from environment variable
-  
-  # File source options
-  file:
-    delimiter: ","
-    header: true
-    schema_inference: false
+# Message templates (replaces gc_msg constants)
+messages:
+  init_success: "ETL process initialized successfully"
+  extract_start: "Starting data extraction"
+  extract_complete: "Data extraction completed"
+  transform_start: "Starting data transformation"
+  transform_complete: "Data transformation completed"
+  load_start: "Starting data load"
+  load_complete: "Data load completed"
+  etl_complete: "ETL process completed successfully"
+  etl_error: "ETL process failed"
 
-# Target Configuration
-target:
-  # Target table/file configuration
-  type: "delta"
-  path: "data/analytics/sales"
-  format: "delta"
-  mode: "append"  # append, overwrite
+# Spark configuration
+spark:
+  app_name: "SalesETL"
+  master: "local[*]"
+  executor_memory: "4g"
+  driver_memory: "2g"
+  shuffle_partitions: 200
   
-  # Partitioning
-  partition_by:
-    - "trans_date"
-    - "region"
-  
-  # JDBC connection (if applicable)
-  jdbc:
-    url: "jdbc:postgresql://localhost:5432/sales_db"
-    driver: "org.postgresql.Driver"
-    table: "zsales_analytics"
-    user: "etl_user"
-    password_env: "DB_PASSWORD"
+  # Additional Spark settings
+  config:
+    spark.sql.adaptive.enabled: "true"
+    spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark.sql.debug.maxToStringFields: 100
 
-# Logging Configuration
+# Database configuration
+database:
+  source:
+    table: "sales_raw"
+    status_column: "status"
+    date_column: "trans_date"
+  
+  target:
+    table: "sales_analytics"
+  
+  log:
+    table: "etl_log"
+
+# Logging configuration
 logging:
-  # Log table/file configuration
-  type: "delta"
-  path: "data/logs/etl_log"
-  format: "delta"
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/etl_process.log"
+  console: true
   
-  # Console logging
-  console:
-    enabled: true
-    level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  
-  # File logging
-  file:
-    enabled: true
-    path: "logs/etl.log"
-    level: "DEBUG"
+  # Log rotation
+  rotation:
     max_bytes: 10485760  # 10MB
     backup_count: 5
 
-# Data Quality Rules
+# Error handling configuration
+error_handling:
+  max_consecutive_errors: 10
+  error_threshold_percentage: 5.0
+  fail_fast: false
+  continue_on_validation_error: true
+  
+  # Retry configuration
+  retry:
+    enabled: true
+    max_attempts: 3
+    backoff_factor: 2
+    max_backoff_seconds: 60
+
+# Data quality thresholds
 data_quality:
-  # Validation rules
-  validation:
-    check_nulls: true
-    check_duplicates: true
-    check_data_types: true
-  
-  # Required fields
-  required_fields:
-    raw_sales:
-      - "trans_id"
-      - "trans_date"
-      - "customer_id"
-      - "product_id"
-      - "quantity"
-      - "unit_price"
-      - "currency"
-    
-    analytics:
-      - "analytics_id"
-      - "customer_id"
-      - "product_id"
-      - "gross_amount"
-      - "net_amount"
-      - "currency"
-      - "category"
-  
-  # Data type constraints
-  constraints:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: 0.01
-      max: 999999.99
-    gross_amount:
-      min: 0.01
-
-# Monitoring and Alerting
-monitoring:
-  # Performance thresholds
-  thresholds:
-    max_duration_minutes: 60
-    min_success_rate: 0.95  # 95%
-    max_error_rate: 0.05    # 5%
-  
-  # Alert configuration
-  alerts:
-    enabled: false
-    email:
-      recipients:
-        - "etl-team@example.com"
-      smtp_host: "smtp.example.com"
-      smtp_port: 587
-
-# Test Mode Configuration
-test_mode:
-  enabled: false
-  sample_size: 100
-  use_mock_data: false
-  skip_commit: true
+  min_records: 1
+  max_null_percentage: 10.0
+  duplicate_check: true
+  schema_validation: true
