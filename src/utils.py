@@ -1,77 +1,105 @@
 """
-Utility functions for ETL logger.
+Utility functions for ETL system
+Migrated from ABAP ZETL_MACROS and utility functions
 """
 
-from typing import Dict, Any
-import yaml
-import os
+from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Any
 
 
-def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+def generate_unique_id(prefix: str = '') -> str:
     """
-    Load configuration from YAML file.
-
+    Generate a unique ID with optional prefix
+    
     Args:
-        config_path: Path to configuration file
-
+        prefix: Prefix for the ID
+    
     Returns:
-        Dict containing configuration
+        Unique identifier string
     """
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    # Replace environment variables
-    config = _replace_env_vars(config)
-
-    return config
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+    return f"{prefix}{timestamp}"
 
 
-def _replace_env_vars(config: Any) -> Any:
+def calculate_percentage(numerator: Any, denominator: Any) -> float:
     """
-    Recursively replace environment variable placeholders.
-
+    Calculate percentage
+    
     Args:
-        config: Configuration object (dict, list, or str)
-
+        numerator: Numerator value
+        denominator: Denominator value
+    
     Returns:
-        Configuration with environment variables resolved
+        Percentage as float, 0 if denominator is 0
     """
-    if isinstance(config, dict):
-        return {k: _replace_env_vars(v) for k, v in config.items()}
-    elif isinstance(config, list):
-        return [_replace_env_vars(item) for item in config]
-    elif isinstance(config, str) and config.startswith('${') and config.endswith('}'):
-        env_var = config[2:-1]
-        return os.getenv(env_var, config)
-    else:
-        return config
+    if denominator == 0 or denominator is None:
+        return 0.0
+    return (float(numerator) / float(denominator)) * 100.0
 
 
-def validate_status_code(status: str, config: Dict[str, Any]) -> bool:
+def format_currency(amount: Decimal, currency: str = 'USD') -> str:
     """
-    Validate status code against configured values.
-
+    Format currency value
+    
     Args:
-        status: Status code to validate
-        config: Configuration dictionary
-
+        amount: Amount to format
+        currency: Currency code
+    
     Returns:
-        bool: True if valid, False otherwise
+        Formatted currency string
     """
-    valid_statuses = set(config.get('status_codes', {}).values())
-    return status in valid_statuses
+    return f"{currency} {amount:,.2f}"
 
 
-def validate_process_step(step: str, config: Dict[str, Any]) -> bool:
+def add_days_to_date(base_date: datetime, days: int) -> datetime:
     """
-    Validate process step against configured values.
-
+    Add days to a date
+    
     Args:
-        step: Process step to validate
-        config: Configuration dictionary
-
+        base_date: Base date
+        days: Number of days to add
+    
     Returns:
-        bool: True if valid, False otherwise
+        New date
     """
-    valid_steps = set(config.get('process_steps', {}).values())
-    return step in valid_steps
+    return base_date + timedelta(days=days)
+
+
+def validate_mandatory_field(value: Any, field_name: str) -> bool:
+    """
+    Validate that a mandatory field is not empty
+    
+    Args:
+        value: Field value
+        field_name: Field name for error messages
+    
+    Returns:
+        True if valid, False otherwise
+    """
+    if value is None or (isinstance(value, str) and value.strip() == ''):
+        return False
+    return True
+
+
+def format_duration(seconds: float) -> str:
+    """
+    Format duration in seconds to human-readable format
+    
+    Args:
+        seconds: Duration in seconds
+    
+    Returns:
+        Formatted duration string
+    """
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    
+    return " ".join(parts)
