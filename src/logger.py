@@ -1,69 +1,80 @@
 """
-ETL Logger utility
-Migrated from ABAP ZCL_ETL_LOGGER
+ETL Logger Module
+Provides logging functionality for ETL processes with structured log entries.
 """
 
 import logging
 from datetime import datetime
+from enum import Enum
 from typing import Optional
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import Row
+from dataclasses import dataclass, field
 
-from src.config import get_config
-from src.schemas import ETLSchemas
-from src.utils import generate_unique_id
+
+class LogStatus(Enum):
+    """Log status codes matching ABAP constants."""
+    SUCCESS = 'S'
+    ERROR = 'E'
+    WARNING = 'W'
+    INFO = 'I'
+
+
+class ProcessStep(Enum):
+    """ETL process step identifiers."""
+    INIT = 'INIT'
+    EXTRACT = 'EXTRACT'
+    TRANSFORM = 'TRANSFORM'
+    LOAD = 'LOAD'
+    VALIDATE = 'VALIDATE'
+    COMPLETE = 'COMPLETE'
+    ERROR = 'ERROR'
+
+
+@dataclass
+class LogEntry:
+    """Structured log entry for ETL operations."""
+    log_id: str
+    etl_run_id: str
+    execution_date: str
+    execution_time: str
+    process_step: str
+    status: str
+    records_processed: int = 0
+    records_success: int = 0
+    records_error: int = 0
+    message: str = ""
+    timestamp: datetime = field(default_factory=datetime.now)
 
 
 class ETLLogger:
     """
-    Logger for ETL processes
-    Corresponds to ZCL_ETL_LOGGER
+    ETL Logger implementation providing structured logging with run tracking.
+    
+    Attributes:
+        etl_run_id: Unique identifier for the ETL run
+        logger: Python logging instance
     """
     
-    def __init__(self, etl_run_id: str, spark: SparkSession = None):
+    def __init__(self, etl_run_id: str, log_level: str = "INFO"):
         """
-        Initialize logger
+        Initialize ETL Logger.
         
         Args:
             etl_run_id: Unique identifier for this ETL run
-            spark: SparkSession instance (optional, for database logging)
+            log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
         """
         self.etl_run_id = etl_run_id
-        self.spark = spark
-        self.config = get_config()
+        self.logger = logging.getLogger(f"ETLLogger.{etl_run_id}")
+        self.logger.setLevel(getattr(logging, log_level.upper()))
         
-        # Setup Python logger
-        self._setup_python_logger()
-        
-        # Storage for log entries
-        self.log_entries = []
-    
-    def _setup_python_logger(self):
-        """Setup Python logging"""
-        logging_config = self.config._config_data.get('logging', {})
-        level = logging_config.get('level', 'INFO')
-        format_str = logging_config.get('format', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        
-        self.logger = logging.getLogger(f'ETL.{self.etl_run_id}')
-        self.logger.setLevel(getattr(logging, level))
-        
-        # Console handler
-        if logging_config.get('handlers', {}).get('console', {}).get('enabled', True):
-            console_handler = logging.StreamHandler()
-            console_handler.setFormatter(logging.Formatter(format_str))
-            self.logger.addHandler(console_handler)
-        
-        # File handler
-        file_config = logging_config.get('handlers', {}).get('file', {})
-        if file_config.get('enabled', True):
-            from logging.handlers import RotatingFileHandler
-            file_handler = RotatingFileHandler(
-                file_config.get('path', 'logs/etl.log'),
-                maxBytes=file_config.get('max_bytes', 10485760),
-                backupCount=file_config.get('backup_count', 5)
+        # Configure console handler if not already configured
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
             )
-            file_handler.setFormatter(logging.Formatter(format_str))
-            self.logger.addHandler(file_handler)
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
     
     def log_message(
         self,
@@ -73,101 +84,76 @@ class ETLLogger:
         records_processed: int = 0,
         records_success: int = 0,
         records_error: int = 0
-    ):
+    ) -> None:
         """
-        Log a message
+        Log a message with ETL context.
         
         Args:
-            step: Process step
-            status: Status code (S, E, W, I)
-            message: Log message
-            records_processed: Number of records processed
-            records_success: Number of successful records
-            records_error: Number of error records
+            step: Process step identifier (use ProcessStep enum)
+            status: Log status (use LogStatus enum)
+            message: Log message text
+            records_processed: Total records processed
+            records_success: Successfully processed records
+            records_error: Records with errors
         """
         now = datetime.now()
         
-        # Create log entry
-        log_entry = {
-            'log_id': generate_unique_id(self.config.id_prefixes.LOG),
-            'etl_run_id': self.etl_run_id,
-            'execution_date': now.date(),
-            'execution_time': now.strftime('%H:%M:%S'),
-            'process_step': step,
-            'status': status,
-            'records_processed': records_processed,
-            'records_success': records_success,
-            'records_error': records_error,
-            'message': message,
-            'created_at': now,
-            'created_by': 'ETL_SYSTEM'
-        }
+        log_entry = LogEntry(
+            log_id=self._generate_log_id(),
+            etl_run_id=self.etl_run_id,
+            execution_date=now.strftime('%Y-%m-%d'),
+            execution_time=now.strftime('%H:%M:%S'),
+            process_step=step,
+            status=status,
+            records_processed=records_processed,
+            records_success=records_success,
+            records_error=records_error,
+            message=message,
+            timestamp=now
+        )
         
-        self.log_entries.append(log_entry)
+        # Log to console/file
+        log_msg = self._format_log_message(log_entry)
         
-        # Log to Python logger
-        log_msg = f"[{step}] [{status}] {message}"
-        if records_processed > 0:
-            log_msg += f" (Processed: {records_processed}, Success: {records_success}, Error: {records_error})"
-        
-        if status == self.config.status.ERROR:
+        if status == LogStatus.ERROR.value:
             self.logger.error(log_msg)
-        elif status == self.config.status.WARNING:
+        elif status == LogStatus.WARNING.value:
             self.logger.warning(log_msg)
-        else:
+        elif status == LogStatus.INFO.value:
+            self.logger.info(log_msg)
+        else:  # SUCCESS
             self.logger.info(log_msg)
     
+    def _generate_log_id(self) -> str:
+        """Generate unique log ID based on timestamp."""
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+        return f"LOG{timestamp[:14]}"
+    
+    def _format_log_message(self, entry: LogEntry) -> str:
+        """Format log entry for output."""
+        msg = f"[{entry.process_step}] {entry.message}"
+        if entry.records_processed > 0:
+            msg += f" | Processed: {entry.records_processed}, Success: {entry.records_success}, Error: {entry.records_error}"
+        return msg
+    
     def get_etl_run_id(self) -> str:
-        """Get ETL run ID"""
+        """Get the ETL run identifier."""
         return self.etl_run_id
+
+
+def create_logger(etl_run_id: Optional[str] = None, log_level: str = "INFO") -> ETLLogger:
+    """
+    Factory function to create an ETL logger instance.
     
-    def persist_logs(self) -> bool:
-        """
-        Persist log entries to database/file
+    Args:
+        etl_run_id: Optional ETL run ID, generates one if not provided
+        log_level: Logging level
         
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.log_entries:
-            return True
-        
-        try:
-            if self.spark is not None:
-                # Create DataFrame from log entries
-                log_df = self.spark.createDataFrame(
-                    [Row(**entry) for entry in self.log_entries],
-                    schema=ETLSchemas.etl_log_schema()
-                )
-                
-                # Get log data source configuration
-                log_config = self.config.get_data_source_config('etl_log')
-                
-                # Write to configured destination
-                if log_config.get('format') == 'jdbc':
-                    jdbc_config = log_config['jdbc']
-                    log_df.write \
-                        .format('jdbc') \
-                        .option('url', jdbc_config['url']) \
-                        .option('dbtable', jdbc_config['table']) \
-                        .option('user', jdbc_config['user']) \
-                        .option('password', jdbc_config['password']) \
-                        .option('driver', jdbc_config['driver']) \
-                        .mode('append') \
-                        .save()
-                else:
-                    log_df.write \
-                        .format(log_config['format']) \
-                        .mode('append') \
-                        .save(log_config['path'])
-                
-                self.logger.info(f"Persisted {len(self.log_entries)} log entries")
-            
-            return True
-        
-        except Exception as e:
-            self.logger.error(f"Failed to persist logs: {str(e)}")
-            return False
+    Returns:
+        Configured ETLLogger instance
+    """
+    if etl_run_id is None:
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        etl_run_id = f"ETL{timestamp}"
     
-    def get_log_entries(self) -> list:
-        """Get all log entries"""
-        return self.log_entries
+    return ETLLogger(etl_run_id, log_level)
