@@ -1,172 +1,153 @@
 """
-ETL Extract Module
-Extracts raw sales data with logging integration
+Extract module for Sales ETL process.
+Extracts raw sales data from source using PySpark DataFrame API.
 """
-
-from typing import List, Dict, Any, Optional
-from datetime import date
+from datetime import datetime
+from typing import Tuple
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from pyspark.sql.types import (
+    StructType, StructField, StringType, DateType, 
+    IntegerType, DecimalType, TimestampType
+)
+from src.logger import ETLLogger
+from src.schemas import SALES_RAW_SCHEMA
 
-from src.logger import ETLLogger, ETLStep, ETLStatus
 
-
-class SalesDataExtractor:
-    """Extract raw sales data from source"""
-
-    def __init__(self, logger: ETLLogger, spark: SparkSession):
+class SalesExtractor:
+    """Extracts raw sales data from source table."""
+    
+    def __init__(self, spark: SparkSession, logger: ETLLogger):
         """
-        Initialize extractor
-
+        Initialize extractor.
+        
         Args:
-            logger: ETL logger instance
             spark: SparkSession instance
+            logger: ETL logger instance
         """
-        self.logger = logger
         self.spark = spark
-
-    def get_schema(self) -> StructType:
-        """Define schema for raw sales data"""
-        return StructType([
-            StructField('trans_id', StringType(), False),
-            StructField('trans_date', DateType(), False),
-            StructField('customer_id', StringType(), False),
-            StructField('product_id', StringType(), False),
-            StructField('quantity', IntegerType(), False),
-            StructField('unit_price', DecimalType(16, 2), False),
-            StructField('currency', StringType(), False),
-            StructField('sales_rep', StringType(), True),
-            StructField('region', StringType(), True),
-            StructField('status', StringType(), False)
-        ])
-
+        self.logger = logger
+        
     def extract_data(
-        self,
-        from_date: date,
-        to_date: date,
-        source_path: Optional[str] = None
-    ) -> DataFrame:
+        self, 
+        from_date: str, 
+        to_date: str,
+        source_table: str = "zsales_raw"
+    ) -> Tuple[DataFrame, bool]:
         """
-        Extract sales data for date range
-
+        Extract raw sales data for date range.
+        
         Args:
-            from_date: Start date for extraction
-            to_date: End date for extraction
-            source_path: Optional path to source data
-
+            from_date: Start date (YYYY-MM-DD)
+            to_date: End date (YYYY-MM-DD)
+            source_table: Source table name
+            
         Returns:
-            DataFrame with extracted data
-
-        Raises:
-            Exception: If extraction fails
+            Tuple of (DataFrame, success_flag)
         """
         try:
-            self.logger.log_info(
-                ETLStep.EXTRACT,
-                f"Starting extraction from {from_date} to {to_date}",
-                from_date=str(from_date),
-                to_date=str(to_date)
+            self.logger.log_message(
+                step="EXTRACT",
+                status="S",
+                message=f"Starting extraction from {from_date} to {to_date}"
             )
-
-            if source_path:
-                # Read from file source
-                df = self.spark.read.schema(self.get_schema()).parquet(source_path)
-
-                # Filter by date range and status
-                df = df.filter(
-                    (df.trans_date >= from_date) &
-                    (df.trans_date <= to_date) &
-                    (df.status == 'N')
-                )
-            else:
-                # Create sample data for demonstration
-                df = self._create_sample_data()
-
-            count = df.count()
-
-            self.logger.log_success(
-                ETLStep.EXTRACT,
-                f"Extracted {count} records successfully",
-                records_processed=count,
-                records_success=count,
-                records_error=0
+            
+            # Extract data using Spark SQL
+            # In production, this would read from actual source (JDBC, Hive, etc.)
+            df = self._read_source_data(source_table, from_date, to_date)
+            
+            # Validate schema
+            if not self._validate_schema(df):
+                raise ValueError("Schema validation failed")
+            
+            record_count = df.count()
+            
+            self.logger.log_message(
+                step="EXTRACT",
+                status="S",
+                records_processed=record_count,
+                records_success=record_count,
+                message=f"Extracted {record_count} records successfully"
             )
-
-            return df
-
+            
+            return df, True
+            
         except Exception as e:
-            self.logger.log_error(
-                ETLStep.EXTRACT,
-                f"Extraction failed: {str(e)}",
-                exception=e
+            self.logger.log_message(
+                step="EXTRACT",
+                status="E",
+                message=f"Extraction failed: {str(e)}"
             )
-            raise
-
-    def _create_sample_data(self) -> DataFrame:
-        """Create sample data for testing"""
-        from datetime import datetime
-
+            return self.spark.createDataFrame([], SALES_RAW_SCHEMA), False
+    
+    def _read_source_data(
+        self, 
+        table_name: str, 
+        from_date: str, 
+        to_date: str
+    ) -> DataFrame:
+        """
+        Read data from source table.
+        
+        Args:
+            table_name: Source table name
+            from_date: Start date
+            to_date: End date
+            
+        Returns:
+            DataFrame with raw sales data
+        """
+        # For demonstration, create sample data
+        # In production, use: self.spark.read.jdbc() or self.spark.table()
         sample_data = [
-            {
-                'trans_id': 'T000001',
-                'trans_date': datetime.now().date(),
-                'customer_id': 'CUST001',
-                'product_id': 'PROD001',
-                'quantity': 10,
-                'unit_price': 99.99,
-                'currency': 'USD',
-                'sales_rep': 'John Doe',
-                'region': 'NORTH',
-                'status': 'N'
-            },
-            {
-                'trans_id': 'T000002',
-                'trans_date': datetime.now().date(),
-                'customer_id': 'CUST002',
-                'product_id': 'PROD002',
-                'quantity': 5,
-                'unit_price': 149.99,
-                'currency': 'USD',
-                'sales_rep': 'Jane Smith',
-                'region': 'SOUTH',
-                'status': 'N'
-            },
-            {
-                'trans_id': 'T000003',
-                'trans_date': datetime.now().date(),
-                'customer_id': 'CUST003',
-                'product_id': 'PROD001',
-                'quantity': 20,
-                'unit_price': 99.99,
-                'currency': 'USD',
-                'sales_rep': 'John Doe',
-                'region': 'EAST',
-                'status': 'N'
-            },
-            {
-                'trans_id': 'T000004',
-                'trans_date': datetime.now().date(),
-                'customer_id': 'CUST001',
-                'product_id': 'PROD003',
-                'quantity': 3,
-                'unit_price': 299.99,
-                'currency': 'USD',
-                'sales_rep': 'Bob Wilson',
-                'region': 'WEST',
-                'status': 'N'
-            },
-            {
-                'trans_id': 'T000005',
-                'trans_date': datetime.now().date(),
-                'customer_id': 'CUST004',
-                'product_id': 'PROD002',
-                'quantity': 15,
-                'unit_price': 149.99,
-                'currency': 'USD',
-                'sales_rep': 'Jane Smith',
-                'region': 'SOUTH',
-                'status': 'N'
-            }
+            ("T000001", datetime.now().date(), "CUST001", "PROD001", 
+             10, 99.99, "USD", "John Doe", "NORTH", "N", 
+             datetime.now(), "SYSTEM"),
+            ("T000002", datetime.now().date(), "CUST002", "PROD002", 
+             5, 149.99, "USD", "Jane Smith", "SOUTH", "N",
+             datetime.now(), "SYSTEM"),
+            ("T000003", datetime.now().date(), "CUST003", "PROD001", 
+             20, 99.99, "USD", "John Doe", "EAST", "N",
+             datetime.now(), "SYSTEM"),
+            ("T000004", datetime.now().date(), "CUST001", "PROD003", 
+             3, 299.99, "USD", "Bob Wilson", "WEST", "N",
+             datetime.now(), "SYSTEM"),
+            ("T000005", datetime.now().date(), "CUST004", "PROD002", 
+             15, 149.99, "USD", "Jane Smith", "SOUTH", "N",
+             datetime.now(), "SYSTEM"),
         ]
-
-        return self.spark.createDataFrame(sample_data, schema=self.get_schema())
+        
+        df = self.spark.createDataFrame(sample_data, SALES_RAW_SCHEMA)
+        
+        # Apply date filter
+        df = df.filter(
+            (df.trans_date >= from_date) & 
+            (df.trans_date <= to_date) &
+            (df.status == "N")
+        )
+        
+        return df
+    
+    def _validate_schema(self, df: DataFrame) -> bool:
+        """
+        Validate DataFrame schema matches expected structure.
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        expected_fields = {field.name for field in SALES_RAW_SCHEMA.fields}
+        actual_fields = {field.name for field in df.schema.fields}
+        
+        if expected_fields != actual_fields:
+            missing = expected_fields - actual_fields
+            extra = actual_fields - expected_fields
+            self.logger.log_message(
+                step="EXTRACT",
+                status="W",
+                message=f"Schema mismatch. Missing: {missing}, Extra: {extra}"
+            )
+            return False
+        
+        return True
