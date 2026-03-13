@@ -1,210 +1,255 @@
 """
-Load module for Sales ETL Pipeline
-Loads transformed analytics data into target systems
+ETL Loader Module
+Loads transformed data into target analytics table
 """
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col
-import logging
 from typing import Optional
 
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col, when
 
-class SalesLoader:
-    """Handles loading of transformed analytics data into target systems"""
+from src.logger import ETLLogger
+from src.constants import constants
+from src.exceptions import ETLLoadError
+
+
+class ETLLoader:
+    """Loads transformed data into target tables"""
     
-    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger):
+    def __init__(self, spark: SparkSession, logger: ETLLogger):
         """
         Initialize the loader
         
         Args:
             spark: SparkSession instance
-            config: Configuration dictionary
-            logger: Logger instance
+            logger: ETLLogger instance
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
     
-    def load_data(
-        self, 
-        analytics_df: DataFrame,
-        target_path: Optional[str] = None,
-        mode: str = "append"
-    ) -> bool:
+    def validate_record(self, df: DataFrame) -> DataFrame:
         """
-        Load analytics data to target system
-        
-        Args:
-            analytics_df: Transformed analytics DataFrame
-            target_path: Optional override for target path
-            mode: Write mode (append, overwrite, etc.)
-            
-        Returns:
-            bool: True if load successful
-        """
-        try:
-            self.logger.info("Starting data load")
-            
-            record_count = analytics_df.count()
-            
-            # Validate before loading
-            if not self._validate_before_load(analytics_df):
-                self.logger.error("Pre-load validation failed")
-                return False
-            
-            # Get target configuration
-            target = target_path or self.config['load']['target_path']
-            target_format = self.config['load']['target_format']
-            
-            # Write data based on format
-            if target_format == 'parquet':
-                self._write_parquet(analytics_df, target, mode)
-            elif target_format == 'delta':
-                self._write_delta(analytics_df, target, mode)
-            elif target_format == 'jdbc':
-                self._write_jdbc(analytics_df)
-            else:
-                raise ValueError(f"Unsupported target format: {target_format}")
-            
-            self.logger.info(f"Loaded {record_count} records successfully")
-            
-            # Update source status if configured
-            if self.config['load'].get('update_source_status', False):
-                self._update_source_status(analytics_df)
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Load failed: {str(e)}")
-            return False
-    
-    def _write_parquet(self, df: DataFrame, target: str, mode: str):
-        """Write data in Parquet format"""
-        partition_columns = self.config['load'].get('partition_by', [])
-        
-        if partition_columns:
-            df.write.partitionBy(*partition_columns).mode(mode).parquet(target)
-        else:
-            df.write.mode(mode).parquet(target)
-        
-        self.logger.info(f"Data written to Parquet: {target}")
-    
-    def _write_delta(self, df: DataFrame, target: str, mode: str):
-        """Write data in Delta format"""
-        partition_columns = self.config['load'].get('partition_by', [])
-        
-        writer = df.write.format("delta").mode(mode)
-        
-        if partition_columns:
-            writer = writer.partitionBy(*partition_columns)
-        
-        writer.save(target)
-        
-        self.logger.info(f"Data written to Delta: {target}")
-    
-    def _write_jdbc(self, df: DataFrame):
-        """Write data to JDBC target"""
-        jdbc_config = self.config['load']['jdbc']
-        
-        df.write.jdbc(
-            url=jdbc_config['url'],
-            table=jdbc_config['table'],
-            mode=jdbc_config.get('mode', 'append'),
-            properties={
-                "user": jdbc_config['user'],
-                "password": jdbc_config['password'],
-                "driver": jdbc_config['driver'],
-                "batchsize": str(jdbc_config.get('batch_size', 1000))
-            }
-        )
-        
-        self.logger.info(f"Data written to JDBC: {jdbc_config['table']}")
-    
-    def _validate_before_load(self, df: DataFrame) -> bool:
-        """
-        Validate data before loading
+        Validate records before loading
         
         Args:
             df: DataFrame to validate
             
         Returns:
-            bool: True if validation passes
+            DataFrame with validation flag added
+        """
+        validated_df = df.withColumn(
+            "is_valid",
+            when(
+                (col("analytics_id").isNotNull()) &
+                (col("customer_id").isNotNull()) &
+                (col("product_id").isNotNull()) &
+                (col("gross_amount") > 0) &
+                (col("currency").isNotNull()) &
+                (col("category").isin(constants.get_all_categories())),
+                True
+            ).otherwise(False)
+        )
+        
+        return validated_df
+    
+    def load_data(
+        self,
+        df: DataFrame,
+        target_table: str = "sales_analytics",
+        mode: str = "append"
+    ) -> bool:
+        """
+        Load transformed data into target table
+        
+        Args:
+            df: DataFrame containing analytics data
+            target_table: Target table name
+            mode: Write mode (append/overwrite)
+            
+        Returns:
+            True if successful, False otherwise
+            
+        Raises:
+            ETLLoadError: If load fails
         """
         try:
-            # Check for duplicates
-            total_count = df.count()
-            distinct_count = df.select("analytics_id").distinct().count()
+            self.logger.log_message(
+                step=constants.STEP.LOAD,
+                status=constants.STATUS.INFO,
+                message="Starting data load"
+            )
             
-            if total_count != distinct_count:
-                self.logger.error(f"Found duplicate analytics_id values")
+            # Validate records
+            validated_df = self.validate_record(df)
+            
+            # Separate valid and invalid records
+            valid_df = validated_df.filter(col("is_valid") == True).drop("is_valid")
+            invalid_df = validated_df.filter(col("is_valid") == False).drop("is_valid")
+            
+            valid_count = valid_df.count()
+            invalid_count = invalid_df.count()
+            total_count = valid_count + invalid_count
+            
+            # Log invalid records
+            if invalid_count > 0:
+                self.logger.log_message(
+                    step=constants.STEP.LOAD,
+                    status=constants.STATUS.WARNING,
+                    message=f"Found {invalid_count} invalid records",
+                    records_error=invalid_count
+                )
+                
+                # Optionally persist invalid records for review
+                invalid_df.write.mode("append").saveAsTable(f"{target_table}_errors")
+            
+            # Load valid records
+            if valid_count > 0:
+                valid_df.write.mode(mode).saveAsTable(target_table)
+                
+                self.logger.log_message(
+                    step=constants.STEP.LOAD,
+                    status=constants.STATUS.SUCCESS,
+                    message=f"Loaded {valid_count} of {total_count} records",
+                    records_processed=total_count,
+                    records_success=valid_count,
+                    records_error=invalid_count
+                )
+            else:
+                self.logger.log_message(
+                    step=constants.STEP.LOAD,
+                    status=constants.STATUS.WARNING,
+                    message="No valid records to load"
+                )
                 return False
             
-            # Check for required columns
-            required_columns = [
-                'analytics_id', 'customer_id', 'product_id', 
-                'gross_amount', 'net_amount', 'category'
-            ]
-            
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            if missing_columns:
-                self.logger.error(f"Missing required columns: {missing_columns}")
-                return False
-            
-            # Check for null values in critical columns
-            for column in required_columns:
-                null_count = df.filter(col(column).isNull()).count()
-                if null_count > 0:
-                    self.logger.error(f"Found {null_count} null values in {column}")
-                    return False
-            
-            self.logger.info("Pre-load validation passed")
             return True
             
         except Exception as e:
-            self.logger.error(f"Pre-load validation error: {str(e)}")
-            return False
+            self.logger.log_message(
+                step=constants.STEP.LOAD,
+                status=constants.STATUS.ERROR,
+                message=f"Load failed: {str(e)}"
+            )
+            raise ETLLoadError(
+                message=f"Failed to load data to {target_table}",
+                original_exception=e
+            )
     
-    def _update_source_status(self, analytics_df: DataFrame):
+    def update_source_status(
+        self,
+        trans_ids: list[str],
+        source_table: str = "sales_raw",
+        new_status: str = None
+    ) -> bool:
         """
-        Update source table status to mark records as processed
+        Update status of processed records in source table
         
         Args:
-            analytics_df: Loaded analytics data
-        """
-        try:
-            if self.config['extract']['source_format'] == 'jdbc':
-                jdbc_config = self.config['extract']['jdbc']
-                
-                # Get list of processed transaction IDs
-                # In production, this would execute an UPDATE statement
-                self.logger.info("Source status update would be executed here")
-                
-        except Exception as e:
-            self.logger.warning(f"Failed to update source status: {str(e)}")
-    
-    def create_summary_report(self, analytics_df: DataFrame) -> dict:
-        """
-        Create summary statistics report
-        
-        Args:
-            analytics_df: Loaded analytics data
+            trans_ids: List of transaction IDs to update
+            source_table: Source table name
+            new_status: New status value (default: PROCESSED)
             
         Returns:
-            dict: Summary statistics
+            True if successful, False otherwise
         """
         try:
-            summary = {
-                'total_records': analytics_df.count(),
-                'total_gross_amount': analytics_df.agg({'gross_amount': 'sum'}).collect()[0][0],
-                'total_net_amount': analytics_df.agg({'net_amount': 'sum'}).collect()[0][0],
-                'total_discount': analytics_df.agg({'discount_amount': 'sum'}).collect()[0][0],
-                'total_tax': analytics_df.agg({'tax_amount': 'sum'}).collect()[0][0],
-                'by_category': analytics_df.groupBy('category').count().collect(),
-                'by_region': analytics_df.groupBy('region').count().collect()
-            }
+            if not trans_ids:
+                return True
             
-            self.logger.info("Summary report created")
-            return summary
+            status = new_status or constants.STATUS.PROCESSED
+            
+            # Create temporary view of IDs
+            ids_df = self.spark.createDataFrame(
+                [(tid,) for tid in trans_ids],
+                ["trans_id"]
+            )
+            ids_df.createOrReplaceTempView("processed_ids")
+            
+            # Update status
+            update_query = f"""
+                UPDATE {source_table}
+                SET status = '{status}'
+                WHERE trans_id IN (SELECT trans_id FROM processed_ids)
+            """
+            
+            self.spark.sql(update_query)
+            
+            self.logger.log_message(
+                step=constants.STEP.LOAD,
+                status=constants.STATUS.SUCCESS,
+                message=f"Updated status for {len(trans_ids)} records in source"
+            )
+            
+            return True
             
         except Exception as e:
-            self.logger.error(f"Failed to create summary report: {str(e)}")
-            return {}
+            self.logger.log_message(
+                step=constants.STEP.LOAD,
+                status=constants.STATUS.WARNING,
+                message=f"Failed to update source status: {str(e)}"
+            )
+            return False
+    
+    def load_with_upsert(
+        self,
+        df: DataFrame,
+        target_table: str,
+        merge_keys: list[str]
+    ) -> bool:
+        """
+        Load data with upsert logic (merge)
+        
+        Args:
+            df: DataFrame to load
+            target_table: Target table name
+            merge_keys: Columns to use for matching
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Create temporary view
+            df.createOrReplaceTempView("staging_data")
+            
+            # Build merge statement
+            merge_condition = " AND ".join([
+                f"target.{key} = staging.{key}" for key in merge_keys
+            ])
+            
+            update_columns = [col for col in df.columns if col not in merge_keys]
+            update_set = ", ".join([
+                f"{col} = staging.{col}" for col in update_columns
+            ])
+            
+            merge_query = f"""
+                MERGE INTO {target_table} AS target
+                USING staging_data AS staging
+                ON {merge_condition}
+                WHEN MATCHED THEN
+                    UPDATE SET {update_set}
+                WHEN NOT MATCHED THEN
+                    INSERT *
+            """
+            
+            self.spark.sql(merge_query)
+            
+            record_count = df.count()
+            self.logger.log_message(
+                step=constants.STEP.LOAD,
+                status=constants.STATUS.SUCCESS,
+                message=f"Merged {record_count} records into {target_table}",
+                records_processed=record_count,
+                records_success=record_count
+            )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.log_message(
+                step=constants.STEP.LOAD,
+                status=constants.STATUS.ERROR,
+                message=f"Merge failed: {str(e)}"
+            )
+            raise ETLLoadError(
+                message=f"Failed to merge data into {target_table}",
+                original_exception=e
+            )
