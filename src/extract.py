@@ -1,146 +1,107 @@
 """
-Data extraction module
-Migrated from ABAP ZCL_ETL_EXTRACTOR
+ETL Extractor Module
+Extracts raw sales data from source based on date range.
 """
 
-from datetime import date
-from typing import Tuple
+import logging
+from datetime import date, datetime
+from typing import List, Dict, Optional
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import lit, current_timestamp
+from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
 
-from src.config import get_config
-from src.schemas import ETLSchemas
-from src.logger import ETLLogger
+logger = logging.getLogger(__name__)
 
 
-class ETLExtractor:
-    """
-    Extract raw sales data from source
-    Corresponds to ZCL_ETL_EXTRACTOR
-    """
+class SalesDataExtractor:
+    """Extracts raw sales data from source table."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger):
+    def __init__(self, spark: SparkSession, config: Dict):
         """
-        Initialize extractor
+        Initialize extractor.
         
         Args:
-            spark: SparkSession instance
-            logger: ETLLogger instance
+            spark: Active SparkSession
+            config: Configuration dictionary
         """
         self.spark = spark
-        self.logger = logger
-        self.config = get_config()
+        self.config = config
+        self.schema = self._define_schema()
+    
+    def _define_schema(self) -> StructType:
+        """Define schema for raw sales data."""
+        return StructType([
+            StructField("trans_id", StringType(), False),
+            StructField("trans_date", DateType(), False),
+            StructField("customer_id", StringType(), False),
+            StructField("product_id", StringType(), False),
+            StructField("quantity", IntegerType(), False),
+            StructField("unit_price", DecimalType(16, 2), False),
+            StructField("currency", StringType(), False),
+            StructField("sales_rep", StringType(), True),
+            StructField("region", StringType(), True),
+            StructField("status", StringType(), False),
+        ])
     
     def extract_data(
         self,
         from_date: date,
-        to_date: date
-    ) -> Tuple[bool, DataFrame]:
+        to_date: date,
+        run_id: str
+    ) -> Optional[DataFrame]:
         """
-        Extract raw sales data
+        Extract sales data for date range.
         
         Args:
             from_date: Start date for extraction
             to_date: End date for extraction
-        
+            run_id: ETL run identifier
+            
         Returns:
-            Tuple of (success flag, DataFrame)
+            DataFrame with extracted data or None on failure
         """
         try:
-            self.logger.log_message(
-                step=self.config.steps.EXTRACT,
-                status=self.config.status.SUCCESS,
-                message=f"Starting extraction from {from_date} to {to_date}"
+            logger.info(f"[{run_id}] Starting extraction from {from_date} to {to_date}")
+            
+            source_table = self.config.get('source_table', 'zsales_raw')
+            
+            # Read from source table
+            df = self.spark.read \
+                .format(self.config.get('source_format', 'jdbc')) \
+                .option("url", self.config['jdbc_url']) \
+                .option("dbtable", source_table) \
+                .option("user", self.config.get('db_user')) \
+                .option("password", self.config.get('db_password')) \
+                .option("driver", self.config.get('jdbc_driver', 'com.sap.db.jdbc.Driver')) \
+                .load()
+            
+            # Filter by date range and status
+            filtered_df = df.filter(
+                (df.trans_date >= from_date) &
+                (df.trans_date <= to_date) &
+                (df.status == 'N')
             )
             
-            # Get data source configuration
-            source_config = self.config.get_data_source_config('raw_sales')
+            record_count = filtered_df.count()
+            logger.info(f"[{run_id}] Extracted {record_count} records successfully")
             
-            # Read data based on format
-            if source_config.get('format') == 'jdbc':
-                sales_df = self._extract_from_jdbc(source_config, from_date, to_date)
-            else:
-                sales_df = self._extract_from_file(source_config, from_date, to_date)
+            return filtered_df
             
-            # Filter for new records only
-            sales_df = sales_df.filter(
-                (sales_df.trans_date >= lit(from_date)) &
-                (sales_df.trans_date <= lit(to_date)) &
-                (sales_df.status == self.config.status.NEW)
-            )
-            
-            record_count = sales_df.count()
-            
-            self.logger.log_message(
-                step=self.config.steps.EXTRACT,
-                status=self.config.status.SUCCESS,
-                message=f"Extracted {record_count} records successfully",
-                records_processed=record_count,
-                records_success=record_count
-            )
-            
-            return True, sales_df
-        
         except Exception as e:
-            self.logger.log_message(
-                step=self.config.steps.EXTRACT,
-                status=self.config.status.ERROR,
-                message=f"Extraction failed: {str(e)}"
-            )
-            return False, None
+            logger.error(f"[{run_id}] Extraction failed: {str(e)}", exc_info=True)
+            return None
     
-    def _extract_from_jdbc(
-        self,
-        source_config: dict,
-        from_date: date,
-        to_date: date
-    ) -> DataFrame:
-        """Extract data from JDBC source"""
-        jdbc_config = source_config['jdbc']
-        
-        # Build query with date filter
-        query = f"""
-        (SELECT * FROM {jdbc_config['table']}
-         WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
-         AND status = '{self.config.status.NEW}') as sales_data
+    def create_sample_data(self, run_id: str) -> DataFrame:
         """
-        
-        df = self.spark.read \
-            .format('jdbc') \
-            .option('url', jdbc_config['url']) \
-            .option('dbtable', query) \
-            .option('user', jdbc_config['user']) \
-            .option('password', jdbc_config['password']) \
-            .option('driver', jdbc_config['driver']) \
-            .load()
-        
-        return df
-    
-    def _extract_from_file(
-        self,
-        source_config: dict,
-        from_date: date,
-        to_date: date
-    ) -> DataFrame:
-        """Extract data from file source"""
-        df = self.spark.read \
-            .format(source_config['format']) \
-            .schema(ETLSchemas.raw_sales_schema()) \
-            .load(source_config['path'])
-        
-        return df
-    
-    def create_sample_data(self, output_path: str = None) -> DataFrame:
-        """
-        Create sample raw sales data for testing
-        Corresponds to sample data generation in ABAP code
+        Create sample data for testing.
         
         Args:
-            output_path: Optional path to save sample data
-        
+            run_id: ETL run identifier
+            
         Returns:
             DataFrame with sample data
         """
+        logger.info(f"[{run_id}] Creating sample data for testing")
+        
         sample_data = [
             ('T000001', date.today(), 'CUST001', 'PROD001', 10, 99.99, 'USD', 'John Doe', 'NORTH', 'N'),
             ('T000002', date.today(), 'CUST002', 'PROD002', 5, 149.99, 'USD', 'Jane Smith', 'SOUTH', 'N'),
@@ -149,16 +110,7 @@ class ETLExtractor:
             ('T000005', date.today(), 'CUST004', 'PROD002', 15, 149.99, 'USD', 'Jane Smith', 'SOUTH', 'N'),
         ]
         
-        df = self.spark.createDataFrame(
-            sample_data,
-            schema=ETLSchemas.raw_sales_schema()
-        )
-        
-        # Add timestamp fields
-        df = df.withColumn('created_at', current_timestamp()) \
-               .withColumn('created_by', lit('SYSTEM'))
-        
-        if output_path:
-            df.write.mode('overwrite').parquet(output_path)
+        df = self.spark.createDataFrame(sample_data, schema=self.schema)
+        logger.info(f"[{run_id}] Created {df.count()} sample records")
         
         return df
