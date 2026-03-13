@@ -1,64 +1,124 @@
 @echo off
-REM Start script for ABAP to PySpark migrated project (Windows)
-REM This script starts the Docker environment and runs the pipeline
+REM ABAP to PySpark Pipeline - Windows Startup Script
 
-echo ==================================================
-echo ABAP to PySpark Migration - Startup Script
-echo ==================================================
+setlocal enabledelayedexpansion
+
+echo ==========================================
+echo ABAP to PySpark ETL Pipeline
+echo ==========================================
 echo.
 
 REM Check if Docker is installed
-docker --version >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Docker is not installed or not in PATH
+where docker >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [ERROR] Docker is not installed or not in PATH
     echo Please install Docker Desktop from https://www.docker.com/products/docker-desktop
+    pause
     exit /b 1
 )
 
-REM Check if Docker Compose is available
-docker-compose --version >nul 2>&1
-if errorlevel 1 (
-    docker compose version >nul 2>&1
-    if errorlevel 1 (
-        echo ERROR: Docker Compose is not installed
-        echo Please install Docker Compose
-        exit /b 1
-    )
-    set DOCKER_COMPOSE=docker compose
-) else (
-    set DOCKER_COMPOSE=docker-compose
+REM Check if Docker Compose is installed
+where docker-compose >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [ERROR] Docker Compose is not installed or not in PATH
+    echo Please install Docker Compose
+    pause
+    exit /b 1
 )
 
-echo Step 1: Creating required directories...
-if not exist data mkdir data
-if not exist logs mkdir logs
-if not exist checkpoints mkdir checkpoints
-if not exist output mkdir output
+REM Check if Docker daemon is running
+docker info >nul 2>nul
+if %errorlevel% neq 0 (
+    echo [ERROR] Docker daemon is not running
+    echo Please start Docker Desktop
+    pause
+    exit /b 1
+)
 
-echo Step 2: Starting Docker containers...
-%DOCKER_COMPOSE% up -d
+echo [OK] Docker is installed and running
+echo.
 
-echo Step 3: Waiting for Spark to be ready...
+REM Create necessary directories
+echo Creating required directories...
+if not exist "data" mkdir data
+if not exist "logs" mkdir logs
+if not exist "output" mkdir output
+echo [OK] Directories created
+echo.
+
+REM Stop any existing containers
+echo Stopping existing containers (if any)...
+docker-compose down 2>nul
+echo.
+
+REM Build and start containers
+echo Starting PySpark environment...
+echo This may take a few minutes on first run...
+docker-compose up -d
+
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to start containers
+    echo Check logs with: docker-compose logs
+    pause
+    exit /b 1
+)
+
+REM Wait for services to be ready
+echo.
+echo Waiting for services to be ready...
 timeout /t 10 /nobreak >nul
 
-echo Step 4: Installing Python dependencies...
-docker exec abap_test_pyspark pip install --no-cache-dir -r /app/requirements.txt
+REM Check if containers are running
+docker-compose ps | find "Up" >nul
+if %errorlevel% neq 0 (
+    echo [ERROR] Containers failed to start
+    echo Check logs with: docker-compose logs
+    pause
+    exit /b 1
+)
 
-echo Step 5: Running the PySpark pipeline...
+echo [OK] PySpark environment is ready
 echo.
-docker exec abap_test_pyspark python /app/main.py
+
+REM Display service URLs
+echo ==========================================
+echo Service URLs:
+echo ==========================================
+echo Spark Master UI: http://localhost:8080
+echo Spark Worker UI: http://localhost:8081
+echo Spark Application UI: http://localhost:4040
+echo.
+
+REM Execute the pipeline
+echo ==========================================
+echo Executing ETL Pipeline...
+echo ==========================================
+echo.
+
+docker-compose exec -T pyspark python /app/main.py
+
+set EXIT_CODE=%errorlevel%
 
 echo.
-echo ==================================================
-echo Pipeline execution completed!
-echo ==================================================
+echo ==========================================
+if %EXIT_CODE% equ 0 (
+    echo [SUCCESS] Pipeline execution completed successfully!
+) else (
+    echo [ERROR] Pipeline execution failed with exit code %EXIT_CODE%
+    echo Check logs in pipeline.log or run: docker-compose logs
+)
+echo ==========================================
 echo.
-echo Useful commands:
-echo   View logs:        docker logs abap_test_pyspark
-echo   Stop containers:  %DOCKER_COMPOSE% down
-echo   Restart:          %DOCKER_COMPOSE% restart
-echo   Shell access:     docker exec -it abap_test_pyspark bash
-echo   Spark UI:         http://localhost:8080
-echo.
+
+REM Ask if user wants to stop containers
+set /p STOP_CONTAINERS="Do you want to stop the containers? (y/n): "
+if /i "%STOP_CONTAINERS%"=="y" (
+    echo Stopping containers...
+    docker-compose down
+    echo [OK] Containers stopped
+) else (
+    echo Containers are still running. To stop them later, run: docker-compose down
+)
 
 pause
+exit /b %EXIT_CODE%
