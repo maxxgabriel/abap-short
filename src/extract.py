@@ -1,41 +1,46 @@
 """
-Data Extraction Module
-Extracts raw sales data from source with date range filtering.
+PySpark Extractor Module
+Migrated from ZCL_ETL_EXTRACTOR ABAP class
+Extracts raw sales data from source
 """
 
-from typing import Tuple, Optional
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from pyspark.sql import functions as F
+from typing import Tuple
 from datetime import datetime
 
 from src.logger import ETLLogger
+from src.config import ETLConfig
 
 
-class Extractor:
+class SalesExtractor:
     """
-    Handles data extraction from raw sales source.
+    Extracts raw sales data from source.
+    Equivalent to ZCL_ETL_EXTRACTOR ABAP class.
     """
-    
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
+
+    def __init__(self, logger: ETLLogger, config: ETLConfig):
         """
-        Initialize extractor.
+        Initialize extractor with logger and configuration.
         
         Args:
-            spark: SparkSession instance
-            logger: ETLLogger instance
-            config: Configuration dictionary
+            logger: ETL logger instance
+            config: ETL configuration instance
         """
-        self.spark = spark
         self.logger = logger
         self.config = config
-    
-    @staticmethod
-    def get_raw_sales_schema() -> StructType:
+        self.spark = SparkSession.getActiveSession()
+        if not self.spark:
+            raise RuntimeError("No active Spark session found")
+
+    def get_raw_sales_schema(self) -> StructType:
         """
         Define schema for raw sales data.
+        Equivalent to ty_raw_sales structure in ABAP.
         
         Returns:
-            StructType schema definition
+            StructType schema for raw sales DataFrame
         """
         return StructType([
             StructField("trans_id", StringType(), False),
@@ -49,88 +54,152 @@ class Extractor:
             StructField("region", StringType(), True),
             StructField("status", StringType(), False)
         ])
-    
-    def extract_data(
-        self,
-        from_date: str,
-        to_date: str
-    ) -> Tuple[bool, Optional[DataFrame]]:
+
+    def extract_data(self, from_date: str, to_date: str) -> Tuple[DataFrame, bool]:
         """
-        Extract data from source within date range.
+        Extract raw sales data from source.
+        Equivalent to extract_data method in ABAP.
         
         Args:
-            from_date: Start date (YYYY-MM-DD)
-            to_date: End date (YYYY-MM-DD)
-        
+            from_date: Start date (YYYY-MM-DD format)
+            to_date: End date (YYYY-MM-DD format)
+            
         Returns:
-            Tuple of (success flag, DataFrame or None)
+            Tuple of (sales DataFrame, success boolean)
         """
         try:
             self.logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_SUCCESS,
-                message=f"Starting extraction from {from_date} to {to_date}"
+                step='EXTRACT',
+                status='S',
+                message=f'Starting extraction from {from_date} to {to_date}'
             )
-            
-            # Create sample data for demonstration
-            raw_data = self._create_sample_data(from_date, to_date)
-            
-            # In production, would read from actual source:
-            # data_source_config = self.config.get("data_sources", {}).get("raw_sales", {})
-            # raw_data = self.spark.read \
-            #     .format(data_source_config.get("format", "parquet")) \
-            #     .schema(self.get_raw_sales_schema()) \
-            #     .load(data_source_config.get("path")) \
-            #     .filter(f"trans_date BETWEEN '{from_date}' AND '{to_date}'") \
-            #     .filter("status = 'N'")
-            
-            count = raw_data.count()
-            
+
+            # Read from configured source
+            if self.config.source_type == 'parquet':
+                raw_df = self._extract_from_parquet(from_date, to_date)
+            elif self.config.source_type == 'jdbc':
+                raw_df = self._extract_from_jdbc(from_date, to_date)
+            elif self.config.source_type == 'csv':
+                raw_df = self._extract_from_csv(from_date, to_date)
+            else:
+                raise ValueError(f"Unsupported source type: {self.config.source_type}")
+
+            # Get count
+            record_count = raw_df.count()
+
             self.logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_SUCCESS,
-                records_processed=count,
-                records_success=count,
-                message=f"Extracted {count} records successfully"
+                step='EXTRACT',
+                status='S',
+                records_processed=record_count,
+                records_success=record_count,
+                message=f'Extracted {record_count} records successfully'
             )
-            
-            return True, raw_data
-            
+
+            return raw_df, True
+
         except Exception as e:
             self.logger.log_message(
-                step=ETLLogger.STEP_EXTRACT,
-                status=ETLLogger.STATUS_ERROR,
-                message=f"Extraction failed: {str(e)}"
+                step='EXTRACT',
+                status='E',
+                message=f'Extraction failed: {str(e)}'
             )
-            return False, None
-    
-    def _create_sample_data(self, from_date: str, to_date: str) -> DataFrame:
+            return None, False
+
+    def _extract_from_parquet(self, from_date: str, to_date: str) -> DataFrame:
         """
-        Create sample data for demonstration.
+        Extract data from Parquet files.
         
         Args:
             from_date: Start date
             to_date: End date
-        
+            
         Returns:
-            Sample DataFrame
+            Raw sales DataFrame
         """
-        from decimal import Decimal
+        df = self.spark.read.parquet(self.config.source_path)
         
-        sample_data = [
-            ("T000001", datetime.strptime(from_date, "%Y-%m-%d").date(), 
-             "CUST001", "PROD001", 10, Decimal("99.99"), "USD", "John Doe", "NORTH", "N"),
-            ("T000002", datetime.strptime(from_date, "%Y-%m-%d").date(),
-             "CUST002", "PROD002", 5, Decimal("149.99"), "USD", "Jane Smith", "SOUTH", "N"),
-            ("T000003", datetime.strptime(from_date, "%Y-%m-%d").date(),
-             "CUST003", "PROD001", 20, Decimal("99.99"), "USD", "John Doe", "EAST", "N"),
-            ("T000004", datetime.strptime(from_date, "%Y-%m-%d").date(),
-             "CUST001", "PROD003", 3, Decimal("299.99"), "USD", "Bob Wilson", "WEST", "N"),
-            ("T000005", datetime.strptime(from_date, "%Y-%m-%d").date(),
-             "CUST004", "PROD002", 15, Decimal("149.99"), "USD", "Jane Smith", "SOUTH", "N")
-        ]
+        # Filter by date range and status
+        df = df.filter(
+            (F.col("trans_date").between(from_date, to_date)) &
+            (F.col("status") == "N")
+        )
         
-        return self.spark.createDataFrame(
-            sample_data,
+        return df
+
+    def _extract_from_jdbc(self, from_date: str, to_date: str) -> DataFrame:
+        """
+        Extract data from JDBC source (e.g., SAP HANA, Oracle).
+        
+        Args:
+            from_date: Start date
+            to_date: End date
+            
+        Returns:
+            Raw sales DataFrame
+        """
+        jdbc_url = self.config.jdbc_url
+        connection_properties = {
+            "user": self.config.jdbc_user,
+            "password": self.config.jdbc_password,
+            "driver": self.config.jdbc_driver
+        }
+
+        # Build query with date filter
+        query = f"""
+        (SELECT trans_id, trans_date, customer_id, product_id, quantity,
+                unit_price, currency, sales_rep, region, status
+         FROM {self.config.source_table}
+         WHERE trans_date BETWEEN '{from_date}' AND '{to_date}'
+         AND status = 'N') AS source_data
+        """
+
+        df = self.spark.read.jdbc(
+            url=jdbc_url,
+            table=query,
+            properties=connection_properties
+        )
+
+        return df
+
+    def _extract_from_csv(self, from_date: str, to_date: str) -> DataFrame:
+        """
+        Extract data from CSV files.
+        
+        Args:
+            from_date: Start date
+            to_date: End date
+            
+        Returns:
+            Raw sales DataFrame
+        """
+        df = self.spark.read.csv(
+            self.config.source_path,
+            header=True,
             schema=self.get_raw_sales_schema()
         )
+
+        # Filter by date range and status
+        df = df.filter(
+            (F.col("trans_date").between(from_date, to_date)) &
+            (F.col("status") == "N")
+        )
+
+        return df
+
+    def create_sample_data(self) -> DataFrame:
+        """
+        Create sample data for testing.
+        Equivalent to the sample data generation in ABAP extract_data.
+        
+        Returns:
+            Sample sales DataFrame
+        """
+        sample_data = [
+            ("T000001", "2024-01-15", "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N"),
+            ("T000002", "2024-01-15", "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
+            ("T000003", "2024-01-15", "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N"),
+            ("T000004", "2024-01-15", "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N"),
+            ("T000005", "2024-01-15", "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N")
+        ]
+
+        return self.spark.createDataFrame(sample_data, schema=self.get_raw_sales_schema())
