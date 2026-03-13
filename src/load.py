@@ -1,157 +1,170 @@
 """
-Load module for Sales ETL process.
-Loads transformed analytics data into target table.
+Data loading module for Sales ETL process.
+Loads transformed analytics data to target tables.
 """
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import col
 from typing import Tuple
-from pyspark.sql import SparkSession, DataFrame
-from src.logger import ETLLogger
+import logging
 
 
-class SalesLoader:
-    """Loads analytics data into target table."""
+class SalesDataLoader:
+    """Loads transformed sales analytics data to target storage."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: dict):
+    def __init__(self, spark, config: dict, logger: logging.Logger):
         """
         Initialize loader.
         
         Args:
-            spark: SparkSession instance
-            logger: ETL logger instance
+            spark: Active SparkSession
             config: Configuration dictionary
+            logger: Logger instance
         """
         self.spark = spark
-        self.logger = logger
         self.config = config
+        self.logger = logger
     
-    def load_data(
+    def load_analytics_data(
         self, 
         analytics_df: DataFrame,
-        target_table: str = "zsales_analytics",
-        update_source: bool = True
-    ) -> bool:
+        target_path: str = None
+    ) -> Tuple[bool, dict]:
         """
-        Load analytics data into target table.
+        Load analytics data to target storage.
         
         Args:
-            analytics_df: Analytics DataFrame to load
-            target_table: Target table name
-            update_source: Whether to update source status
+            analytics_df: Transformed analytics DataFrame
+            target_path: Optional override for target path
             
         Returns:
-            Success flag
+            Tuple of (success status, load statistics)
         """
         try:
-            self.logger.log_message(
-                step="LOAD",
-                status="S",
-                message="Starting data load"
-            )
+            self.logger.info("Starting data load")
             
-            total_count = analytics_df.count()
+            # Get target configuration
+            target_config = self.config.get('target', {})
+            output_path = target_path or target_config.get('analytics_table_path')
+            output_format = target_config.get('format', 'parquet')
+            write_mode = target_config.get('write_mode', 'append')
             
-            # Validate records before loading
-            valid_df = self._validate_before_load(analytics_df)
-            valid_count = valid_df.count()
-            error_count = total_count - valid_count
+            record_count = analytics_df.count()
             
-            # Write to target
-            # In production, use JDBC or appropriate connector
-            self._write_to_target(valid_df, target_table)
+            # Validate before loading
+            if not self._validate_before_load(analytics_df):
+                raise ValueError("Pre-load validation failed")
             
-            # Update source table status (simulated)
-            if update_source:
-                self._update_source_status(valid_df)
+            # Write data based on format
+            if output_format == 'parquet':
+                self._write_parquet(analytics_df, output_path, write_mode)
+            elif output_format == 'jdbc':
+                self._write_jdbc(analytics_df)
+            elif output_format == 'delta':
+                self._write_delta(analytics_df, output_path, write_mode)
+            else:
+                raise ValueError(f"Unsupported output format: {output_format}")
             
-            self.logger.log_message(
-                step="LOAD",
-                status="S",
-                records_processed=total_count,
-                records_success=valid_count,
-                records_error=error_count,
-                message=f"Loaded {valid_count} of {total_count} records"
-            )
+            stats = {
+                'records_loaded': record_count,
+                'target_path': output_path,
+                'write_mode': write_mode,
+                'format': output_format
+            }
+            
+            self.logger.info(f"Loaded {record_count} records successfully to {output_path}")
+            
+            return True, stats
+            
+        except Exception as e:
+            self.logger.error(f"Load failed: {str(e)}")
+            return False, {'error': str(e)}
+    
+    def _validate_before_load(self, df: DataFrame) -> bool:
+        """Validate data before loading."""
+        try:
+            # Check for duplicate analytics IDs
+            total_records = df.count()
+            distinct_ids = df.select('analytics_id').distinct().count()
+            
+            if total_records != distinct_ids:
+                self.logger.error(f"Duplicate analytics IDs found: {total_records - distinct_ids}")
+                return False
+            
+            # Check for required fields
+            required_fields = ['analytics_id', 'customer_id', 'product_id']
+            for field in required_fields:
+                null_count = df.filter(col(field).isNull()).count()
+                if null_count > 0:
+                    self.logger.error(f"Null values found in required field {field}")
+                    return False
             
             return True
             
         except Exception as e:
-            self.logger.log_message(
-                step="LOAD",
-                status="E",
-                message=f"Load failed: {str(e)}"
-            )
+            self.logger.error(f"Validation error: {str(e)}")
             return False
     
-    def _validate_before_load(self, df: DataFrame) -> DataFrame:
+    def _write_parquet(self, df: DataFrame, path: str, mode: str):
+        """Write data to Parquet format."""
+        partition_columns = self.config.get('target', {}).get('partition_columns', ['trans_date'])
+        
+        df.write.mode(mode).partitionBy(*partition_columns).parquet(path)
+        self.logger.info(f"Data written to Parquet: {path}")
+    
+    def _write_jdbc(self, df: DataFrame):
+        """Write data to JDBC target."""
+        jdbc_config = self.config.get('jdbc', {})
+        target_table = jdbc_config.get('target_table', 'ZSALES_ANALYTICS')
+        
+        df.write.jdbc(
+            url=jdbc_config['url'],
+            table=target_table,
+            mode='append',
+            properties={
+                'user': jdbc_config['user'],
+                'password': jdbc_config['password'],
+                'driver': jdbc_config.get('driver', 'com.sap.db.jdbc.Driver'),
+                'batchsize': jdbc_config.get('batch_size', 1000)
+            }
+        )
+        
+        self.logger.info(f"Data written to JDBC table: {target_table}")
+    
+    def _write_delta(self, df: DataFrame, path: str, mode: str):
+        """Write data to Delta Lake format."""
+        df.write.format('delta').mode(mode).save(path)
+        self.logger.info(f"Data written to Delta: {path}")
+    
+    def update_source_status(self, trans_ids: list) -> bool:
         """
-        Final validation before loading.
+        Update status of processed records in source table.
         
         Args:
-            df: DataFrame to validate
+            trans_ids: List of transaction IDs that were processed
             
         Returns:
-            Validated DataFrame
+            Success status
         """
-        from pyspark.sql import functions as F
-        
-        # Filter out any records with null required fields
-        valid_df = df.filter(
-            (F.col("analytics_id").isNotNull()) &
-            (F.col("customer_id").isNotNull()) &
-            (F.col("product_id").isNotNull()) &
-            (F.col("gross_amount") > 0) &
-            (F.col("currency").isNotNull()) &
-            (F.col("category").isin(["HIGH", "MEDIUM", "LOW"]))
-        )
-        
-        invalid_count = df.count() - valid_df.count()
-        if invalid_count > 0:
-            self.logger.log_message(
-                step="LOAD",
-                status="W",
-                message=f"Skipped {invalid_count} invalid records"
-            )
-        
-        return valid_df
-    
-    def _write_to_target(self, df: DataFrame, table_name: str) -> None:
-        """
-        Write DataFrame to target table.
-        
-        Args:
-            df: DataFrame to write
-            table_name: Target table name
-        """
-        # In production, use appropriate write method:
-        # df.write.jdbc() for JDBC
-        # df.write.saveAsTable() for Hive
-        # df.write.parquet() for file-based storage
-        
-        write_mode = self.config['load']['write_mode']
-        
-        # For demonstration, write to parquet
-        output_path = f"{self.config['load']['output_path']}/{table_name}"
-        
-        df.write.mode(write_mode).parquet(output_path)
-        
-        self.logger.log_message(
-            step="LOAD",
-            status="I",
-            message=f"Data written to {output_path}"
-        )
-    
-    def _update_source_status(self, df: DataFrame) -> None:
-        """
-        Update source table status to 'P' (Processed).
-        
-        Args:
-            df: DataFrame with loaded records
-        """
-        # In production, execute UPDATE statement on source table
-        # UPDATE zsales_raw SET status = 'P' 
-        # WHERE trans_id IN (SELECT DISTINCT trans_id FROM analytics)
-        
-        self.logger.log_message(
-            step="LOAD",
-            status="I",
-            message="Source table status updated (simulated)"
-        )
+        try:
+            # For JDBC sources, update status
+            jdbc_config = self.config.get('jdbc', {})
+            if jdbc_config:
+                source_table = jdbc_config.get('source_table', 'ZSALES_RAW')
+                
+                # In production, execute UPDATE statement
+                # This is a placeholder for the actual update logic
+                self.logger.info(f"Would update {len(trans_ids)} records in {source_table} to status 'P'")
+                
+                # Actual JDBC update would be done through JDBC connection
+                # or by using Delta Lake MERGE operation
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Status update failed: {str(e)}")
+            return False
+
+
+def create_loader(spark, config: dict, logger: logging.Logger) -> SalesDataLoader:
+    """Factory function to create loader instance."""
+    return SalesDataLoader(spark, config, logger)
