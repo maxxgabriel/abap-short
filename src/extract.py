@@ -1,50 +1,34 @@
 """
-PySpark Data Extraction Module
-Extracts raw sales data from source tables.
+Extract module for Sales ETL process.
+Extracts raw sales data from source system.
 """
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, lit
-from pyspark.sql.types import (
-    StructType, StructField, StringType, DateType, 
-    IntegerType, DecimalType, TimestampType
-)
-from typing import Dict, Optional
+from pyspark.sql.types import StructType, StructField, StringType, DateType, IntegerType, DecimalType
 from datetime import datetime
-
-from src.logger import ETLLogger
-from src.exceptions import ExtractionError
+import logging
 
 
-class DataExtractor:
-    """
-    Extracts raw sales data from source with filtering and validation.
-    """
+class SalesExtractor:
+    """Handles extraction of raw sales data."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger, config: Dict):
+    def __init__(self, spark: SparkSession, config: dict):
         """
-        Initialize the data extractor.
+        Initialize extractor.
         
         Args:
-            spark: Active SparkSession
-            logger: ETL logger instance
+            spark: SparkSession instance
             config: Configuration dictionary
         """
         self.spark = spark
-        self.logger = logger
         self.config = config
+        self.logger = logging.getLogger(__name__)
         
-        # Load configuration
-        self.source_table = config.get('source_table', 'sales_raw')
-        self.source_format = config.get('source_format', 'parquet')
-        self.source_path = config.get('source_path', '/data/sales_raw')
-        
-    def get_raw_sales_schema(self) -> StructType:
+    def get_schema(self) -> StructType:
         """
-        Define the raw sales data schema.
+        Define schema for raw sales data.
         
         Returns:
-            StructType schema for raw sales data
+            StructType schema definition
         """
         return StructType([
             StructField("trans_id", StringType(), False),
@@ -55,65 +39,46 @@ class DataExtractor:
             StructField("unit_price", DecimalType(16, 2), False),
             StructField("currency", StringType(), False),
             StructField("sales_rep", StringType(), True),
-            StructField("region", StringType(), False),
-            StructField("status", StringType(), False),
-            StructField("created_at", TimestampType(), True),
-            StructField("created_by", StringType(), True)
+            StructField("region", StringType(), True),
+            StructField("status", StringType(), False)
         ])
     
     def extract_data(self, from_date: str, to_date: str) -> DataFrame:
         """
-        Extract raw sales data for the specified date range.
+        Extract sales data from source.
         
         Args:
-            from_date: Start date (YYYY-MM-DD format)
-            to_date: End date (YYYY-MM-DD format)
+            from_date: Start date (YYYY-MM-DD)
+            to_date: End date (YYYY-MM-DD)
             
         Returns:
             DataFrame containing raw sales data
-            
-        Raises:
-            ExtractionError: If extraction fails
         """
+        self.logger.info(f"Starting extraction from {from_date} to {to_date}")
+        
         try:
-            self.logger.log_message(
-                step='EXTRACT',
-                status='S',
-                message=f'Starting extraction from {from_date} to {to_date}'
+            source_path = self.config['extract']['source_path']
+            source_format = self.config['extract']['source_format']
+            
+            # Read data with schema
+            df = self.spark.read \
+                .format(source_format) \
+                .schema(self.get_schema()) \
+                .option("header", "true") \
+                .load(source_path)
+            
+            # Filter by date range and status
+            filtered_df = df.filter(
+                (df.trans_date >= from_date) & 
+                (df.trans_date <= to_date) &
+                (df.status == 'N')
             )
             
-            # Read from source
-            if self.config.get('use_table', False):
-                df = self.spark.table(self.source_table)
-            else:
-                df = self.spark.read \
-                    .format(self.source_format) \
-                    .schema(self.get_raw_sales_schema()) \
-                    .load(self.source_path)
+            record_count = filtered_df.count()
+            self.logger.info(f"Extracted {record_count} records successfully")
             
-            # Apply filters
-            df_filtered = df.filter(
-                (col('trans_date').between(from_date, to_date)) &
-                (col('status') == 'N')  # Only new records
-            )
-            
-            # Count records
-            record_count = df_filtered.count()
-            
-            self.logger.log_message(
-                step='EXTRACT',
-                status='S',
-                records_processed=record_count,
-                records_success=record_count,
-                message=f'Extracted {record_count} records successfully'
-            )
-            
-            return df_filtered
+            return filtered_df
             
         except Exception as e:
-            self.logger.log_message(
-                step='EXTRACT',
-                status='E',
-                message=f'Extraction failed: {str(e)}'
-            )
-            raise ExtractionError(f"Data extraction failed: {str(e)}") from e
+            self.logger.error(f"Extraction failed: {str(e)}")
+            raise
