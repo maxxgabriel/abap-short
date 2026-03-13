@@ -1,187 +1,175 @@
 """
-Unit tests for Configuration Manager
+Unit tests for ConfigurationManager
 """
 
 import pytest
 import tempfile
-import yaml
+import os
 from pathlib import Path
-from src.config_manager import ConfigManager
+from src.config_manager import ConfigurationManager, get_config
 
 
 @pytest.fixture
 def sample_config():
-    """Sample configuration for testing."""
-    return {
-        'spark': {
-            'app_name': 'Test_ETL',
-            'master': 'local[*]'
-        },
-        'database': {
-            'jdbc': {
-                'host': 'localhost',
-                'port': 5432
-            }
-        },
-        'etl': {
-            'batch_size': 500,
-            'retry_attempts': 2
-        },
-        'logging': {
-            'level': 'DEBUG',
-            'log_dir': 'test_logs'
-        },
-        'business_rules': {
-            'tax_rate': 0.10,
-            'category': {
-                'high_threshold': 1000.00
-            }
-        }
-    }
+    """Create sample configuration content."""
+    return """
+app_name: "Test_ETL"
+version: "1.0.0"
+
+database:
+  host: "localhost"
+  port: 5432
+  database: "test_db"
+  user: "test_user"
+
+etl:
+  batch_size: 1000
+  parallel_jobs: 4
+  retry_attempts: 3
+
+business_rules:
+  discount:
+    tier1:
+      quantity_threshold: 10
+      rate: 0.05
+  tax:
+    rate: 0.08
+
+logging:
+  level: "INFO"
+  log_dir: "logs"
+"""
 
 
 @pytest.fixture
 def config_file(sample_config):
     """Create temporary config file."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        yaml.dump(sample_config, f)
-        config_path = f.name
+        f.write(sample_config)
+        temp_path = f.name
     
-    yield config_path
+    yield temp_path
     
     # Cleanup
-    Path(config_path).unlink()
+    os.unlink(temp_path)
 
 
-class TestConfigManager:
-    """Test cases for ConfigManager class."""
-    
-    def test_singleton_pattern(self):
-        """Test that ConfigManager implements singleton pattern."""
-        config1 = ConfigManager()
-        config2 = ConfigManager()
-        assert config1 is config2
+class TestConfigurationManager:
+    """Test cases for ConfigurationManager."""
     
     def test_load_config_success(self, config_file):
         """Test successful configuration loading."""
-        config = ConfigManager()
-        config._load_config(config_file)
+        config_mgr = ConfigurationManager(config_file)
         
-        assert config.get('spark.app_name') == 'Test_ETL'
-        assert config.get('database.jdbc.host') == 'localhost'
+        assert config_mgr.get("app_name") == "Test_ETL"
+        assert config_mgr.get("version") == "1.0.0"
     
     def test_load_config_file_not_found(self):
-        """Test configuration loading with non-existent file."""
-        config = ConfigManager()
-        
+        """Test error when config file doesn't exist."""
         with pytest.raises(FileNotFoundError):
-            config._load_config('nonexistent.yaml')
+            ConfigurationManager("nonexistent.yaml")
     
-    def test_get_with_dot_notation(self, config_file):
-        """Test getting config values with dot notation."""
-        config = ConfigManager()
-        config._load_config(config_file)
+    def test_get_nested_value_dot_notation(self, config_file):
+        """Test getting nested values with dot notation."""
+        config_mgr = ConfigurationManager(config_file)
         
-        assert config.get('spark.app_name') == 'Test_ETL'
-        assert config.get('database.jdbc.port') == 5432
-        assert config.get('etl.batch_size') == 500
+        assert config_mgr.get("database.host") == "localhost"
+        assert config_mgr.get("database.port") == 5432
+        assert config_mgr.get("etl.batch_size") == 1000
     
     def test_get_with_default(self, config_file):
-        """Test getting config with default value."""
-        config = ConfigManager()
-        config._load_config(config_file)
+        """Test getting value with default."""
+        config_mgr = ConfigurationManager(config_file)
         
-        assert config.get('nonexistent.key', 'default_value') == 'default_value'
-        assert config.get('spark.nonexistent', 100) == 100
-    
-    def test_get_spark_config(self, config_file):
-        """Test getting Spark configuration section."""
-        config = ConfigManager()
-        config._load_config(config_file)
-        
-        spark_config = config.get_spark_config()
-        assert spark_config['app_name'] == 'Test_ETL'
-        assert spark_config['master'] == 'local[*]'
+        result = config_mgr.get("nonexistent.key", "default_value")
+        assert result == "default_value"
     
     def test_get_database_config(self, config_file):
-        """Test getting database configuration section."""
-        config = ConfigManager()
-        config._load_config(config_file)
+        """Test getting database configuration."""
+        config_mgr = ConfigurationManager(config_file)
+        db_config = config_mgr.get_database_config()
         
-        db_config = config.get_database_config()
-        assert db_config['jdbc']['host'] == 'localhost'
-        assert db_config['jdbc']['port'] == 5432
+        assert db_config["host"] == "localhost"
+        assert db_config["port"] == 5432
+        assert db_config["database"] == "test_db"
     
     def test_get_etl_config(self, config_file):
-        """Test getting ETL configuration section."""
-        config = ConfigManager()
-        config._load_config(config_file)
+        """Test getting ETL configuration."""
+        config_mgr = ConfigurationManager(config_file)
+        etl_config = config_mgr.get_etl_config()
         
-        etl_config = config.get_etl_config()
-        assert etl_config['batch_size'] == 500
-        assert etl_config['retry_attempts'] == 2
+        assert etl_config["batch_size"] == 1000
+        assert etl_config["parallel_jobs"] == 4
+        assert etl_config["retry_attempts"] == 3
     
-    def test_get_batch_size(self, config_file):
-        """Test getting batch size configuration."""
-        config = ConfigManager()
-        config._load_config(config_file)
+    def test_get_business_rules(self, config_file):
+        """Test getting business rules configuration."""
+        config_mgr = ConfigurationManager(config_file)
+        rules = config_mgr.get_business_rules()
         
-        assert config.get_batch_size() == 500
+        assert rules["discount"]["tier1"]["quantity_threshold"] == 10
+        assert rules["discount"]["tier1"]["rate"] == 0.05
+        assert rules["tax"]["rate"] == 0.08
     
-    def test_get_batch_size_default(self):
-        """Test batch size with default value."""
-        config = ConfigManager()
-        config._config = {'etl': {}}  # No batch_size configured
+    def test_get_logging_config(self, config_file):
+        """Test getting logging configuration."""
+        config_mgr = ConfigurationManager(config_file)
+        log_config = config_mgr.get_logging_config()
         
-        assert config.get_batch_size() == 1000  # Default value
+        assert log_config["level"] == "INFO"
+        assert log_config["log_dir"] == "logs"
     
-    def test_get_retry_attempts(self, config_file):
-        """Test getting retry attempts configuration."""
-        config = ConfigManager()
-        config._load_config(config_file)
+    def test_get_all_config(self, config_file):
+        """Test getting entire configuration."""
+        config_mgr = ConfigurationManager(config_file)
+        all_config = config_mgr.get_all()
         
-        assert config.get_retry_attempts() == 2
+        assert "app_name" in all_config
+        assert "database" in all_config
+        assert "etl" in all_config
     
-    def test_get_category_thresholds(self, config_file):
-        """Test getting category thresholds."""
-        config = ConfigManager()
-        config._load_config(config_file)
+    def test_env_override_database(self, config_file, monkeypatch):
+        """Test environment variable override for database config."""
+        monkeypatch.setenv("DB_HOST", "prod-server")
+        monkeypatch.setenv("DB_PORT", "5433")
         
-        thresholds = config.get_category_thresholds()
-        assert thresholds['high'] == 1000.00
-        assert 'medium' in thresholds
+        config_mgr = ConfigurationManager(config_file)
+        
+        assert config_mgr.get("database.host") == "prod-server"
+        assert config_mgr.get("database.port") == 5433
     
-    def test_get_tax_rate(self, config_file):
-        """Test getting tax rate."""
-        config = ConfigManager()
-        config._load_config(config_file)
+    def test_env_override_etl(self, config_file, monkeypatch):
+        """Test environment variable override for ETL config."""
+        monkeypatch.setenv("BATCH_SIZE", "2000")
+        monkeypatch.setenv("PARALLEL_JOBS", "8")
         
-        assert config.get_tax_rate() == 0.10
-    
-    def test_validate_config_missing_sections(self):
-        """Test configuration validation with missing sections."""
-        config = ConfigManager()
-        config._config = {
-            'spark': {},
-            'database': {}
-            # Missing 'etl' and 'logging' sections
-        }
+        config_mgr = ConfigurationManager(config_file)
         
-        with pytest.raises(ValueError, match="Missing required configuration sections"):
-            config._validate_config()
+        assert config_mgr.get("etl.batch_size") == 2000
+        assert config_mgr.get("etl.parallel_jobs") == 8
     
     def test_reload_config(self, config_file):
         """Test reloading configuration."""
-        config = ConfigManager()
-        config._load_config(config_file)
+        config_mgr = ConfigurationManager(config_file)
         
-        original_batch_size = config.get_batch_size()
+        original_value = config_mgr.get("app_name")
         
-        # Reload with same file
-        config.reload_config(config_file)
+        # Modify the config file
+        with open(config_file, 'a') as f:
+            f.write("\nnew_key: 'new_value'\n")
         
-        assert config.get_batch_size() == original_batch_size
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+        config_mgr.reload()
+        
+        assert config_mgr.get("app_name") == original_value
+        assert config_mgr.get("new_key") == "new_value"
+    
+    def test_get_config_singleton(self, config_file):
+        """Test global config instance."""
+        # Reset global instance
+        import src.config_manager as cm
+        cm._config_instance = None
+        
+        config1 = get_config(config_file)
+        config2 = get_config()
+        
+        assert config1 is config2
