@@ -1,141 +1,98 @@
 # ETL Configuration
-# Migrated from ABAP $ZETL package configuration
-
-# Spark Configuration
-spark:
-  app_name: "SalesETL"
-  master: "local[*]"
-  config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.legacy.timeParserPolicy: "LEGACY"
-
-# Data Sources
-data_sources:
-  raw_sales:
-    format: "parquet"
-    path: "data/input/raw_sales"
-    # Alternative: JDBC for ABAP source tables
-    # jdbc_url: "jdbc:sap://hostname:port"
-    # table: "ZSALES_RAW"
-  
-  analytics:
-    format: "parquet"
-    path: "data/output/analytics"
-    mode: "overwrite"  # append, overwrite, error, ignore
-    partition_by: ["trans_date", "region"]
-  
-  etl_log:
-    format: "parquet"
-    path: "data/output/etl_log"
-    mode: "append"
-
-# Business Rules (from ZCL_ETL_CONSTANTS)
-business_rules:
-  discount:
-    qty_tier1: 10
-    qty_tier2: 15
-    rate_tier1: 0.05
-    rate_tier2: 0.10
-  
-  tax_rate: 0.08
-  cost_ratio: 0.60
-  
-  category_thresholds:
-    high: 2000.00
-    medium: 500.00
-
-# ETL Processing Configuration
-etl_config:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  parallel_jobs: 4
-  
-  # Date range defaults (days back from current date)
-  default_lookback_days: 7
+# Converted from ABAP constants in ZCL_ETL_CONSTANTS
 
 # Status Codes
 status_codes:
-  new: "N"
-  processed: "P"
-  error: "E"
-  warning: "W"
-  success: "S"
-  info: "I"
+  new: 'N'
+  processed: 'P'
+  error: 'E'
+  warning: 'W'
+  success: 'S'
+  info: 'I'
 
-# Validation Rules
-validation:
-  required_fields:
-    raw_sales:
-      - trans_id
-      - trans_date
-      - customer_id
-      - product_id
-      - quantity
-      - unit_price
-      - currency
-    
-    analytics:
-      - analytics_id
-      - customer_id
-      - product_id
-      - gross_amount
-      - currency
-      - category
-  
-  field_constraints:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: 0.01
-      max: 999999.99
-    gross_amount:
-      min: 0.01
+# ETL Process Steps
+process_steps:
+  init: 'INIT'
+  extract: 'EXTRACT'
+  transform: 'TRANSFORM'
+  load: 'LOAD'
+  validate: 'VALIDATE'
+  complete: 'COMPLETE'
+  error: 'ERROR'
+
+# Sale Categories
+sale_categories:
+  high: 'HIGH'
+  medium: 'MEDIUM'
+  low: 'LOW'
+
+# Business Rules - Discounts
+discount_rules:
+  quantity_tier1: 10
+  quantity_tier2: 15
+  rate_tier1: 0.05
+  rate_tier2: 0.10
+
+# Business Rules - Tax
+tax_rules:
+  tax_rate: 0.08
+
+# Business Rules - Cost
+cost_rules:
+  cost_ratio: 0.60
+
+# Business Rules - Categories
+category_thresholds:
+  high: 2000.00
+  medium: 500.00
+
+# ETL Configuration
+etl_config:
+  default_batch_size: 1000
+  default_commit_interval: 500
+  default_retry_attempts: 3
+  default_timeout_seconds: 3600
+  parallel_jobs: 4
+
+# ID Prefixes
+id_prefixes:
+  etl_run: 'ETL'
+  log_id: 'LOG'
+  analytics_id: 'ANL'
 
 # Logging Configuration
 logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/etl.log"
-  console: true
+  level: 'INFO'
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  log_dir: 'logs'
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
 
-# ID Generation
-id_generation:
-  prefixes:
-    etl_run: "ETL"
-    log_id: "LOG"
-    analytics_id: "ANL"
+# Spark Configuration
+spark:
+  app_name: 'Sales ETL System'
+  master: 'local[*]'
+  config:
+    spark.sql.shuffle.partitions: 200
+    spark.executor.memory: '4g'
+    spark.driver.memory: '2g'
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
+
+# Database Configuration
+database:
+  source_table: 'zsales_raw'
+  target_table: 'zsales_analytics'
+  log_table: 'zetl_log'
   
-  timestamp_format: "%Y%m%d%H%M%S"
-
-# Performance Tuning
-performance:
-  cache_enabled: true
-  checkpoint_enabled: false
-  checkpoint_dir: "data/checkpoint"
-  
-  repartition:
-    enabled: true
-    num_partitions: 20
-
-# Error Handling
-error_handling:
-  continue_on_error: false
-  max_errors_per_batch: 100
-  error_output_path: "data/output/errors"
-
 # Message Templates
 messages:
-  init_success: "ETL process initialized successfully"
-  extract_start: "Starting data extraction"
-  extract_complete: "Data extraction completed"
-  transform_start: "Starting data transformation"
-  transform_complete: "Data transformation completed"
-  load_start: "Starting data load"
-  load_complete: "Data load completed"
-  etl_complete: "ETL process completed successfully"
-  etl_error: "ETL process failed"
+  init_success: 'ETL process initialized successfully'
+  extract_start: 'Starting data extraction'
+  extract_complete: 'Data extraction completed'
+  transform_start: 'Starting data transformation'
+  transform_complete: 'Data transformation completed'
+  load_start: 'Starting data load'
+  load_complete: 'Data load completed'
+  etl_complete: 'ETL process completed successfully'
+  etl_error: 'ETL process failed'
