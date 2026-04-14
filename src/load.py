@@ -1,152 +1,329 @@
 """
-Data loading component.
-Migrated from ABAP ZCL_ETL_LOADER class.
+PySpark Data Loading Module
+Loads transformed analytics data into target storage.
 """
-from typing import Tuple
+
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
+from typing import Optional
+import logging
 
-from src.constants import ProcessStep, StatusCode, SaleCategory
-from src.logger import ETLLogger
 
-
-class ETLLoader:
-    """
-    Loads transformed data into target analytics table.
-    """
+class SalesDataLoader:
+    """Loads transformed analytics data into target storage."""
     
-    def __init__(self, spark: SparkSession, logger: ETLLogger):
+    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger):
         """
-        Initialize loader.
+        Initialize the loader.
         
         Args:
-            spark: Active SparkSession
-            logger: ETL logger instance
+            spark: SparkSession instance
+            config: Configuration dictionary
+            logger: Logger instance
         """
         self.spark = spark
+        self.config = config
         self.logger = logger
     
     def load_data(
         self,
         analytics_df: DataFrame,
-        target_path: str,
+        target_path: Optional[str] = None,
         mode: str = "append"
-    ) -> bool:
+    ) -> dict:
         """
-        Load transformed data to target.
+        Load analytics data to target storage.
         
         Args:
-            analytics_df: DataFrame with analytics data
-            target_path: Target path for data storage
-            mode: Write mode (append, overwrite, etc.)
+            analytics_df: Analytics DataFrame to load
+            target_path: Optional target path (overrides config)
+            mode: Write mode (append, overwrite, error, ignore)
             
         Returns:
-            Success flag
+            Dictionary with load statistics
         """
         try:
-            self.logger.log_message(
-                step=ProcessStep.LOAD.value,
-                status=StatusCode.INFO.value,
-                message="Starting data load"
-            )
+            self.logger.info("Starting data load")
             
-            # Validate records
-            valid_df = self._validate_records(analytics_df)
+            # Validate data before loading
+            validation_results = self._validate_before_load(analytics_df)
             
-            total_count = analytics_df.count()
-            valid_count = valid_df.count()
-            error_count = total_count - valid_count
-            
-            if error_count > 0:
-                self.logger.log_message(
-                    step=ProcessStep.LOAD.value,
-                    status=StatusCode.WARNING.value,
-                    message=f"Skipped {error_count} invalid records"
+            if validation_results["invalid_records"] > 0:
+                self.logger.warning(
+                    f"Found {validation_results['invalid_records']} invalid records"
                 )
             
-            # Write to target
-            valid_df.write.mode(mode).parquet(target_path)
+            # Get target configuration
+            path = target_path or self.config.get("target_path")
+            target_format = self.config.get("target_format", "parquet")
+            partition_cols = self.config.get("partition_columns", ["trans_date"])
             
-            self.logger.log_message(
-                step=ProcessStep.LOAD.value,
-                status=StatusCode.SUCCESS.value,
-                message=f"Loaded {valid_count} of {total_count} records",
-                records_processed=total_count,
-                records_success=valid_count,
-                records_error=error_count
+            # Write data
+            writer = analytics_df.write \
+                .format(target_format) \
+                .mode(mode)
+            
+            # Add partitioning if configured
+            if partition_cols:
+                writer = writer.partitionBy(*partition_cols)
+            
+            # Add compression if configured
+            compression = self.config.get("compression")
+            if compression:
+                writer = writer.option("compression", compression)
+            
+            writer.save(path)
+            
+            record_count = analytics_df.count()
+            
+            self.logger.info(
+                f"Loaded {record_count} records to {path}"
             )
             
-            return True
+            return {
+                "success": True,
+                "records_loaded": record_count,
+                "target_path": path,
+                "format": target_format,
+                "mode": mode,
+                "validation": validation_results
+            }
             
         except Exception as e:
-            self.logger.log_message(
-                step=ProcessStep.LOAD.value,
-                status=StatusCode.ERROR.value,
-                message=f"Load failed: {str(e)}"
-            )
-            return False
+            self.logger.error(f"Load failed: {str(e)}")
+            raise
     
-    def _validate_records(self, df: DataFrame) -> DataFrame:
+    def load_with_deduplication(
+        self,
+        analytics_df: DataFrame,
+        target_path: Optional[str] = None
+    ) -> dict:
         """
-        Validate records before loading.
+        Load data with deduplication based on analytics_id.
         
         Args:
-            df: Input DataFrame
+            analytics_df: Analytics DataFrame
+            target_path: Optional target path
             
         Returns:
-            DataFrame with only valid records
+            Load statistics dictionary
         """
-        # Validate required fields
-        valid_df = df.filter(
-            F.col("analytics_id").isNotNull() &
-            F.col("customer_id").isNotNull() &
-            F.col("product_id").isNotNull() &
-            (F.col("gross_amount") > 0) &
-            F.col("currency").isNotNull() &
-            F.col("category").isin([c.value for c in SaleCategory])
-        )
+        try:
+            # Remove duplicates based on analytics_id
+            deduplicated_df = analytics_df.dropDuplicates(["analytics_id"])
+            
+            original_count = analytics_df.count()
+            deduplicated_count = deduplicated_df.count()
+            duplicates_removed = original_count - deduplicated_count
+            
+            if duplicates_removed > 0:
+                self.logger.warning(
+                    f"Removed {duplicates_removed} duplicate records"
+                )
+            
+            # Load deduplicated data
+            result = self.load_data(deduplicated_df, target_path)
+            result["duplicates_removed"] = duplicates_removed
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Deduplication load failed: {str(e)}")
+            raise
+    
+    def load_incremental(
+        self,
+        analytics_df: DataFrame,
+        target_path: Optional[str] = None
+    ) -> dict:
+        """
+        Load data incrementally, updating existing records.
         
-        return valid_df
+        Args:
+            analytics_df: Analytics DataFrame
+            target_path: Optional target path
+            
+        Returns:
+            Load statistics dictionary
+        """
+        try:
+            path = target_path or self.config.get("target_path")
+            
+            # Check if target exists
+            try:
+                existing_df = self.spark.read.parquet(path)
+                
+                # Merge logic: remove existing records with same analytics_id
+                merged_df = existing_df.filter(
+                    ~F.col("analytics_id").isin(
+                        [row.analytics_id for row in analytics_df.select("analytics_id").collect()]
+                    )
+                ).union(analytics_df)
+                
+                # Overwrite with merged data
+                result = self.load_data(merged_df, target_path, mode="overwrite")
+                result["load_type"] = "incremental_merge"
+                
+            except Exception:
+                # Target doesn't exist, do initial load
+                result = self.load_data(analytics_df, target_path, mode="overwrite")
+                result["load_type"] = "initial_load"
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Incremental load failed: {str(e)}")
+            raise
+    
+    def load_to_multiple_targets(
+        self,
+        analytics_df: DataFrame,
+        targets: list
+    ) -> dict:
+        """
+        Load data to multiple target locations.
+        
+        Args:
+            analytics_df: Analytics DataFrame
+            targets: List of target configurations
+            
+        Returns:
+            Dictionary with results for each target
+        """
+        results = {}
+        
+        for idx, target in enumerate(targets):
+            try:
+                target_name = target.get("name", f"target_{idx}")
+                target_path = target.get("path")
+                target_format = target.get("format", "parquet")
+                mode = target.get("mode", "append")
+                
+                self.logger.info(f"Loading to target: {target_name}")
+                
+                analytics_df.write \
+                    .format(target_format) \
+                    .mode(mode) \
+                    .save(target_path)
+                
+                results[target_name] = {
+                    "success": True,
+                    "path": target_path,
+                    "format": target_format
+                }
+                
+            except Exception as e:
+                self.logger.error(f"Failed to load to {target_name}: {str(e)}")
+                results[target_name] = {
+                    "success": False,
+                    "error": str(e)
+                }
+        
+        return results
     
     def update_source_status(
         self,
-        source_path: str,
+        raw_df: DataFrame,
         processed_ids: list,
-        new_status: str = StatusCode.PROCESSED.value
-    ) -> bool:
+        source_path: str
+    ) -> None:
         """
-        Update status of processed records in source.
+        Update status of processed records in source table.
+        Simulates ABAP UPDATE statement.
         
         Args:
-            source_path: Source data path
+            raw_df: Original raw DataFrame
             processed_ids: List of processed transaction IDs
-            new_status: New status value
-            
-        Returns:
-            Success flag
+            source_path: Path to source data
         """
         try:
-            # Read source data
-            source_df = self.spark.read.parquet(source_path)
-            
-            # Update status for processed records
-            updated_df = source_df.withColumn(
+            # Update status to 'P' (Processed) for processed records
+            updated_df = raw_df.withColumn(
                 "status",
                 F.when(
                     F.col("trans_id").isin(processed_ids),
-                    F.lit(new_status)
+                    F.lit("P")
                 ).otherwise(F.col("status"))
             )
             
-            # Write back
-            updated_df.write.mode("overwrite").parquet(source_path)
+            # Write back to source (in practice, this might be a database update)
+            updated_df.write \
+                .format(self.config.get("source_format", "parquet")) \
+                .mode("overwrite") \
+                .save(source_path)
             
-            return True
+            self.logger.info(
+                f"Updated status for {len(processed_ids)} records in source"
+            )
             
         except Exception as e:
-            self.logger.log_message(
-                step=ProcessStep.LOAD.value,
-                status=StatusCode.WARNING.value,
-                message=f"Failed to update source status: {str(e)}"
-            )
-            return False
+            self.logger.error(f"Failed to update source status: {str(e)}")
+            raise
+    
+    def _validate_before_load(self, analytics_df: DataFrame) -> dict:
+        """
+        Validate data before loading.
+        
+        Args:
+            analytics_df: Analytics DataFrame
+            
+        Returns:
+            Validation results dictionary
+        """
+        total_records = analytics_df.count()
+        
+        # Check for required fields
+        null_ids = analytics_df.filter(F.col("analytics_id").isNull()).count()
+        null_customers = analytics_df.filter(F.col("customer_id").isNull()).count()
+        null_products = analytics_df.filter(F.col("product_id").isNull()).count()
+        
+        # Check for invalid amounts
+        invalid_gross = analytics_df.filter(F.col("gross_amount") <= 0).count()
+        invalid_net = analytics_df.filter(F.col("net_amount") <= 0).count()
+        
+        # Check for invalid categories
+        invalid_categories = analytics_df.filter(
+            ~F.col("category").isin(["HIGH", "MEDIUM", "LOW"])
+        ).count()
+        
+        invalid_records = (
+            null_ids + null_customers + null_products +
+            invalid_gross + invalid_net + invalid_categories
+        )
+        
+        return {
+            "total_records": total_records,
+            "valid_records": total_records - invalid_records,
+            "invalid_records": invalid_records,
+            "null_ids": null_ids,
+            "null_customers": null_customers,
+            "null_products": null_products,
+            "invalid_gross_amounts": invalid_gross,
+            "invalid_net_amounts": invalid_net,
+            "invalid_categories": invalid_categories
+        }
+    
+    def create_summary_report(self, analytics_df: DataFrame) -> DataFrame:
+        """
+        Create summary report for loaded data.
+        
+        Args:
+            analytics_df: Analytics DataFrame
+            
+        Returns:
+            Summary DataFrame
+        """
+        summary = analytics_df.agg(
+            F.count("analytics_id").alias("total_transactions"),
+            F.sum("total_quantity").alias("total_quantity_sold"),
+            F.sum("gross_amount").alias("total_gross_amount"),
+            F.sum("net_amount").alias("total_net_amount"),
+            F.sum("discount_amount").alias("total_discount"),
+            F.sum("tax_amount").alias("total_tax"),
+            F.avg("profit_margin").alias("avg_profit_margin"),
+            F.countDistinct("customer_id").alias("unique_customers"),
+            F.countDistinct("product_id").alias("unique_products"),
+            F.countDistinct("region").alias("regions_count")
+        )
+        
+        return summary
