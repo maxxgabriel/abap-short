@@ -1,131 +1,63 @@
-# ETL Configuration for Sales Data Processing with Validation
+# ETL Logging Configuration
 
-# Spark Configuration
-spark:
-  app_name: "Sales ETL with Validation"
-  master: "local[*]"
-  config:
-    spark.sql.shuffle.partitions: 200
-    spark.sql.adaptive.enabled: true
-    spark.sql.adaptive.coalescePartitions.enabled: true
-
-# Source Configuration
-source:
-  type: "parquet"  # Options: parquet, csv, jdbc
-  path: "data/raw/sales"
-  jdbc:
-    url: "jdbc:sap://hostname:30015"
-    table: "zsales_raw"
-    user: "etl_user"
-    password: "${ETL_DB_PASSWORD}"
-    driver: "com.sap.db.jdbc.Driver"
-
-# Target Configuration
-target:
-  type: "parquet"  # Options: parquet, csv, jdbc
-  path: "data/analytics/sales"
-  error_path: "data/errors/sales"
-  mode: "append"
-  jdbc:
-    url: "jdbc:sap://hostname:30015"
-    table: "zsales_analytics"
-    user: "etl_user"
-    password: "${ETL_DB_PASSWORD}"
-    driver: "com.sap.db.jdbc.Driver"
-
-# Validation Configuration
-validation:
-  # Required fields that must not be null or empty
-  required_fields:
-    - trans_id
-    - trans_date
-    - customer_id
-    - product_id
-    - quantity
-    - unit_price
-    - currency
-    - sales_rep
-    - region
-  
-  # Valid currency codes (ISO 4217)
-  valid_currencies:
-    - USD
-    - EUR
-    - GBP
-    - JPY
-    - CHF
-    - CAD
-    - AUD
-  
-  # Valid category enumerations
-  valid_categories:
-    - HIGH
-    - MEDIUM
-    - LOW
-  
-  # Numeric field range validations
-  numeric_ranges:
-    quantity:
-      min: 1
-      max: 10000
-    unit_price:
-      min: 0.01
-      max: 1000000.00
-    gross_amount:
-      min: 0.01
-      max: 10000000.00
-    discount_amount:
-      min: 0.00
-      max: 10000000.00
-    tax_amount:
-      min: 0.00
-      max: 10000000.00
-    net_amount:
-      min: 0.01
-      max: 10000000.00
-    profit_margin:
-      min: -100.00
-      max: 100.00
-
-# Business Rules Configuration
-business_rules:
-  # Discount tiers based on quantity
-  discount_qty_tier1: 10
-  discount_qty_tier2: 15
-  discount_rate_tier1: 0.05  # 5%
-  discount_rate_tier2: 0.10  # 10%
-  
-  # Tax rate
-  tax_rate: 0.08  # 8%
-  
-  # Cost ratio for profit calculation
-  cost_ratio: 0.60  # 60% of unit price
-  
-  # Category thresholds
-  category_high_threshold: 2000.00
-  category_medium_threshold: 500.00
-  
-  # Maximum acceptable profit margin
-  max_profit_margin: 100.00
-
-# ETL Processing Configuration
-processing:
-  batch_size: 1000
-  commit_interval: 500
-  retry_attempts: 3
-  timeout_seconds: 3600
-  enable_checkpointing: true
-  checkpoint_location: "data/checkpoints/sales_etl"
-
-# Logging Configuration
+# Logging settings
 logging:
-  level: "INFO"  # Options: DEBUG, INFO, WARN, ERROR
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/sales_etl.log"
-  console: true
+  # Console log level: DEBUG, INFO, WARNING, ERROR
+  console_level: INFO
+  
+  # Enable file-based logging
+  enable_file_logging: true
+  
+  # Log file path (if file logging enabled)
+  log_file_path: logs/etl_run.log
+  
+  # Log table path for DataFrame persistence (Delta Lake)
+  log_table_path: /data/etl_logs
+  
+  # Flush logs to storage after N entries (0 = flush at end only)
+  auto_flush_threshold: 100
 
-# Monitoring Configuration
-monitoring:
-  enable_metrics: true
-  metrics_path: "data/metrics/sales_etl"
-  alert_on_validation_failure_rate: 10.0  # Alert if >10% records fail validation
+# ETL Run ID settings
+etl_run:
+  # Prefix for ETL run IDs
+  id_prefix: ETL
+  
+  # Prefix for log IDs
+  log_id_prefix: LOG
+
+# Status codes (matching ABAP constants)
+status_codes:
+  success: S
+  error: E
+  warning: W
+  info: I
+
+# Process steps (matching ABAP constants)
+process_steps:
+  init: INIT
+  extract: EXTRACT
+  transform: TRANSFORM
+  load: LOAD
+  validate: VALIDATE
+  complete: COMPLETE
+  error: ERROR
+
+# Storage settings
+storage:
+  # Format for log persistence: delta, parquet
+  format: delta
+  
+  # Partition columns for log table
+  partition_columns:
+    - execution_date
+  
+  # Compression codec
+  compression: snappy
+
+# Performance settings
+performance:
+  # Batch size for log writes
+  batch_size: 1000
+  
+  # Enable log buffering
+  enable_buffering: true
