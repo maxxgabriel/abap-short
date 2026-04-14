@@ -1,39 +1,33 @@
 """
-PySpark Data Extraction Module
-Extracts raw sales data from source with proper schema mapping and filter conditions.
+Data extraction module for Sales ETL pipeline.
+Extracts raw sales data from source systems.
 """
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.types import (
-    StructType, StructField, StringType, DateType, IntegerType, DecimalType
-)
-from pyspark.sql import functions as F
-from datetime import datetime
-from typing import Optional
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
+from typing import Tuple
 import logging
+from datetime import datetime
 
 
-class SalesDataExtractor:
-    """Extracts raw sales data from source tables."""
+class SalesExtractor:
+    """Handles extraction of raw sales data."""
     
-    def __init__(self, spark: SparkSession, config: dict, logger: logging.Logger):
+    def __init__(self, spark: SparkSession, logger: logging.Logger):
         """
         Initialize the extractor.
         
         Args:
-            spark: SparkSession instance
-            config: Configuration dictionary
-            logger: Logger instance
+            spark: Active SparkSession
+            logger: Logger instance for tracking operations
         """
         self.spark = spark
-        self.config = config
         self.logger = logger
-        self.raw_sales_schema = self._define_raw_sales_schema()
+        self.schema = self._define_schema()
     
-    def _define_raw_sales_schema(self) -> StructType:
+    def _define_schema(self) -> StructType:
         """
-        Define schema for raw sales data table.
-        Corresponds to ZSALES_RAW table structure.
+        Define the schema for raw sales data.
         
         Returns:
             StructType schema definition
@@ -48,184 +42,77 @@ class SalesDataExtractor:
             StructField("currency", StringType(), nullable=False),
             StructField("sales_rep", StringType(), nullable=True),
             StructField("region", StringType(), nullable=True),
-            StructField("status", StringType(), nullable=False),
-            StructField("created_at", StringType(), nullable=True),
-            StructField("created_by", StringType(), nullable=True)
+            StructField("status", StringType(), nullable=False)
         ])
     
     def extract_data(
         self,
+        source_path: str,
         from_date: str,
         to_date: str,
-        source_path: Optional[str] = None
-    ) -> DataFrame:
+        source_format: str = "parquet"
+    ) -> Tuple[DataFrame, bool]:
         """
-        Extract raw sales data with date range filter.
-        Equivalent to ABAP SELECT with WHERE clause.
+        Extract raw sales data from source.
         
         Args:
-            from_date: Start date (YYYY-MM-DD format)
-            to_date: End date (YYYY-MM-DD format)
-            source_path: Optional path to source data (overrides config)
-            
+            source_path: Path to source data
+            from_date: Start date for extraction (YYYY-MM-DD)
+            to_date: End date for extraction (YYYY-MM-DD)
+            source_format: Format of source data (parquet, csv, delta, etc.)
+        
         Returns:
-            DataFrame containing filtered raw sales data
-            
-        Raises:
-            Exception: If extraction fails
+            Tuple of (DataFrame with extracted data, success flag)
         """
         try:
-            self.logger.info(
-                f"Starting extraction from {from_date} to {to_date}"
+            self.logger.info(f"Starting extraction from {from_date} to {to_date}")
+            self.logger.info(f"Source path: {source_path}")
+            
+            # Read source data
+            df = self.spark.read.format(source_format).schema(self.schema).load(source_path)
+            
+            # Filter by date range and status
+            df_filtered = df.filter(
+                (df.trans_date >= from_date) &
+                (df.trans_date <= to_date) &
+                (df.status == "N")
             )
             
-            # Get source path from config or parameter
-            path = source_path or self.config.get("source_path")
-            source_format = self.config.get("source_format", "parquet")
+            record_count = df_filtered.count()
             
-            # Read source data with schema
-            df = self.spark.read \
-                .format(source_format) \
-                .schema(self.raw_sales_schema) \
-                .load(path)
+            self.logger.info(f"Extracted {record_count} records successfully")
             
-            # Apply filters (equivalent to ABAP WHERE clause)
-            filtered_df = df.filter(
-                (F.col("trans_date") >= F.lit(from_date)) &
-                (F.col("trans_date") <= F.lit(to_date)) &
-                (F.col("status") == F.lit("N"))  # Only new records
-            )
-            
-            # Cache for performance if configured
-            if self.config.get("cache_extracted_data", False):
-                filtered_df = filtered_df.cache()
-            
-            record_count = filtered_df.count()
-            
-            self.logger.info(
-                f"Extracted {record_count} records successfully"
-            )
-            
-            return filtered_df
+            return df_filtered, True
             
         except Exception as e:
             self.logger.error(f"Extraction failed: {str(e)}")
-            raise
+            return self.spark.createDataFrame([], self.schema), False
     
-    def extract_with_custom_filter(
-        self,
-        from_date: str,
-        to_date: str,
-        additional_filters: Optional[str] = None,
-        source_path: Optional[str] = None
-    ) -> DataFrame:
+    def extract_sample_data(self) -> Tuple[DataFrame, bool]:
         """
-        Extract data with custom SQL-like filter conditions.
+        Generate sample data for testing.
         
-        Args:
-            from_date: Start date
-            to_date: End date
-            additional_filters: SQL WHERE clause string
-            source_path: Optional source path
-            
         Returns:
-            Filtered DataFrame
+            Tuple of (DataFrame with sample data, success flag)
         """
         try:
-            # Get base filtered data
-            df = self.extract_data(from_date, to_date, source_path)
+            self.logger.info("Generating sample data for testing")
             
-            # Apply additional filters if provided
-            if additional_filters:
-                df = df.filter(additional_filters)
-                self.logger.info(f"Applied additional filters: {additional_filters}")
+            sample_data = [
+                ("T000001", datetime.now().date(), "CUST001", "PROD001", 10, 99.99, "USD", "John Doe", "NORTH", "N"),
+                ("T000002", datetime.now().date(), "CUST002", "PROD002", 5, 149.99, "USD", "Jane Smith", "SOUTH", "N"),
+                ("T000003", datetime.now().date(), "CUST003", "PROD001", 20, 99.99, "USD", "John Doe", "EAST", "N"),
+                ("T000004", datetime.now().date(), "CUST001", "PROD003", 3, 299.99, "USD", "Bob Wilson", "WEST", "N"),
+                ("T000005", datetime.now().date(), "CUST004", "PROD002", 15, 149.99, "USD", "Jane Smith", "SOUTH", "N")
+            ]
             
-            return df
+            df = self.spark.createDataFrame(sample_data, self.schema)
             
-        except Exception as e:
-            self.logger.error(f"Custom filter extraction failed: {str(e)}")
-            raise
-    
-    def extract_by_region(
-        self,
-        from_date: str,
-        to_date: str,
-        regions: list,
-        source_path: Optional[str] = None
-    ) -> DataFrame:
-        """
-        Extract data filtered by specific regions.
-        
-        Args:
-            from_date: Start date
-            to_date: End date
-            regions: List of region codes
-            source_path: Optional source path
+            record_count = df.count()
+            self.logger.info(f"Generated {record_count} sample records")
             
-        Returns:
-            Region-filtered DataFrame
-        """
-        try:
-            df = self.extract_data(from_date, to_date, source_path)
-            
-            # Filter by regions
-            region_filtered = df.filter(F.col("region").isin(regions))
-            
-            count = region_filtered.count()
-            self.logger.info(
-                f"Extracted {count} records for regions: {', '.join(regions)}"
-            )
-            
-            return region_filtered
+            return df, True
             
         except Exception as e:
-            self.logger.error(f"Region-based extraction failed: {str(e)}")
-            raise
-    
-    def validate_extracted_data(self, df: DataFrame) -> dict:
-        """
-        Validate extracted data quality.
-        
-        Args:
-            df: DataFrame to validate
-            
-        Returns:
-            Dictionary with validation results
-        """
-        validation_results = {
-            "total_records": df.count(),
-            "null_trans_ids": df.filter(F.col("trans_id").isNull()).count(),
-            "null_dates": df.filter(F.col("trans_date").isNull()).count(),
-            "invalid_quantities": df.filter(F.col("quantity") <= 0).count(),
-            "invalid_prices": df.filter(F.col("unit_price") <= 0).count(),
-            "distinct_customers": df.select("customer_id").distinct().count(),
-            "distinct_products": df.select("product_id").distinct().count()
-        }
-        
-        self.logger.info(f"Validation results: {validation_results}")
-        
-        return validation_results
-    
-    def get_extraction_summary(self, df: DataFrame) -> dict:
-        """
-        Generate summary statistics for extracted data.
-        
-        Args:
-            df: Extracted DataFrame
-            
-        Returns:
-            Dictionary with summary statistics
-        """
-        summary = {
-            "total_records": df.count(),
-            "date_range": {
-                "min_date": df.agg(F.min("trans_date")).collect()[0][0],
-                "max_date": df.agg(F.max("trans_date")).collect()[0][0]
-            },
-            "regions": df.select("region").distinct().count(),
-            "sales_reps": df.select("sales_rep").distinct().count(),
-            "total_quantity": df.agg(F.sum("quantity")).collect()[0][0],
-            "extraction_timestamp": datetime.now().isoformat()
-        }
-        
-        return summary
+            self.logger.error(f"Sample data generation failed: {str(e)}")
+            return self.spark.createDataFrame([], self.schema), False
