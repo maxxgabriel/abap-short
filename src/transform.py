@@ -1,287 +1,80 @@
 """
-PySpark transformation module with comprehensive data validation.
-
-This module implements data transformation logic with validation for:
-- Required fields
-- Currency codes
-- Category enumerations
-- Data quality checks
+PySpark Data Transformation Module
+Transforms raw sales data into analytics format with business rules.
 """
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType, DateType
-from typing import Dict, List, Tuple
+from pyspark.sql.functions import col, when, lit, round as spark_round, concat, current_timestamp
+from pyspark.sql.types import DecimalType
+from typing import Dict
 import logging
-
-logger = logging.getLogger(__name__)
-
-
-class ValidationError(Exception):
-    """Custom exception for validation errors."""
-    pass
 
 
 class DataTransformer:
-    """Handles data transformation with comprehensive validation."""
+    """Handles transformation of raw sales data into analytics format."""
     
-    def __init__(self, config: Dict):
+    def __init__(self, spark: SparkSession, config: Dict, logger: logging.Logger):
         """
-        Initialize transformer with configuration.
+        Initialize DataTransformer.
         
         Args:
-            config: Configuration dictionary containing validation rules
+            spark: SparkSession instance
+            config: Configuration dictionary
+            logger: Logger instance
         """
+        self.spark = spark
         self.config = config
-        self.validation_config = config.get('validation', {})
-        self.business_rules = config.get('business_rules', {})
+        self.logger = logger
+        self.transform_config = config.get('transform', {})
+        self.business_rules = self.transform_config.get('business_rules', {})
         
-    def get_analytics_schema(self) -> StructType:
+    def transform_data(self, df: DataFrame, etl_run_id: str) -> Dict:
         """
-        Define schema for analytics output data.
-        
-        Returns:
-            StructType schema for analytics data
-        """
-        return StructType([
-            StructField("analytics_id", StringType(), False),
-            StructField("trans_date", DateType(), False),
-            StructField("customer_id", StringType(), False),
-            StructField("product_id", StringType(), False),
-            StructField("total_quantity", IntegerType(), False),
-            StructField("gross_amount", DecimalType(16, 2), False),
-            StructField("net_amount", DecimalType(16, 2), False),
-            StructField("discount_amount", DecimalType(16, 2), False),
-            StructField("tax_amount", DecimalType(16, 2), False),
-            StructField("currency", StringType(), False),
-            StructField("sales_rep", StringType(), False),
-            StructField("region", StringType(), False),
-            StructField("profit_margin", DecimalType(5, 2), False),
-            StructField("category", StringType(), False),
-            StructField("etl_run_id", StringType(), False),
-            StructField("validation_status", StringType(), False),
-            StructField("validation_errors", StringType(), True)
-        ])
-    
-    def validate_required_fields(self, df: DataFrame) -> DataFrame:
-        """
-        Validate that required fields are not null or empty.
+        Transform raw sales data into analytics format.
         
         Args:
-            df: Input DataFrame
+            df: Raw sales DataFrame
+            etl_run_id: ETL run identifier
             
         Returns:
-            DataFrame with validation_errors column added
+            Dictionary containing transformed DataFrame and statistics
         """
-        required_fields = self.validation_config.get('required_fields', [])
-        
-        logger.info(f"Validating {len(required_fields)} required fields")
-        
-        # Build validation expression for required fields
-        validation_conditions = []
-        error_messages = []
-        
-        for field in required_fields:
-            if field in df.columns:
-                condition = F.col(field).isNull() | (F.trim(F.col(field)) == "")
-                validation_conditions.append(condition)
-                error_messages.append(F.when(condition, F.lit(f"Missing required field: {field}")))
-        
-        # Combine all error messages
-        if error_messages:
-            df = df.withColumn(
-                "required_field_errors",
-                F.concat_ws("; ", *[msg for msg in error_messages if msg is not None])
-            )
-        else:
-            df = df.withColumn("required_field_errors", F.lit(None).cast(StringType()))
-        
-        return df
-    
-    def validate_currency_codes(self, df: DataFrame) -> DataFrame:
-        """
-        Validate currency codes against allowed list.
-        
-        Args:
-            df: Input DataFrame
+        try:
+            self.logger.info("Starting data transformation")
             
-        Returns:
-            DataFrame with currency validation errors
-        """
-        valid_currencies = self.validation_config.get('valid_currencies', ['USD', 'EUR', 'GBP'])
-        
-        logger.info(f"Validating currency codes against: {valid_currencies}")
-        
-        df = df.withColumn(
-            "currency_errors",
-            F.when(
-                ~F.col("currency").isin(valid_currencies),
-                F.concat(F.lit("Invalid currency code: "), F.col("currency"))
-            ).otherwise(F.lit(None))
-        )
-        
-        return df
-    
-    def validate_category_enumerations(self, df: DataFrame) -> DataFrame:
-        """
-        Validate category values against allowed enumerations.
-        
-        Args:
-            df: Input DataFrame with category column
+            total_records = df.count()
+            self.logger.info(f"Total records to transform: {total_records}")
             
-        Returns:
-            DataFrame with category validation errors
-        """
-        valid_categories = self.validation_config.get('valid_categories', ['HIGH', 'MEDIUM', 'LOW'])
-        
-        logger.info(f"Validating categories against: {valid_categories}")
-        
-        df = df.withColumn(
-            "category_errors",
-            F.when(
-                ~F.col("category").isin(valid_categories),
-                F.concat(F.lit("Invalid category: "), F.col("category"))
-            ).otherwise(F.lit(None))
-        )
-        
-        return df
-    
-    def validate_numeric_ranges(self, df: DataFrame) -> DataFrame:
-        """
-        Validate numeric fields are within acceptable ranges.
-        
-        Args:
-            df: Input DataFrame
+            # Apply transformations
+            df_transformed = self._calculate_analytics(df, etl_run_id)
             
-        Returns:
-            DataFrame with numeric validation errors
-        """
-        numeric_validations = self.validation_config.get('numeric_ranges', {})
-        
-        error_conditions = []
-        
-        for field, rules in numeric_validations.items():
-            if field in df.columns:
-                min_val = rules.get('min')
-                max_val = rules.get('max')
-                
-                if min_val is not None:
-                    error_conditions.append(
-                        F.when(
-                            F.col(field) < min_val,
-                            F.lit(f"{field} below minimum: {min_val}")
-                        )
-                    )
-                
-                if max_val is not None:
-                    error_conditions.append(
-                        F.when(
-                            F.col(field) > max_val,
-                            F.lit(f"{field} above maximum: {max_val}")
-                        )
-                    )
-        
-        if error_conditions:
-            df = df.withColumn(
-                "numeric_errors",
-                F.concat_ws("; ", *[cond for cond in error_conditions if cond is not None])
-            )
-        else:
-            df = df.withColumn("numeric_errors", F.lit(None).cast(StringType()))
-        
-        return df
-    
-    def validate_business_rules(self, df: DataFrame) -> DataFrame:
-        """
-        Validate business-specific rules.
-        
-        Args:
-            df: Input DataFrame
+            success_count = df_transformed.count()
             
-        Returns:
-            DataFrame with business rule validation errors
-        """
-        error_conditions = []
-        
-        # Validate discount doesn't exceed gross amount
-        error_conditions.append(
-            F.when(
-                F.col("discount_amount") > F.col("gross_amount"),
-                F.lit("Discount exceeds gross amount")
-            )
-        )
-        
-        # Validate net amount is positive
-        error_conditions.append(
-            F.when(
-                F.col("net_amount") <= 0,
-                F.lit("Net amount must be positive")
-            )
-        )
-        
-        # Validate profit margin is reasonable
-        max_margin = self.business_rules.get('max_profit_margin', 100)
-        error_conditions.append(
-            F.when(
-                F.col("profit_margin") > max_margin,
-                F.lit(f"Profit margin exceeds {max_margin}%")
-            )
-        )
-        
-        df = df.withColumn(
-            "business_rule_errors",
-            F.concat_ws("; ", *[cond for cond in error_conditions if cond is not None])
-        )
-        
-        return df
-    
-    def combine_validation_errors(self, df: DataFrame) -> DataFrame:
-        """
-        Combine all validation errors into single column.
-        
-        Args:
-            df: DataFrame with individual error columns
+            self.logger.info(f"Transformed {success_count} of {total_records} records")
             
-        Returns:
-            DataFrame with combined validation_errors column
-        """
-        error_columns = [
-            "required_field_errors",
-            "currency_errors",
-            "category_errors",
-            "numeric_errors",
-            "business_rule_errors"
-        ]
-        
-        # Filter out null/empty error messages
-        non_null_errors = [
-            F.when(F.col(col).isNotNull() & (F.trim(F.col(col)) != ""), F.col(col))
-            for col in error_columns
-            if col in df.columns
-        ]
-        
-        df = df.withColumn(
-            "validation_errors",
-            F.concat_ws(" | ", *non_null_errors)
-        )
-        
-        # Set validation status
-        df = df.withColumn(
-            "validation_status",
-            F.when(
-                (F.col("validation_errors").isNull()) | (F.trim(F.col("validation_errors")) == ""),
-                F.lit("VALID")
-            ).otherwise(F.lit("INVALID"))
-        )
-        
-        # Drop intermediate error columns
-        df = df.drop(*error_columns)
-        
-        return df
+            return {
+                'success': True,
+                'dataframe': df_transformed,
+                'total_records': total_records,
+                'success_records': success_count,
+                'error_records': total_records - success_count,
+                'message': f'Transformed {success_count} of {total_records} records'
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Transformation failed: {str(e)}", exc_info=True)
+            return {
+                'success': False,
+                'dataframe': None,
+                'total_records': 0,
+                'success_records': 0,
+                'error_records': 0,
+                'message': f'Transformation failed: {str(e)}'
+            }
     
-    def calculate_analytics(self, df: DataFrame, etl_run_id: str) -> DataFrame:
+    def _calculate_analytics(self, df: DataFrame, etl_run_id: str) -> DataFrame:
         """
-        Calculate analytics fields from raw data.
+        Calculate analytics metrics with business rules.
         
         Args:
             df: Raw sales DataFrame
@@ -290,11 +83,9 @@ class DataTransformer:
         Returns:
             Transformed DataFrame with analytics
         """
-        logger.info("Calculating analytics fields")
-        
-        # Get business rules
-        discount_tier1_qty = self.business_rules.get('discount_qty_tier1', 10)
-        discount_tier2_qty = self.business_rules.get('discount_qty_tier2', 15)
+        # Get business rule parameters
+        discount_qty_tier1 = self.business_rules.get('discount_qty_tier1', 10)
+        discount_qty_tier2 = self.business_rules.get('discount_qty_tier2', 15)
         discount_rate_tier1 = self.business_rules.get('discount_rate_tier1', 0.05)
         discount_rate_tier2 = self.business_rules.get('discount_rate_tier2', 0.10)
         tax_rate = self.business_rules.get('tax_rate', 0.08)
@@ -303,139 +94,113 @@ class DataTransformer:
         category_medium_threshold = self.business_rules.get('category_medium_threshold', 500.00)
         
         # Calculate gross amount
-        df = df.withColumn(
+        df_with_gross = df.withColumn(
             "gross_amount",
-            F.col("quantity") * F.col("unit_price")
+            spark_round(col("quantity") * col("unit_price"), 2)
         )
         
         # Calculate discount based on quantity tiers
-        df = df.withColumn(
+        df_with_discount = df_with_gross.withColumn(
             "discount_amount",
-            F.when(
-                F.col("quantity") > discount_tier2_qty,
-                F.col("gross_amount") * F.lit(discount_rate_tier2)
-            ).when(
-                F.col("quantity") > discount_tier1_qty,
-                F.col("gross_amount") * F.lit(discount_rate_tier1)
-            ).otherwise(F.lit(0.0))
+            when(col("quantity") > discount_qty_tier2, 
+                 spark_round(col("gross_amount") * lit(discount_rate_tier2), 2))
+            .when(col("quantity") > discount_qty_tier1,
+                  spark_round(col("gross_amount") * lit(discount_rate_tier1), 2))
+            .otherwise(lit(0.0))
         )
         
-        # Calculate tax
-        df = df.withColumn(
+        # Calculate tax on (gross - discount)
+        df_with_tax = df_with_discount.withColumn(
             "tax_amount",
-            (F.col("gross_amount") - F.col("discount_amount")) * F.lit(tax_rate)
+            spark_round((col("gross_amount") - col("discount_amount")) * lit(tax_rate), 2)
         )
         
         # Calculate net amount
-        df = df.withColumn(
+        df_with_net = df_with_tax.withColumn(
             "net_amount",
-            F.col("gross_amount") - F.col("discount_amount") + F.col("tax_amount")
+            spark_round(col("gross_amount") - col("discount_amount") + col("tax_amount"), 2)
         )
         
         # Calculate profit margin
-        df = df.withColumn(
+        df_with_profit = df_with_net.withColumn(
             "cost_amount",
-            F.col("quantity") * F.col("unit_price") * F.lit(cost_ratio)
-        )
-        
-        df = df.withColumn(
+            spark_round(col("quantity") * col("unit_price") * lit(cost_ratio), 2)
+        ).withColumn(
             "profit_margin",
-            F.when(
-                F.col("net_amount") > 0,
-                ((F.col("net_amount") - F.col("cost_amount")) / F.col("net_amount")) * 100
-            ).otherwise(F.lit(0.0))
+            when(col("net_amount") > 0,
+                 spark_round(((col("net_amount") - col("cost_amount")) / col("net_amount")) * 100, 2))
+            .otherwise(lit(0.0))
         )
         
         # Categorize sales
-        df = df.withColumn(
+        df_with_category = df_with_profit.withColumn(
             "category",
-            F.when(
-                F.col("gross_amount") >= category_high_threshold,
-                F.lit("HIGH")
-            ).when(
-                F.col("gross_amount") >= category_medium_threshold,
-                F.lit("MEDIUM")
-            ).otherwise(F.lit("LOW"))
+            when(col("gross_amount") >= lit(category_high_threshold), lit("HIGH"))
+            .when(col("gross_amount") >= lit(category_medium_threshold), lit("MEDIUM"))
+            .otherwise(lit("LOW"))
         )
         
         # Generate analytics ID
-        df = df.withColumn(
+        df_with_id = df_with_category.withColumn(
             "analytics_id",
-            F.concat(
-                F.lit("ANL"),
-                F.col("trans_id"),
-                F.date_format(F.current_timestamp(), "HHmmss")
-            )
+            concat(lit("ANL"), col("trans_id"))
         )
         
-        # Add ETL run ID
-        df = df.withColumn("etl_run_id", F.lit(etl_run_id))
+        # Add ETL metadata
+        df_final = df_with_id.withColumn("etl_run_id", lit(etl_run_id))
         
-        # Rename quantity column
-        df = df.withColumnRenamed("quantity", "total_quantity")
+        # Select and rename columns for final output
+        df_analytics = df_final.select(
+            col("analytics_id"),
+            col("trans_date"),
+            col("customer_id"),
+            col("product_id"),
+            col("quantity").alias("total_quantity"),
+            col("gross_amount").cast(DecimalType(16, 2)),
+            col("net_amount").cast(DecimalType(16, 2)),
+            col("discount_amount").cast(DecimalType(16, 2)),
+            col("tax_amount").cast(DecimalType(16, 2)),
+            col("currency"),
+            col("sales_rep"),
+            col("region"),
+            col("profit_margin").cast(DecimalType(5, 2)),
+            col("category"),
+            col("etl_run_id")
+        )
         
-        # Drop temporary columns
-        df = df.drop("cost_amount", "unit_price", "status", "trans_id")
-        
-        return df
+        return df_analytics
     
-    def transform(self, raw_df: DataFrame, etl_run_id: str) -> Tuple[DataFrame, Dict]:
+    def _categorize_sale(self, gross_amount: float) -> str:
         """
-        Main transformation method with validation.
+        Categorize sale based on gross amount.
         
         Args:
-            raw_df: Raw sales DataFrame
-            etl_run_id: ETL run identifier
+            gross_amount: Gross sale amount
             
         Returns:
-            Tuple of (transformed DataFrame, validation statistics)
+            Category string (HIGH, MEDIUM, LOW)
         """
-        logger.info("Starting data transformation with validation")
+        category_high_threshold = self.business_rules.get('category_high_threshold', 2000.00)
+        category_medium_threshold = self.business_rules.get('category_medium_threshold', 500.00)
         
-        # Calculate analytics
-        df = self.calculate_analytics(raw_df, etl_run_id)
-        
-        # Apply validations
-        df = self.validate_required_fields(df)
-        df = self.validate_currency_codes(df)
-        df = self.validate_category_enumerations(df)
-        df = self.validate_numeric_ranges(df)
-        df = self.validate_business_rules(df)
-        
-        # Combine validation errors
-        df = self.combine_validation_errors(df)
-        
-        # Calculate validation statistics
-        total_records = df.count()
-        valid_records = df.filter(F.col("validation_status") == "VALID").count()
-        invalid_records = total_records - valid_records
-        
-        validation_stats = {
-            "total_records": total_records,
-            "valid_records": valid_records,
-            "invalid_records": invalid_records,
-            "validation_rate": (valid_records / total_records * 100) if total_records > 0 else 0
-        }
-        
-        logger.info(f"Transformation complete. Valid: {valid_records}/{total_records} "
-                   f"({validation_stats['validation_rate']:.2f}%)")
-        
-        return df, validation_stats
+        if gross_amount >= category_high_threshold:
+            return "HIGH"
+        elif gross_amount >= category_medium_threshold:
+            return "MEDIUM"
+        else:
+            return "LOW"
 
 
-def transform_sales_data(spark: SparkSession, raw_df: DataFrame, 
-                        config: Dict, etl_run_id: str) -> Tuple[DataFrame, Dict]:
+def create_transformer(spark: SparkSession, config: Dict, logger: logging.Logger) -> DataTransformer:
     """
-    Transform raw sales data with validation.
+    Factory function to create DataTransformer instance.
     
     Args:
-        spark: SparkSession
-        raw_df: Raw sales DataFrame
+        spark: SparkSession instance
         config: Configuration dictionary
-        etl_run_id: ETL run identifier
+        logger: Logger instance
         
     Returns:
-        Tuple of (transformed DataFrame, validation statistics)
+        DataTransformer instance
     """
-    transformer = DataTransformer(config)
-    return transformer.transform(raw_df, etl_run_id)
+    return DataTransformer(spark, config, logger)
