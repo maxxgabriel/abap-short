@@ -1,76 +1,131 @@
-# Sales ETL Pipeline Configuration
+# ETL Configuration for Sales Data Processing with Validation
 
 # Spark Configuration
 spark:
-  app_name: "Sales_ETL_Pipeline"
+  app_name: "Sales ETL with Validation"
+  master: "local[*]"
   config:
-    spark.sql.adaptive.enabled: "true"
-    spark.sql.adaptive.coalescePartitions.enabled: "true"
-    spark.sql.shuffle.partitions: "200"
-    spark.sql.sources.partitionOverwriteMode: "dynamic"
+    spark.sql.shuffle.partitions: 200
+    spark.sql.adaptive.enabled: true
+    spark.sql.adaptive.coalescePartitions.enabled: true
 
-# Business Rules
+# Source Configuration
+source:
+  type: "parquet"  # Options: parquet, csv, jdbc
+  path: "data/raw/sales"
+  jdbc:
+    url: "jdbc:sap://hostname:30015"
+    table: "zsales_raw"
+    user: "etl_user"
+    password: "${ETL_DB_PASSWORD}"
+    driver: "com.sap.db.jdbc.Driver"
+
+# Target Configuration
+target:
+  type: "parquet"  # Options: parquet, csv, jdbc
+  path: "data/analytics/sales"
+  error_path: "data/errors/sales"
+  mode: "append"
+  jdbc:
+    url: "jdbc:sap://hostname:30015"
+    table: "zsales_analytics"
+    user: "etl_user"
+    password: "${ETL_DB_PASSWORD}"
+    driver: "com.sap.db.jdbc.Driver"
+
+# Validation Configuration
+validation:
+  # Required fields that must not be null or empty
+  required_fields:
+    - trans_id
+    - trans_date
+    - customer_id
+    - product_id
+    - quantity
+    - unit_price
+    - currency
+    - sales_rep
+    - region
+  
+  # Valid currency codes (ISO 4217)
+  valid_currencies:
+    - USD
+    - EUR
+    - GBP
+    - JPY
+    - CHF
+    - CAD
+    - AUD
+  
+  # Valid category enumerations
+  valid_categories:
+    - HIGH
+    - MEDIUM
+    - LOW
+  
+  # Numeric field range validations
+  numeric_ranges:
+    quantity:
+      min: 1
+      max: 10000
+    unit_price:
+      min: 0.01
+      max: 1000000.00
+    gross_amount:
+      min: 0.01
+      max: 10000000.00
+    discount_amount:
+      min: 0.00
+      max: 10000000.00
+    tax_amount:
+      min: 0.00
+      max: 10000000.00
+    net_amount:
+      min: 0.01
+      max: 10000000.00
+    profit_margin:
+      min: -100.00
+      max: 100.00
+
+# Business Rules Configuration
 business_rules:
-  # Discount calculation rules
-  discount:
-    tier1_quantity: 10
-    tier2_quantity: 15
-    tier1_rate: 0.05  # 5% discount
-    tier2_rate: 0.10  # 10% discount
+  # Discount tiers based on quantity
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05  # 5%
+  discount_rate_tier2: 0.10  # 10%
   
   # Tax rate
-  tax_rate: 0.08  # 8% tax
+  tax_rate: 0.08  # 8%
   
   # Cost ratio for profit calculation
   cost_ratio: 0.60  # 60% of unit price
   
   # Category thresholds
-  category:
-    high_threshold: 2000.00
-    medium_threshold: 500.00
-
-# Data Paths
-paths:
-  source: "data/raw/sales"
-  target: "data/analytics/sales"
-  logs: "logs/etl"
-
-# Load Configuration
-load:
-  format: "parquet"
-  mode: "append"
-  partition_by:
-    - "trans_date"
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
   
-# ETL Configuration
-etl:
+  # Maximum acceptable profit margin
+  max_profit_margin: 100.00
+
+# ETL Processing Configuration
+processing:
   batch_size: 1000
   commit_interval: 500
   retry_attempts: 3
   timeout_seconds: 3600
-
-# Validation Rules
-validation:
-  required_fields:
-    - "analytics_id"
-    - "customer_id"
-    - "product_id"
-    - "gross_amount"
-    - "currency"
-  
-  valid_categories:
-    - "HIGH"
-    - "MEDIUM"
-    - "LOW"
-  
-  valid_currencies:
-    - "USD"
-    - "EUR"
-    - "GBP"
+  enable_checkpointing: true
+  checkpoint_location: "data/checkpoints/sales_etl"
 
 # Logging Configuration
 logging:
-  level: "INFO"
+  level: "INFO"  # Options: DEBUG, INFO, WARN, ERROR
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file_enabled: true
-  console_enabled: true
+  file: "logs/sales_etl.log"
+  console: true
+
+# Monitoring Configuration
+monitoring:
+  enable_metrics: true
+  metrics_path: "data/metrics/sales_etl"
+  alert_on_validation_failure_rate: 10.0  # Alert if >10% records fail validation
