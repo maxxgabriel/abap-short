@@ -1,105 +1,76 @@
 """
-Utility functions for ETL system
-Migrated from ABAP ZETL_MACROS and utility functions
+Utility functions for ETL system.
 """
-
-from datetime import datetime, timedelta
-from decimal import Decimal
-from typing import Any
+from datetime import datetime
+from typing import Optional
 
 
-def generate_unique_id(prefix: str = '') -> str:
+def generate_etl_run_id(prefix: str = "ETL") -> str:
     """
-    Generate a unique ID with optional prefix
+    Generate unique ETL run identifier.
     
     Args:
-        prefix: Prefix for the ID
-    
+        prefix: ID prefix (default: ETL)
+        
     Returns:
-        Unique identifier string
+        Unique run ID with timestamp
     """
-    timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     return f"{prefix}{timestamp}"
 
 
-def calculate_percentage(numerator: Any, denominator: Any) -> float:
+def generate_log_id(prefix: str = "LOG") -> str:
     """
-    Calculate percentage
+    Generate unique log entry identifier.
     
     Args:
-        numerator: Numerator value
-        denominator: Denominator value
-    
+        prefix: ID prefix (default: LOG)
+        
     Returns:
-        Percentage as float, 0 if denominator is 0
+        Unique log ID with timestamp
     """
-    if denominator == 0 or denominator is None:
-        return 0.0
-    return (float(numerator) / float(denominator)) * 100.0
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")[:14]
+    return f"{prefix}{timestamp}"
 
 
-def format_currency(amount: Decimal, currency: str = 'USD') -> str:
+def generate_analytics_id(trans_id: str, prefix: str = "ANL") -> str:
     """
-    Format currency value
+    Generate unique analytics record identifier.
     
     Args:
-        amount: Amount to format
-        currency: Currency code
-    
+        trans_id: Source transaction ID
+        prefix: ID prefix (default: ANL)
+        
     Returns:
-        Formatted currency string
+        Unique analytics ID
     """
-    return f"{currency} {amount:,.2f}"
+    timestamp = datetime.now().strftime("%H%M%S")
+    return f"{prefix}{trans_id}{timestamp}"
 
 
-def add_days_to_date(base_date: datetime, days: int) -> datetime:
+def format_duration(start_time: datetime, end_time: Optional[datetime] = None) -> str:
     """
-    Add days to a date
+    Format duration between timestamps.
     
     Args:
-        base_date: Base date
-        days: Number of days to add
-    
-    Returns:
-        New date
-    """
-    return base_date + timedelta(days=days)
-
-
-def validate_mandatory_field(value: Any, field_name: str) -> bool:
-    """
-    Validate that a mandatory field is not empty
-    
-    Args:
-        value: Field value
-        field_name: Field name for error messages
-    
-    Returns:
-        True if valid, False otherwise
-    """
-    if value is None or (isinstance(value, str) and value.strip() == ''):
-        return False
-    return True
-
-
-def format_duration(seconds: float) -> str:
-    """
-    Format duration in seconds to human-readable format
-    
-    Args:
-        seconds: Duration in seconds
-    
+        start_time: Start timestamp
+        end_time: End timestamp (default: now)
+        
     Returns:
         Formatted duration string
     """
-    hours, remainder = divmod(int(seconds), 3600)
-    minutes, seconds = divmod(remainder, 60)
+    if end_time is None:
+        end_time = datetime.now()
     
-    parts = []
+    duration = (end_time - start_time).total_seconds()
+    
+    hours = int(duration // 3600)
+    minutes = int((duration % 3600) // 60)
+    seconds = int(duration % 60)
+    
     if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    parts.append(f"{seconds}s")
-    
-    return " ".join(parts)
+        return f"{hours}h {minutes}m {seconds}s"
+    elif minutes > 0:
+        return f"{minutes}m {seconds}s"
+    else:
+        return f"{seconds}s"
