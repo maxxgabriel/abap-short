@@ -1,272 +1,215 @@
 """
-Log Manager for advanced log operations
-Provides utilities for log maintenance, querying, and analysis
+Advanced log management utilities for ETL processes.
+Provides log querying, aggregation, and reporting capabilities.
 """
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
-from delta import DeltaTable
-import logging
+from pyspark.sql.window import Window
 
 
 class LogManager:
     """
-    Advanced log management utilities for ETL logging system.
-    Provides operations for log maintenance, analysis, and optimization.
+    Manages ETL logs with querying and reporting capabilities.
     """
     
-    def __init__(self, spark: SparkSession, delta_table_path: str):
+    def __init__(self, spark: SparkSession, log_table_path: str):
         """
         Initialize Log Manager.
         
         Args:
-            spark: SparkSession instance
-            delta_table_path: Path to Delta table containing logs
+            spark: Active SparkSession
+            log_table_path: Path to log table storage
         """
         self.spark = spark
-        self.delta_table_path = delta_table_path
-        self.logger = logging.getLogger(__name__)
+        self.log_table_path = log_table_path
     
-    def compact_logs(self) -> None:
+    def get_logs_by_run_id(self, etl_run_id: str) -> DataFrame:
         """
-        Compact Delta table to optimize storage and query performance.
-        Runs OPTIMIZE and VACUUM operations.
+        Retrieve all logs for a specific ETL run.
+        
+        Args:
+            etl_run_id: ETL run identifier
+            
+        Returns:
+            DataFrame containing logs for the specified run
         """
-        try:
-            self.logger.info("Starting log compaction...")
-            
-            # Optimize Delta table
-            delta_table = DeltaTable.forPath(self.spark, self.delta_table_path)
-            delta_table.optimize().executeCompaction()
-            
-            self.logger.info("Log compaction completed")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to compact logs: {e}")
-            raise
+        return self.spark.read \
+            .format("delta") \
+            .load(self.log_table_path) \
+            .filter(F.col("etl_run_id") == etl_run_id) \
+            .orderBy("created_at")
     
-    def vacuum_old_logs(self, retention_days: int = 90) -> None:
+    def get_logs_by_date_range(
+        self,
+        start_date: str,
+        end_date: str
+    ) -> DataFrame:
         """
-        Remove old log files based on retention policy.
+        Retrieve logs within a date range.
+        
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            
+        Returns:
+            DataFrame containing logs in the date range
+        """
+        return self.spark.read \
+            .format("delta") \
+            .load(self.log_table_path) \
+            .filter(
+                (F.col("execution_date") >= start_date) &
+                (F.col("execution_date") <= end_date)
+            ) \
+            .orderBy("execution_date", "created_at")
+    
+    def get_error_logs(
+        self,
+        days_back: int = 7,
+        limit: Optional[int] = None
+    ) -> DataFrame:
+        """
+        Retrieve error logs from recent days.
+        
+        Args:
+            days_back: Number of days to look back
+            limit: Maximum number of records to return
+            
+        Returns:
+            DataFrame containing error logs
+        """
+        cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        
+        df = self.spark.read \
+            .format("delta") \
+            .load(self.log_table_path) \
+            .filter(
+                (F.col("status") == "E") &
+                (F.col("execution_date") >= cutoff_date)
+            ) \
+            .orderBy(F.col("created_at").desc())
+        
+        if limit:
+            df = df.limit(limit)
+        
+        return df
+    
+    def get_run_summary(self, etl_run_id: str) -> Dict[str, Any]:
+        """
+        Generate summary statistics for an ETL run.
+        
+        Args:
+            etl_run_id: ETL run identifier
+            
+        Returns:
+            Dictionary containing run summary statistics
+        """
+        logs_df = self.get_logs_by_run_id(etl_run_id)
+        
+        if logs_df.count() == 0:
+            return {"error": "No logs found for run ID"}
+        
+        # Aggregate statistics
+        summary = logs_df.agg(
+            F.min("created_at").alias("start_time"),
+            F.max("created_at").alias("end_time"),
+            F.sum("records_processed").alias("total_processed"),
+            F.sum("records_success").alias("total_success"),
+            F.sum("records_error").alias("total_errors"),
+            F.count(F.when(F.col("status") == "E", 1)).alias("error_count"),
+            F.count(F.when(F.col("status") == "W", 1)).alias("warning_count")
+        ).collect()[0]
+        
+        # Calculate duration
+        start_time = summary["start_time"]
+        end_time = summary["end_time"]
+        duration = (end_time - start_time).total_seconds() if start_time and end_time else 0
+        
+        # Get step breakdown
+        step_breakdown = logs_df.groupBy("process_step") \
+            .agg(
+                F.sum("records_processed").alias("records"),
+                F.count("*").alias("log_entries")
+            ) \
+            .collect()
+        
+        return {
+            "etl_run_id": etl_run_id,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
+            "duration_seconds": duration,
+            "total_processed": summary["total_processed"] or 0,
+            "total_success": summary["total_success"] or 0,
+            "total_errors": summary["total_errors"] or 0,
+            "error_count": summary["error_count"] or 0,
+            "warning_count": summary["warning_count"] or 0,
+            "step_breakdown": [
+                {
+                    "step": row["process_step"],
+                    "records": row["records"],
+                    "log_entries": row["log_entries"]
+                }
+                for row in step_breakdown
+            ]
+        }
+    
+    def get_daily_statistics(self, days_back: int = 30) -> DataFrame:
+        """
+        Get daily ETL statistics.
+        
+        Args:
+            days_back: Number of days to analyze
+            
+        Returns:
+            DataFrame with daily statistics
+        """
+        cutoff_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        
+        return self.spark.read \
+            .format("delta") \
+            .load(self.log_table_path) \
+            .filter(F.col("execution_date") >= cutoff_date) \
+            .groupBy("execution_date") \
+            .agg(
+                F.countDistinct("etl_run_id").alias("total_runs"),
+                F.sum("records_processed").alias("total_records"),
+                F.sum("records_success").alias("successful_records"),
+                F.sum("records_error").alias("error_records"),
+                F.count(F.when(F.col("status") == "E", 1)).alias("error_logs"),
+                F.count(F.when(F.col("status") == "W", 1)).alias("warning_logs")
+            ) \
+            .orderBy("execution_date")
+    
+    def cleanup_old_logs(self, retention_days: int = 90) -> int:
+        """
+        Clean up logs older than retention period.
         
         Args:
             retention_days: Number of days to retain logs
-        """
-        try:
-            self.logger.info(f"Vacuuming logs older than {retention_days} days...")
-            
-            delta_table = DeltaTable.forPath(self.spark, self.delta_table_path)
-            delta_table.vacuum(retention_days * 24)  # Convert days to hours
-            
-            self.logger.info("Vacuum completed")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to vacuum logs: {e}")
-            raise
-    
-    def get_error_summary(
-        self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> DataFrame:
-        """
-        Get summary of errors grouped by process step.
-        
-        Args:
-            start_date: Filter start date
-            end_date: Filter end date
             
         Returns:
-            DataFrame with error summary
+            Number of records deleted
         """
-        df = self.spark.read.format("delta").load(self.delta_table_path)
-        df = df.filter(F.col("status") == "E")
+        cutoff_date = (datetime.now() - timedelta(days=retention_days)).strftime("%Y-%m-%d")
         
-        if start_date:
-            df = df.filter(F.col("execution_date") >= start_date.date())
-        if end_date:
-            df = df.filter(F.col("execution_date") <= end_date.date())
+        # Read current logs
+        logs_df = self.spark.read \
+            .format("delta") \
+            .load(self.log_table_path)
         
-        summary = df.groupBy("process_step", "message").agg(
-            F.count("*").alias("error_count"),
-            F.min("execution_time").alias("first_occurrence"),
-            F.max("execution_time").alias("last_occurrence"),
-            F.sum("records_error").alias("total_records_affected")
-        ).orderBy(F.desc("error_count"))
+        # Count records to delete
+        delete_count = logs_df.filter(F.col("execution_date") < cutoff_date).count()
         
-        return summary
-    
-    def get_performance_metrics(
-        self,
-        etl_run_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Get performance metrics for ETL runs.
+        # Keep only recent logs
+        recent_logs = logs_df.filter(F.col("execution_date") >= cutoff_date)
         
-        Args:
-            etl_run_id: Optional specific ETL run ID
-            
-        Returns:
-            Dictionary with performance metrics
-        """
-        df = self.spark.read.format("delta").load(self.delta_table_path)
+        # Overwrite table
+        recent_logs.write \
+            .format("delta") \
+            .mode("overwrite") \
+            .save(self.log_table_path)
         
-        if etl_run_id:
-            df = df.filter(F.col("etl_run_id") == etl_run_id)
-        
-        # Calculate metrics per step
-        step_metrics = df.groupBy("etl_run_id", "process_step").agg(
-            F.min("execution_time").alias("step_start"),
-            F.max("execution_time").alias("step_end"),
-            F.sum("records_processed").alias("records_processed"),
-            F.sum("records_success").alias("records_success"),
-            F.sum("records_error").alias("records_error")
-        )
-        
-        # Calculate duration for each step
-        step_metrics = step_metrics.withColumn(
-            "duration_seconds",
-            (F.col("step_end").cast("long") - F.col("step_start").cast("long"))
-        )
-        
-        # Calculate throughput
-        step_metrics = step_metrics.withColumn(
-            "throughput_per_second",
-            F.when(
-                F.col("duration_seconds") > 0,
-                F.col("records_processed") / F.col("duration_seconds")
-            ).otherwise(0)
-        )
-        
-        return step_metrics
-    
-    def archive_old_logs(
-        self,
-        archive_path: str,
-        cutoff_date: datetime,
-        delete_after_archive: bool = False
-    ) -> int:
-        """
-        Archive old logs to a different location.
-        
-        Args:
-            archive_path: Path to archive location
-            cutoff_date: Archive logs older than this date
-            delete_after_archive: Whether to delete logs after archiving
-            
-        Returns:
-            Number of archived records
-        """
-        try:
-            self.logger.info(f"Archiving logs older than {cutoff_date}...")
-            
-            df = self.spark.read.format("delta").load(self.delta_table_path)
-            old_logs = df.filter(F.col("execution_date") < cutoff_date.date())
-            
-            count = old_logs.count()
-            
-            if count > 0:
-                # Write to archive
-                old_logs.write.format("delta").mode("append").save(archive_path)
-                
-                if delete_after_archive:
-                    # Delete archived records from main table
-                    delta_table = DeltaTable.forPath(self.spark, self.delta_table_path)
-                    delta_table.delete(F.col("execution_date") < cutoff_date.date())
-                
-                self.logger.info(f"Archived {count} log records")
-            else:
-                self.logger.info("No logs to archive")
-            
-            return count
-            
-        except Exception as e:
-            self.logger.error(f"Failed to archive logs: {e}")
-            raise
-    
-    def get_etl_run_statistics(
-        self,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> DataFrame:
-        """
-        Get aggregated statistics for ETL runs.
-        
-        Args:
-            start_date: Filter start date
-            end_date: Filter end date
-            
-        Returns:
-            DataFrame with ETL run statistics
-        """
-        df = self.spark.read.format("delta").load(self.delta_table_path)
-        
-        if start_date:
-            df = df.filter(F.col("execution_date") >= start_date.date())
-        if end_date:
-            df = df.filter(F.col("execution_date") <= end_date.date())
-        
-        stats = df.groupBy("etl_run_id").agg(
-            F.min("execution_date").alias("run_date"),
-            F.min("execution_time").alias("start_time"),
-            F.max("execution_time").alias("end_time"),
-            F.sum("records_processed").alias("total_processed"),
-            F.sum("records_success").alias("total_success"),
-            F.sum("records_error").alias("total_error"),
-            F.sum(F.when(F.col("status") == "E", 1).otherwise(0)).alias("error_count"),
-            F.sum(F.when(F.col("status") == "W", 1).otherwise(0)).alias("warning_count"),
-            F.count("*").alias("log_entries")
-        )
-        
-        # Calculate duration
-        stats = stats.withColumn(
-            "duration_seconds",
-            (F.col("end_time").cast("long") - F.col("start_time").cast("long"))
-        )
-        
-        # Calculate success rate
-        stats = stats.withColumn(
-            "success_rate",
-            F.when(
-                F.col("total_processed") > 0,
-                (F.col("total_success") / F.col("total_processed")) * 100
-            ).otherwise(0)
-        )
-        
-        return stats.orderBy(F.desc("run_date"))
-    
-    def export_logs_to_json(
-        self,
-        output_path: str,
-        etl_run_id: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> None:
-        """
-        Export logs to JSON format for external analysis.
-        
-        Args:
-            output_path: Path to write JSON files
-            etl_run_id: Optional ETL run ID filter
-            start_date: Optional start date filter
-            end_date: Optional end date filter
-        """
-        try:
-            df = self.spark.read.format("delta").load(self.delta_table_path)
-            
-            if etl_run_id:
-                df = df.filter(F.col("etl_run_id") == etl_run_id)
-            if start_date:
-                df = df.filter(F.col("execution_date") >= start_date.date())
-            if end_date:
-                df = df.filter(F.col("execution_date") <= end_date.date())
-            
-            df.write.mode("overwrite").json(output_path)
-            
-            self.logger.info(f"Exported logs to {output_path}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to export logs: {e}")
-            raise
+        return delete_count
