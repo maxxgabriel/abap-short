@@ -1,13 +1,12 @@
+```
 version: '3.8'
 
 services:
-  pyspark:
-    image: bitnami/spark:3.4.1
-    container_name: abap_pyspark
+  spark-master:
+    image: bitnami/spark:3.3.2
+    container_name: spark-master
     environment:
       - SPARK_MODE=master
-      - SPARK_MASTER_HOST=pyspark
-      - SPARK_MASTER_PORT=7077
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
@@ -15,43 +14,50 @@ services:
     ports:
       - "8080:8080"
       - "7077:7077"
-      - "4040:4040"
     volumes:
-      - ./:/app
-      - ./data:/data
-      - ./config.yaml:/app/config.yaml
-    working_dir: /app
-    command: >
-      bash -c "
-      pip install --upgrade pip &&
-      pip install -r requirements.txt &&
-      tail -f /dev/null
-      "
+      - ./src:/opt/spark-apps/src
+      - ./config:/opt/spark-apps/config
     networks:
       - spark-network
 
-  pyspark-worker:
-    image: bitnami/spark:3.4.1
-    container_name: abap_pyspark_worker
+  spark-worker:
+    image: bitnami/spark:3.3.2
+    container_name: spark-worker
     environment:
       - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://pyspark:7077
+      - SPARK_MASTER_URL=spark://spark-master:7077
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
-    ports:
-      - "8081:8081"
-    volumes:
-      - ./:/app
-      - ./data:/data
     depends_on:
-      - pyspark
+      - spark-master
+    volumes:
+      - ./src:/opt/spark-apps/src
+      - ./config:/opt/spark-apps/config
+    networks:
+      - spark-network
+
+  postgres:
+    image: postgres:14
+    container_name: etl-postgres
+    environment:
+      - POSTGRES_USER=etl_user
+      - POSTGRES_PASSWORD=etl_password
+      - POSTGRES_DB=etl_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     networks:
       - spark-network
 
 networks:
   spark-network:
     driver: bridge
+
+volumes:
+  postgres-data:
+```
