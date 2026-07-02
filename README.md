@@ -1,112 +1,99 @@
-# ETL Component Interface - Python Migration
+```
+# Sales ETL System - PySpark Migration
+
+This project is a migration of an ABAP-based Sales ETL system to PySpark.
 
 ## Overview
 
-This package contains the Python migration of the ABAP `ZIF_ETL_COMPONENT` and `ZIF_ETL_LOGGER` interfaces using Abstract Base Classes (ABC) with `@abstractmethod` decorators.
+The system extracts raw sales data, applies business transformations including discount calculations, tax computations, profit margin analysis, and sales categorization, then loads the processed data into an analytics table.
 
-## Components
+## Architecture
 
-### 1. Abstract Base Classes
+- **Extractor**: Reads raw sales data from ZSALES_RAW table
+- **Transformer**: Applies business rules and calculations
+- **Loader**: Validates and writes to ZSALES_ANALYTICS table
+- **Orchestrator**: Coordinates the ETL pipeline
 
-#### `ETLComponent` (src/etl_component.py)
-- Converted from ABAP interface `ZIF_ETL_COMPONENT`
-- Defines contract for all ETL components
-- Methods:
-  - `execute()`: Execute component processing
-  - `get_component_name()`: Get component identifier
-  - `validate_prerequisites()`: Validate requirements
+## Prerequisites
 
-#### `ETLLogger` (src/etl_component.py)
-- Converted from ABAP interface `ZIF_ETL_LOGGER`
-- Defines logging contract
-- Methods:
-  - `log_message()`: Log ETL messages
-  - `get_etl_run_id()`: Get run identifier
+- Docker and Docker Compose
+- Python 3.9+
+- Apache Spark 3.3+
 
-### 2. Data Classes
+## Quick Start
 
-#### `ExecutionResult`
-- Mapped from ABAP `ty_execution_result` structure
-- Fields:
-  - `success`: Execution success flag
-  - `records_total`: Total records processed
-  - `records_success`: Successful records
-  - `records_error`: Error records
-  - `message`: Result message
+### Linux/Mac
+```bash
+chmod +x start.sh
+./start.sh --date-from 2024-01-01 --date-to 2024-01-31
+```
 
-### 3. Exception Classes
-
-Converted from ABAP RAISING clauses:
-- `ETLComponentError`: Base exception class
-- `ExtractError`: Extraction phase errors
-- `TransformError`: Transformation phase errors
-- `LoadError`: Load phase errors
+### Windows
+```cmd
+start.bat --date-from 2024-01-01 --date-to 2024-01-31
+```
 
 ## Configuration
 
-The `config.yaml` file contains all business rules and configuration parameters migrated from `ZCL_ETL_CONSTANTS`:
+Edit `config/business_rules.yaml` to customize:
+- Discount thresholds and rates
+- Tax rate
+- Cost ratio
+- Category thresholds
+- Database connection settings
 
-```yaml
-discount_rules:
-  quantity_tier1: 10
-  rate_tier1: 0.05
+## Running Tests
 
-tax_rules:
-  tax_rate: 0.08
-
-category_thresholds:
-  high: 2000.00
-  medium: 500.00
-```
-
-## Usage Example
-
-```python
-from src.etl_component import ETLComponent, ExecutionResult, ETLComponentError
-
-class MyExtractor(ETLComponent):
-    def execute(self) -> ExecutionResult:
-        try:
-            # Processing logic here
-            return ExecutionResult(
-                success=True,
-                records_total=100,
-                records_success=100,
-                records_error=0,
-                message="Extraction completed"
-            )
-        except Exception as e:
-            raise ETLComponentError(
-                message=str(e),
-                error_step="EXTRACT"
-            )
-    
-    def get_component_name(self) -> str:
-        return "DataExtractor"
-    
-    def validate_prerequisites(self) -> bool:
-        # Validation logic
-        return True
-```
-
-## Testing
-
-Run unit tests:
 ```bash
-pytest tests/test_etl_component.py -v
-pytest tests/test_config.py -v
+pytest tests/ --cov=src --cov-report=html
 ```
 
-## Key Differences from ABAP
+## Command Line Options
 
-1. **Interfaces → ABC**: ABAP interfaces converted to Python Abstract Base Classes
-2. **RAISING → Exceptions**: RAISING clauses converted to exception handling
-3. **Structures → Dataclasses**: ABAP structures mapped to Python dataclasses
-4. **Constants → Config**: ABAP constants externalized to YAML configuration
+- `--date-from`: Start date (YYYY-MM-DD)
+- `--date-to`: End date (YYYY-MM-DD)
+- `--test-mode`: Run without committing data
+- `--config`: Path to configuration file
 
-## Dependencies
+## Project Structure
 
-- Python 3.8+
-- pytest (testing)
-- PyYAML (configuration)
-- PySpark (future ETL implementation)
+```
+sales-etl-pyspark/
+├── src/
+│   ├── main.py
+│   ├── config/
+│   │   ├── etl_config.py
+│   │   └── schemas.py
+│   ├── core/
+│   │   ├── extractor.py
+│   │   ├── transformer.py
+│   │   ├── loader.py
+│   │   └── orchestrator.py
+│   └── infrastructure/
+│       ├── logger.py
+│       ├── exceptions.py
+│       └── utils.py
+├── config/
+│   └── business_rules.yaml
+├── tests/
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+## Business Rules
+
+- **Discount**: 5% for quantity > 10, 10% for quantity > 15
+- **Tax**: 8% on (gross - discount)
+- **Cost**: 60% of unit price
+- **Categories**: HIGH (≥2000), MEDIUM (≥500), LOW (<500)
+
+## Monitoring
+
+- Spark UI: http://localhost:8080
+- Logs: Check container logs with `docker logs spark-master`
+
+## License
+
+Internal use only
+```
