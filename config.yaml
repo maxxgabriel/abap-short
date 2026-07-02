@@ -1,0 +1,63 @@
+# ETL Logging Configuration
+
+# Logging settings
+logging:
+  # Console log level: DEBUG, INFO, WARNING, ERROR
+  console_level: INFO
+  
+  # Enable file-based logging
+  enable_file_logging: true
+  
+  # Log file path (if file logging enabled)
+  log_file_path: logs/etl_run.log
+  
+  # Log table path for DataFrame persistence (Delta Lake)
+  log_table_path: /data/etl_logs
+  
+  # Flush logs to storage after N entries (0 = flush at end only)
+  auto_flush_threshold: 100
+
+# ETL Run ID settings
+etl_run:
+  # Prefix for ETL run IDs
+  id_prefix: ETL
+  
+  # Prefix for log IDs
+  log_id_prefix: LOG
+
+# Status codes (matching ABAP constants)
+status_codes:
+  success: S
+  error: E
+  warning: W
+  info: I
+
+# Process steps (matching ABAP constants)
+process_steps:
+  init: INIT
+  extract: EXTRACT
+  transform: TRANSFORM
+  load: LOAD
+  validate: VALIDATE
+  complete: COMPLETE
+  error: ERROR
+
+# Storage settings
+storage:
+  # Format for log persistence: delta, parquet
+  format: delta
+  
+  # Partition columns for log table
+  partition_columns:
+    - execution_date
+  
+  # Compression codec
+  compression: snappy
+
+# Performance settings
+performance:
+  # Batch size for log writes
+  batch_size: 1000
+  
+  # Enable log buffering
+  enable_buffering: true

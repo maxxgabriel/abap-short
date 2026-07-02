@@ -1,0 +1,24 @@
+```yaml
+business_rules:
+  discount_qty_tier1: 10
+  discount_qty_tier2: 15
+  discount_rate_tier1: 0.05
+  discount_rate_tier2: 0.10
+  tax_rate: 0.08
+  cost_ratio: 0.60
+  category_high_threshold: 2000.00
+  category_medium_threshold: 500.00
+
+database:
+  jdbc_url: jdbc:postgresql://localhost:5432/etl_db
+  driver: org.postgresql.Driver
+  user: etl_user
+  password: etl_password
+
+etl_settings:
+  batch_size: 1000
+  commit_interval: 500
+  retry_attempts: 3
+  timeout_seconds: 3600
+  test_mode: false
+```
